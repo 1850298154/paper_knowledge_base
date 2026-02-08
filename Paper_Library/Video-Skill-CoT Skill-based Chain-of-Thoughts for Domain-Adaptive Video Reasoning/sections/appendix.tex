@@ -1,0 +1,190 @@
+\section{\ours{} Implementation Details}
+
+\subsection{Details of skill description \& clustering}
+\label{sec:detail_skill_description}
+
+\textbf{Skill Description.} To extract skill descriptions given the training dataset, we prompt GPT-4\footnote{gpt-4-32k} with its questions and answers. (The prompt is provided in \cref{fig:prompt_skill_abstraction})
+Each extracted skill is written as a concise skill phrase (6–12 words), preserving the core visual or temporal reasoning concept. 
+Here, we intentionally exclude audio-based cues (e.g., sound, speech, or music) in this process.
+Specific object names (e.g., "TV", "sofa", "John") are replaced with generic terms, and vague terms (e.g., "reasoning", "analysis") are avoided to enhance clarity. 
+We also provide the exact name of the skills in \cref{tab:skill_list}. 
+
+
+\subsection{Details of skill-based CoT generation}
+\label{sec:detail_cot_generation}
+For skill-based CoT generation, we utilize Gemini-2.0 Flash with video input. As illustrated in \cref{fig:prompt_gemini}, we first prompt Gemini-2.0 to identify the relevant skills and generate corresponding sub-questions and answers. Then, we construct step-by-step reasoning based on this output. Finally, we use GPT-4 to filter and verify the reasoning by assessing its relevance to the ground-truth answers using \cref{fig:prompt_filtering} as a prompt.
+
+\input{tables/skill_list}
+
+
+\subsection{Details of training}
+\label{sec:detail_training}
+
+\textbf{Training datasets.} 
+Instead of using the full video instruction tuning dataset, we randomly sampled 10k and 2.1k examples from ET-Bench and CinePile, respectively. For VSI-Bench, which is intended solely for evaluation and does not provide a training set, we manually split the available data into training and test sets using a 7:3 ratio. We use 3k training dataset for VSI-Bench. 
+
+\noindent\textbf{Hyperparameters.}
+For training, we set the learning rate as 1e-5 and the batch size as $1$. For LoRA, we use rank $32$. 
+We set 1 epoch for ET-Bench training and 3 epochs for the other two datasets. 
+For other parameters, we use the default setup of LLaVA Video. 
+We use 4 A6000 GPUs for training. 
+
+
+
+\subsection{Prompts}
+\label{sec:prompt}
+In \cref{fig:prompt_skill_abstraction,fig:prompt_gemini,fig:prompt_merging,fig:prompt_filtering}, we attach prompts for skill-based CoT annotation. 
+We also attach prompt to generate regular CoT in \cref{fig:prompt_regular_cot_generation}.
+
+
+\input{tables/detail_vsi}
+\input{tables/detail_et}
+\input{tables/detail_cine}
+
+
+\section{Additional Quantitative Results}
+\label{sec:add_quant_results}
+
+\subsection{Per-category performance}
+\label{sec:per_category}
+In \cref{tab:detail_vsi,tab:detail_cine,tab:detail_et}, we additionally report the per-category performance for each dataset. We also include ablation studies comparing regular CoT vs skill-based CoT, and single-LoRA vs multi-LoRA configurations. \ours{}, which combines skill-based CoT with multi-LoRA training, consistently outperforms across all datasets, showing particularly strong gains on reasoning-intensive tasks such as Route Planning in VSI-Bench and temporal understanding tasks in CinePile.
+
+\subsection{Qwen2.5-VL backbone}
+\label{sec:qwen}
+
+\input{tables/qwen}
+We further evaluate \ours{} on VSI-Bench using the Qwen2.5-VL (7B)~\cite{bai2025qwen2} backbone. As shown in \cref{tab:qwen}, \ours{} achieves the highest overall performance (40.76 avg), consistently surpassing both regular-CoT and single-LoRA baselines. These results highlight the robustness and effectiveness of \ours{} when applied to a different backbone architecture.
+
+\input{tables/cross}
+\subsection{Cross-dataset generalization}
+\label{sec:cross_dataset}
+We evaluate cross-domain generalization from ET-Bench (source) to CinePile (target). As shown in \cref{tab:cross}, \ours{} achieves the best average performance (56.21) among ET-Bench–trained variants, performing competitively with the CinePile fine-tuned model (56.29) and surpassing the zero-shot baseline (55.83). 
+This highlights the effectiveness of skill-guided reasoning for transfer across domains.
+
+\begin{figure*}[t]
+    \centering
+    {
+    \includegraphics[width=\textwidth]{figures/selected_skills1.pdf}}
+    \caption{
+    \textbf{Skill selection results of VSI-Bench (1)}
+    }
+    \label{fig:selected_skills1}
+\end{figure*}
+
+\begin{figure*}[t]
+    \centering
+    {
+    \includegraphics[width=\textwidth]{figures/selected_skills2.pdf}}
+    \caption{
+    \textbf{\textbf{Skill selection results of VSI-Bench (2)}}
+    }
+    \label{fig:selected_skills2}\vspace{-0.1in}
+\end{figure*}
+
+
+\section{Additional Qualitative Results}
+\label{sec:add_qual_results}
+
+\subsection{Skill descriptions over different datasets}
+
+In \cref{fig:skill_description_tsne}, we visualize the skill descriptions for each dataset after performing skill extraction and clustering (\cref{sec:data_collection}). 
+To create the visualization, we first obtain text embeddings using SentenceTransformer and compute $N^{\text{skills}}$ cluster centroids. 
+We then apply t-SNE to reduce the dimensionality of the embeddings for visualization purposes. 
+The results highlight that each domain-specific dataset emphasizes different skill sets, though certain skills are shared across datasets. For instance, the skill “\textit{Inferring emotional tone from facial expressions and actions}” from CinePile is distinct from “\textit{Estimating distance between two objects in the video timeline}” from VSI-Bench. However, general skills like “\textit{Identifying objects or people}” appear across multiple datasets.
+A more detailed list of the extracted skills is provided in \cref{tab:skill_list}. 
+
+\subsection{Selected skills over different video datasets}
+
+In \cref{fig:selected_skills1,fig:selected_skills2}, we present statistics on the selected top 3 assigned skills for each task in VSI-Bench (presented in \cref{sec:data_collection}). As shown in the results, object identification skills are commonly used across tasks. However, each task also requires domain-specific skills. For instance, the Room Size Estimation task necessitates skills such as “\textit{Determining room boundaries using structural elements like walls and floors.}”
+
+
+\subsection{Additional comparison with regular CoT}
+In \cref{fig:additional_comparison_regular_cot_generation}, we provide additional comparison with regular CoT and ours. 
+
+
+\section{License}
+We list the license of the benchmark dataset and models we used. We use these existing artifacts consistently with their intended use. 
+\begin{itemize}
+    \item LLaVA-Video: \href{https://github.com/LLaVA-VL/LLaVA-NeXT/blob/main/LICENSE}{Apache License 2.0} 
+    \item CinePile: \href{https://huggingface.co/datasets/tomg-group-umd/cinepile}{cc-by-nc-sa-4.0}
+    \item VSI-Bench: \href{https://huggingface.co/datasets/choosealicense/licenses/blob/main/markdown/apache-2.0.md}{Apache License 2.0}
+    \item ET-Bench: \href{https://huggingface.co/datasets/PolyU-ChenLab/ET-Instruct-164K}{cc-by-nc-sa-4.0}
+    
+\end{itemize}
+
+
+\begin{figure*}[t]
+    \centering
+    {
+    \includegraphics[width=\textwidth]{figures/qual_example3.png}}
+    \caption{
+    \textbf{\textbf{Additional comparison of CoT annotations: (a) regular CoT and (b) our skill-based CoT.}}
+    }
+    \label{fig:additional_comparison_regular_cot_generation}\vspace{-0.1in}
+\end{figure*}
+
+
+
+\begin{figure*}[t]
+    \centering
+    {
+    \includegraphics[width=\textwidth]{figures/skill_description_by_datasets_tsne.pdf}}
+    \caption{
+    \textbf{Skill description from different domain datasets.} We visualize the skill descriptions for each dataset after performing skill extraction and clustering. (\cref{sec:data_collection})
+    }
+    \label{fig:skill_description_tsne}\vspace{-0.1in}
+\end{figure*}
+
+
+\begin{figure*}[t]
+    \centering
+    {
+    \includegraphics[width=\textwidth]{figures/prompt_skill_abstraction.pdf}}
+    \caption{
+    \textbf{\textbf{Prompt for Skill Description}}
+    }
+    \label{fig:prompt_skill_abstraction}\vspace{-0.1in}
+\end{figure*}
+
+\begin{figure*}[t]
+    \centering
+    {
+    \includegraphics[width=\textwidth]{figures/prompt_gemini.pdf}}
+    \caption{
+    \textbf{\textbf{Prompt for skill selection and sub-QA generation}}
+    }
+    \label{fig:prompt_gemini}\vspace{-0.1in}
+\end{figure*}
+
+
+\begin{figure*}[t]
+    \centering
+    {
+    \includegraphics[width=\textwidth]{figures/prompt_merging.pdf}}
+    \caption{
+    \textbf{\textbf{Prompt for skill-based CoT generation}}
+    }
+    \label{fig:prompt_merging}\vspace{-0.1in}
+\end{figure*}
+
+
+\begin{figure*}[t]
+    \centering
+    {
+    \includegraphics[width=\textwidth]{figures/prompt_verifiy.pdf}}
+    \caption{
+    \textbf{\textbf{Prompt for CoT filtering}}
+    }
+    \label{fig:prompt_filtering}\vspace{-0.1in}
+\end{figure*}
+
+
+\begin{figure*}[t]
+    \centering
+    {
+    \includegraphics[width=\textwidth]{figures/prompt_normal_cot.pdf}}
+    \caption{
+    \textbf{\textbf{Prompt for regular CoT generation}}
+    }
+    \label{fig:prompt_regular_cot_generation}\vspace{-0.1in}
+\end{figure*}

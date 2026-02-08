@@ -1,0 +1,116 @@
+\section{Proposed Method and Strategy}
+For training the agents, we initially attempted to adopt the Deep Deterministic Policy Gradient algorithm. However, one critical issue that we encountered during the training process using DDPG was the position values of each agent were diverging to either -1 or 1 because the computation time for calculating the action and reward was taking longer than the time it takes to receive the next frame from the Webots platform. Since the two times were not in sync, neither the calculated action nor the reward from the network was reflected during the training, preventing a proper learning process. Hence, consequently, we used Deep Q-Network to train defense and forward players and used a rule-based scheme for the goalkeeper.
+
+\subsection{State Space}
+For state space, we define 22 states to train the agents. The robots’ coordinate and orientation values as well as the ball’s positions and orientations were provided through Webots throughout the game. All the positions were provided in meters in a Cartesian coordinate system, and the orientations were provided in radian. We first defined the x, y, and $\theta$ values of each player excluding the goalkeeper, and applied a regularization process to each value to avoid the risk of overfitting. Since there are two defense players and two forward players, 12 states are defined thus far. We also provided boolean information that indicates whether a player is active or inactive, in case a player is dismissed due to varying reasons for both forward and defense players as a state, which makes 16 states in total thus far. In addition, we provided 4 more states which are two x and y values of the ball that have undergone the regularization process. The reason we gave each x and y value twice is to give more weight to the values because we consider that information about the ball was the most critical information when training the agents. Lastly, we also provided x and y values of the ball after two frames from the current frame that have undergone the regularization process. The motivation behind the last two states is to train the agents so that they can predict the position of the ball in the next two frames and act accordingly in favor of our team. Therefore, there are 22 states in total as follows:
+
+\begin{equation}
+\label{eq:1}
+\begin{aligned}
+s = &\{ 4_{(F1,F2, D1, D2)} \times (player\_x, player\_y, player\_\theta, is\_active), \\ &2 \times (ball\_x, ball\_y), (predicted\_ball\_x, predicted\_ball\_y) \}.
+\end{aligned}
+\end{equation}
+
+
+\subsection{Action Space}
+For action space, we provided 256 actions in total. First, based on the current speed of the ball, we predicted the position of the ball in the next two frames using \texttt{predict\_ball\_location} function provided in the rule-based example code by \cite{aiworldcup}. Based on the ball’s location, we set each agent’s action except the goalkeeper so that each of them moves to the \textit{above}, \textit{below}, \textit{left}, and \textit{right} of the ball. Therefore, each agent except the goalkeeper can have 4 target positions. The motivation behind setting the actions this way, in particular, is to train the agents so that they can successfully follow the ball. By following the ball properly, we believe that there is a greater chance that one of the agents will score a goal. Since one-hot encoding must be used to train Deep Q-Network, four agents have values for all four target positions. For example, if the target position is encoded in the order of [\textit{above}, \textit{below}, \textit{left}, \textit{right}] and the target position of \textit{forward 1} is [0, 1, 0, 0], this indicates that the action of \textit{forward 1} is \textit{below}.
+Since each of the four agents can choose one of four actions independently of each other, the team as a whole can have 256 different action combinations. Our network chooses the best one out of 256 actions, and the positions of the four agents are determined automatically according to the order of the encoded target positions.
+
+\subsection{Reward Signal}
+We defined six reward signals in total based on the region the robots are located. We used the same reward function for all six instances but used different parameters for each instance. We describe the reward function and each of the six rewards as follows:
+\begin{eqnarray}
+{Reward}=\mathrm{C}_{1}+\mathrm{C}_{2} \times\left(\mathrm{d}_{prev}-\mathrm{d}_{curr}\right),
+\label{eqn6}
+\end{eqnarray}
+ where $d_{prev}$ indicates the distance between the opposing team’s goalpost and the ball of the second previous frame and $d_{curr}$ indicates a current distance between the opponent's goalpost and the ball (see Fig. \ref{dcurr}). 
+
+\begin{figure}[hb!]    \centerline{\includegraphics[width=10cm]{Figures/Fig5.png}}
+    \caption[dcurr]{Distances between the opponent's goalpost and the ball of the current and the previous frame.
+    } \label{dcurr}
+\end{figure}
+
+Below are our rules that determine rewards according to separated regions (see Table \ref{params}).
+
+ \begin{itemize}
+  \item If the agents are near the opponent’s goalpost, where it is shaded in yellow and indicated as \textcircled{\small 5} in Figure \ref{region}, we set $C_1$ to 10 and $C_2$ to 0, granting each agent positive 10 rewards.
+  \item If the agents are near our goal post, where it is shaded in blue and indicated as \textcircled{\small 1} in Figure \ref{region}, we set $C_1$ to -10 and $C_2$ to 0, granting each agent negative 10 rewards.
+  \item In the penalty area shaded in orange and indicated as \textcircled{\small 4}, we set $C_1$ to 1 and $C_2$ to 10.
+  \item In the corner areas in the opponent’s region which are shaded in green and indicated as \textcircled{\small 3}, we set $C_1$ to 0.5 and $C_2$ to 10.
+  \item If the agents are in our region, where it is shaded in purple and indicated as \textcircled{\small 2} in Figure \ref{region}, we set $C_1$ to -1 and $C_2$ to 10.
+  \item In the rest of the region shaded in gray and indicated as \textcircled{\small 6}, we set $C_1$ to 0 and $C_2$ to 10.
+\end{itemize}
+\begin{figure}[]
+    \centerline{\includegraphics[width=10cm]{Figures/Fig4.png}}
+    \caption[region]{Different regions in the soccer field for granting reward values.
+    } \label{region}
+\end{figure}
+
+The motivation behind the first reward signal is that since we train our agents to follow the ball if the agents, as well as the ball, are near the opponent’s goalpost, it is likely that our agent will score a goal. Therefore, in order to encourage such an instance to happen, we give the agent a high positive reward. Similarly, the incentive behind the second reward signal is that if our agents, as well as the ball, are near our team’s goalpost, it is more likely that our agent will score its own goal. Hence, in order to prevent such occasions, we give the agent a high negative reward value. The motivation behind the rest of the rewards is that since the ball moving closer to the opponent’s goalpost area is advantageous for us, if the distance between the ball and the opponent’s goal post has reduced from the previous frame to the current frame, we reward each agent by multiplying 10 to the difference. Moreover, based on the region, we add different values. Since it is more likely to score a goal if the ball, as well as the players, are near the opponent’s goalpost, in regions \textcircled{\small 3} and \textcircled{\small 4} which are closer to the opponent’s goalpost, we add 1 and 0.5, respectively. On the other hand, in region \textcircled{\small 2}, we add -1 since we want to penalize a situation where the ball and the players are near our goalpost. Finally, since region \textcircled{\small 6} is a neutral zone, we do not add any value as a reward. 
+
+\begin{table}
+\caption{$C_1$ and $C_2$ parameters for different regions.}
+\begin{center}
+\begin{tabular}{ccc}
+\hline\rule{0pt}{12pt}
+\textbf{Region  }\hspace{5mm}  & \textbf{$C_1$ parameter}\hspace{5mm}   & \textbf{$C_2$ parameter} \\ [2pt]
+\hline
+1               & -10                      & 0                       \\ 
+2               & -1                       & 10                      \\ 
+3               & 0.5                      & 10                      \\ 
+4               & 1                        & 10                      \\ 
+5               & 10                       & 0                       \\ 
+6               & 0                        & 10                      \\ \hline
+\end{tabular}
+\end{center}
+\label{params}
+\end{table}
+
+
+\subsection{Deep Q-Network Architecture}
+Deep Q-Network is composed of two networks: a behavior network and a target network. A behavior network determines the action based on Q-value that has been trained. During a training process, 22 states, one action, and one reward are stored in a replay memory every frame. Once the total number of values that are stored in the replay memory becomes greater or equal to 5,000, a minibatch with a size of 64 is randomly sampled for training. A target network periodically copies the behavior network and conducts a learning process. The behavior network is trained by reducing the difference between the Q-value calculated by the behavior network using the minibatch of a frame and the Q-value calculated by the target network using the minibatch of the next frame by using gradient descent. At the beginning of the training, we allowed the agents to take exploration using Epsilon greedy policy. This way, agents are to take a random action with a probability of epsilon, rather than taking an action determined by the Deep Q-Network. We set the value of epsilon as 1 at the beginning of the training and reduced the value by 0.05 every 20,000 times of training. 
+
+Our Deep Q-Network consists of an input layer, two hidden layers, and an output layer. The input layer and output layer have 22 and 256 nodes, respectively, since there are 22 state spaces and 256 action spaces. Both hidden layers have 256 nodes. We adopted Rectified Linear Unit as our activation function and optimized our network using the Adam optimizer. In total, 15 hours were spent on training, and we stopped the training when the Q-value loss reached the minimum.
+
+\subsection{Rule-based Scheme for Goalkeeper}
+We used a rule-based scheme for the goalkeeper, rather than using the learning-based one because we thought that the rule-based would be more effective for goalkeepers since there is less number of situations that goalkeepers have to handle. We employed numerous rules according to different conditions, and we describe each rule-based strategy we used for the goalkeeper below:
+ \begin{enumerate}
+  \item During the \texttt{default state}:
+    \begin{itemize}
+        \item y-position of the goalkeeper is set in line with the y-position of the ball
+        \item If the goalkeeper is inside the goal, it tries to get out.
+        \item If the goalkeeper is outside the penalty area, it returns to the desired position.
+    \end{itemize}
+  \item When the goalkeeper, as well as the ball, are inside the penalty area:
+    \begin{itemize}
+        \item If the ball is behind the goalkeeper and is not blocking the goalkeeper's path, it tries to get ahead of the ball.
+        \item If not, it gives up and tries to avoid making its own goal. 
+    \end{itemize}
+  \item When the goalkeeper, as well as the ball, are inside the penalty area:
+    \begin{itemize}
+        \item If the direction of the robot is far away from the ball direction, it gives up kicking the ball and blocks the goalpost.
+        \item If not, it tries to kick the ball away from the goalpost.If the ball is within an alert range, and there is not much difference in the y-position of the ball and the goalkeeper, the goalkeeper gazes at the ball.
+        \item If not, it goes to the desired position.
+    \end{itemize}
+  \item When the goalkeeper is inside the penalty area, but the ball is not in the penalty area:
+    \begin{itemize}
+        \item If the ball is within an alert range, and there is not much difference in the y-position of the ball and the goalkeeper, the goalkeeper gazes at the ball.
+        \item If not, it goes to the desired position.
+    \end{itemize}
+
+\end{enumerate}
+
+
+\subsection{Different strategies for different states}
+
+We adopted different strategies for different states such as \texttt{default state}, \texttt{kick-off}, \texttt{goal kick}, \texttt{corner kick}, and \texttt{penalty kick}. 
+\begin{figure}[t]
+    \centerline{\includegraphics[width=10cm]{Figures/Fig6.png}}
+    \caption[teamregion]{Two different regions where the purple area indicates our team’s region, while the green area indicates the opponent’s region.
+    } \label{teamregion}
+\end{figure}First, during the \texttt{default state}, to prevent a penalty kick, two defense players are not allowed inside the green area in Figure \ref{teamregion}, but they are to only follow the y-position of their action. Similarly, two forward players are not allowed inside the purple area in the figure, but they are to only follow the y-position of their action. Also, to prevent an own goal, if the ball is inside the purple area, \textit{defender 1} tries to match the y-position of the goalkeeper to help defend. \textit{Forward 1} and \textit{forward 2} tend to cause an own goal; thus, to prevent an own goal, they are to wait in a position indicated in the figure until the ball gets out of the purple region. Secondly, we set a strategy for scoring a goal by taking advantage of the fact that only \textit{forward 2} is able to move during the kick-off. We made \textit{forward 2} go around the ball and shoot as shown in Figure \ref{kickoff} by setting the position of the robot in each frame using the \texttt{set\_target\_position} function provided in the example code. Thirdly, during the \texttt{goal kick}, we set both wheels of the goalkeeper at a maximum velocity so that the ball moves toward the opponent’s region as far as possible. Fourthly, during the \texttt{corner kick}, \textit{forward 2} is to move to the left of the ball and shoot so that the ball moves to the opponent’s goalpost as close as possible. Lastly, during the \texttt{penalty kick}, if our team has ball ownership, the kicker shoots the ball aiming slightly above the center line, rather than the center to make it harder for the opponent’s goalkeeper to block the ball.
+
+\begin{figure}
+    \centerline{\includegraphics[width=10cm]{Figures/Fig7.png}}
+    \caption[kickoff]{Position of \textit{forward 2} each frame during a \texttt{kick-off}.
+    } \label{kickoff}
+\end{figure}

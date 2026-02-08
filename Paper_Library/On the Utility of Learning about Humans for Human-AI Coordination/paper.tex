@@ -1,0 +1,692 @@
+\documentclass{article}
+
+% if you need to pass options to natbib, use, e.g.:
+\PassOptionsToPackage{numbers}{natbib}
+% before loading neurips_2019
+
+% ready for submission
+% \usepackage{neurips_2019}
+
+% to compile a preprint version, e.g., for submission to arXiv, add add the
+% [preprint] option:
+% \usepackage[preprint]{neurips_2019}
+
+% to compile a camera-ready version, add the [final] option, e.g.:
+\usepackage[final]{neurips_2019}
+
+% to avoid loading the natbib package, add option nonatbib:
+%     \usepackage[nonatbib]{neurips_2019}
+
+% Recommended, but optional, packages for figures and better typesetting:
+\usepackage{float}
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{microtype}      % microtypography
+\usepackage{color,graphicx}
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{amsmath}
+\usepackage{subcaption}
+\usepackage{wrapfig}
+% \usepackage[pdf]{pstricks}
+\usepackage{epstopdf}
+
+\graphicspath{ {./images/} }
+
+% Attempt to make hyperref and algorithmic work together better:
+\newcommand{\theHalgorithm}{\arabic{algorithm}}
+
+\newboolean{include-notes}
+\setboolean{include-notes}{false}
+
+\newcommand{\TODO}[1]{\ifthenelse{\boolean{include-notes}}
+ {{\color{red} TODO: #1}}{}}
+\newcommand{\Coment}[1]{\ifthenelse{\boolean{include-notes}}
+ {{\color{blue} #1}}{}}
+\newcommand{\MicahComent}[1]{\ifthenelse{\boolean{include-notes}}
+ {{\color{cyan}Micah: #1}}{}}
+\newcommand{\RohinComent}[1]{\Coment{Rohin: #1}}
+\newcommand{\adnote}[1]{\ifthenelse{\boolean{include-notes}}
+ {{\color{blue}AD: #1}}{}}
+
+\newcommand{\angles}[1]{\langle #1 \rangle}
+\newcommand{\bo}[1]{\textbf{#1}}
+\newcommand{\ita}[1]{\emph{#1}}
+\newcommand{\say}[1]{``#1''}
+\newcommand*\Let[2]{\State #1 $\gets$ #2}
+
+\usepackage[font=footnotesize,labelfont=bf]{caption}
+\setlength{\belowcaptionskip}{-10pt}
+\newcommand{\prg}[1]{\textbf{#1}}
+
+\title{On the Utility of Learning about Humans \\for Human-AI Coordination}
+
+% The \author macro works with any number of authors. There are two commands
+% used to separate the names and addresses of multiple authors: \And and \AND.
+%
+% Using \And between authors leaves it to LaTeX to determine where to break the
+% lines. Using \AND forces a line break at that point. So, if LaTeX puts 3 of 4
+% authors names on the first line, and the last on the second line, try using
+% \AND instead of \And before the third author name.
+
+\author{%
+  Micah Carroll \\
+  UC Berkeley\\
+  \texttt{mdc@berkeley.edu} \\
+  % examples of more authors
+  \And
+  Rohin Shah \\
+  UC Berkeley\\
+  \texttt{rohinmshah@berkeley.edu} \\
+  \And
+  Mark K. Ho \\
+  Princeton University\\
+  \texttt{mho@princeton.edu} \\
+  \And
+  Thomas L. Griffiths \\
+  Princeton University\\
+  \And
+  Sanjit A. Seshia \\
+  UC Berkeley\\
+  \And
+  Pieter Abbeel \\
+  UC Berkeley\\
+  \And
+  Anca Dragan\\
+  UC Berkeley\\
+  % \AND
+  % Coauthor \\
+  % Affiliation \\
+  % Address \\
+  % \texttt{email} \\
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+  While we would like agents that can coordinate with humans, current algorithms such as self-play and population-based training create agents that can coordinate with \ita{themselves}. Agents that assume their partner to be optimal or similar to them can converge to coordination protocols that fail to understand and be understood by humans. To demonstrate this, we introduce a simple environment that requires challenging coordination, based on the popular game \ita{Overcooked}, and learn a simple model that mimics human play. We evaluate the performance of agents trained via self-play and population-based training. These agents perform very well when paired with themselves, but when paired with our human model, they are significantly worse than agents designed to play with the human model. An experiment with a planning algorithm yields the same conclusion, though only when the human-aware planner is given the exact human model that it is playing with. A user study with real humans shows this pattern as well, though less strongly. Qualitatively, we find that the gains come from having the agent \emph{adapt} to the human's gameplay. Given this result, we suggest several approaches for designing agents that learn about humans in order to better coordinate with them. Code is available at \url{https://github.com/HumanCompatibleAI/overcooked_ai}.
+\end{abstract}
+
+\section{Introduction} \label{sec:introduction}
+
+An increasingly effective way to tackle two-player games is to train an agent to play with a set of other AI agents, often past versions of itself. This powerful approach has resulted in impressive performance against human experts in games like Go \citep{AlphaZero}, Quake \citep{FTW}, Dota \citep{OpenAIFiveFinals}, and Starcraft \citep{AlphaStar}.
+
+\begin{figure}[h]
+  %\vskip 0.2in
+  \centering
+  \includegraphics[width=\textwidth]{images/game_tree.png}
+  \caption{The impact of incorrect expectations of optimality. \textbf{Left:} In a competitive game, the agent plans for the worst case. $\mathbf{AI}$ expects that if it goes left, $\mathbf{H}$ will go left. So, it goes right where it expects to get 3 reward (since $\mathbf{H}$ would go left). When $\mathbf{H}$ suboptimally goes right, $\mathbf{AI}$ gets 7 reward: \emph{more} than it expected. \textbf{Right:} In a collaborative game, $\mathbf{AI}$ expects $\mathbf{H}$ to coordinate with it to choose the best option, and so it goes left to obtain the 8 reward. However, when $\mathbf{H}$ suboptimally goes left, $\mathbf{AI}$ only gets 1 reward: the worst possible outcome!}
+  \label{fig:gametree}
+\end{figure}
+
+Since the AI agents never encounter humans during training, when evaluated against human experts, they are undergoing a distributional shift. Why doesn't this cause the agents to fail? We hypothesize that it is because of the \ita{competitive nature} of these games. Consider the canonical case of a two-player zero-sum game, as shown in Figure~\ref{fig:gametree} (left). When humans play the minimizer role but take a branch in the search tree that is suboptimal, this only \emph{increases} the maximizer's score.
+
+However, not all settings are competitive. Arguably, one of the main goals of AI is to generate agents that \emph{collaborate}, rather than compete, with humans. We would like agents that help people with the tasks they want to achieve, augmenting their capabilities \citep{AugmentingHumans,AugmentingHumansDistill}. Looking at recent results, it is tempting to think that self-play-like methods extend nicely to collaboration: AI-human teams performed well in Dota \cite{OpenAIFiveCollaboration} and Capture the Flag \cite{FTW}. However, in these games, the advantage may come from the AI system's individual ability, rather than from \emph{coordination} with humans. We claim that in general, collaboration is fundamentally different from competition, and will require us to go beyond self-play to explicitly account for \emph{human} behavior.
+
+Consider the canonical case of a common-payoff game, shown in Figure~\ref{fig:gametree} (right): since both agents are maximizers, a mistake on the human's side is no longer an advantage, but an actual problem, \emph{especially} if the agent did not anticipate it. Further, agents that are allowed to co-train might converge onto opaque coordination strategies. For instance, agents trained to play the collaborative game Hanabi learned to use the hint ``red'' or ``yellow'' to indicate that the newest card is playable, which no human would immediately understand \citep{BayesianActionDecoder}. When such an agent is paired with a human, it will execute the opaque policy, which may fail spectacularly when the human doesn't play their part. %, and will continue to make the wrong assumption even after observing the person deviate from what it expected. Even when the human is clearly pursuing a particular suboptimal plan, the agent will expect her to turn around at the next moment and return to the optimal plan.
+
+We thus hypothesize that in true collaborative scenarios agents trained to play well with other AI agents will perform much more poorly when paired with humans. We further hypothesize that incorporating human data or models into the training process will lead to significant improvements.
+
+\begin{figure}[b]
+  \centering
+  \includegraphics[width=\textwidth]{images/coordination_failure.jpeg}
+  \caption{Our Overcooked environment. The goal is to place three onions in a pot (dark grey), take out the resulting soup on a plate (white) and deliver it (light grey), as many times as possible within the time limit. $\mathbf{H}$, the human, is close to a dish dispenser and a cooked soup, and $\mathbf{AI}$, the agent, is facing a pot that is not yet full. The optimal strategy is for $\mathbf{H}$ to put an onion in the partially full pot, and for $\mathbf{AI}$ to put the existing soup in a dish and deliver it. This is due to the layout structure, that makes $\mathbf{H}$ have an advantage in placing onions in pots, and $\mathbf{AI}$ have an advantage in delivering soups. However, we can guess that $\mathbf{H}$ plans to pick up a plate to deliver the soup. If $\mathbf{AI}$ nonetheless expects $\mathbf{H}$ to be optimal, it will expect $\mathbf{H}$ to turn around to get the onion, and will continue moving towards its own dish dispenser, leading to a \ita{coordination failure}.}
+  \label{fig:overcooked}
+\end{figure}
+
+To test this hypothesis, we introduce a simple environment based on the popular game \ita{Overcooked} \citep{Overcooked}, which is specifically designed to be challenging for humans to coordinate in (Figure~\ref{fig:overcooked}).% shows an example that demonstrates how coordination can be challenging in our environment, where the incorrect expectation of human optimality causes the agent to move in the wrong direction.
+We use this environment to compare agents trained with themselves to agents trained with a learned human model. For the former, we consider self-play \citep{AlphaZero}, population-based training \citep{PBT}, and coupled planning with replanning. For the latter, we collect human-human data and train a behavior cloning human model; we then train a reinforcement learning and a planning agent to collaborate well with this model. We evaluate how well these agents collaborate with a held-out ``simulated'' human model (henceforth the ``proxy human''), trained on a different data set, as well as in a user study. %and exhibiting different behavior from the training human model. This enables us to measure a ``gold standard'' for reference, i.e. the maximum performance an agent can ever get, by cheating and training the agent with access to the ground truth human behavior (the proxy human in this case).
+
+We find that the agents which did not leverage human data in training perform very well with themselves, and drastically worse when paired with the proxy human. This is not explained only by human suboptimality, because the agent also significantly underperforms a ``gold standard'' agent that has access to the proxy human. The agent trained with the behavior-cloned human model is drastically better, showing the benefit of having a relatively good human model. %This is despite the differences between the human model it uses and the proxy human it is being evaluated with. 
+We found the same trends even when we paired these agents with real humans, for whom our model has much poorer predictive power but nonetheless helps the agent be a better collaborator.
+We also experimented with using behavior cloning directly for the agent's policy, and found that it also outperforms self-play-like methods, but still underperforms relative to methods that that leverage planning (with respect to the actual human model) or reinforcement learning with a proxy human model.
+
+Overall, we learned a few important lessons in this work. First, our results showcase the importance of accounting for real human behavior during training: even using a behavior cloning model prone to failures of distributional shift seems better than treating the human as if they were optimal or similar to the agent. Second, leveraging planning or reinforcement learning to maximize the collaborative reward, again even when using such a simple human model, seems to already be better than vanilla imitation. These results are a cautionary tale against relying on self-play or vanilla imitation for collaboration, and advocate for methods that leverage models of human behavior, actively improve them, or even use them as part of a population to be trained with.
+
+\section{Related Work}
+
+\prg{Human-robot interaction (HRI).} The field of human robot interaction has already embraced our main point that we shouldn't model the human as optimal. Much work focuses on achieving collaboration by planning and learning with (non-optimal) models of human behavior \cite{CrossTraining,SharedAutonomy,ModelingHumanDrivers}, as well as on specific properties of robot behavior that aid collaboration \cite{HumanAwarePlanning,RobotMotionAnticipation,LegibilityPredictability}. However, to our knowledge, ours is the first work to analyze the optimal human assumption in the context of deep reinforcement learning, and to test potential solutions such as population-based training (PBT).
+
+\citet{UtilityOfModelLearning} is particularly related to our work. It evaluates whether it is useful to learn a human model using deep learning, compared to a more structured ``theory of mind'' human model. We are instead evaluating how useful it is to have a human model \ita{at all}.
+
+% The field of HRI often focuses on the setting where a robot is assisting a human to complete some task \citep{SharedAutonomy}, which is analogous to our setting. Much work has been done on specific aspects of such interaction, such as predictability \citep{RobotPredictability}, legibility \citep{LegibilityPredictability} and adaptability \citep{kitani}. However, such approaches typically depend on human domain knowledge, e.g. a good featurization of the state space, or are specialized to the task at hand. In theory, these aspects could be learned more generally simply by optimizing for the task reward function, \ita{armed with an understanding of humans}. We are evaluating whether this can be done in practice by DRL algorithms.
+
+%\prg{Deep reinforcement learning.} Deep reinforcement learning (DRL) \citep{DQN} uses the expressive power of neural networks to attack reinforcement learning problems. Recently, it has been used to play zero-sum games at superhuman levels, by having the agents play against other AI agents in order to learn how best to play the game. Self-play has led to superhuman performance in Dota \citep{OpenAIFiveFinals,OpenAIFive} and Go \citep{AlphaZero}, while population-based training (PBT) \citep{PBT} has been used in StarCraft \citep{AlphaStar} and Capture the Flag in Quake \citep{FTW}. Notably, with both Dota and Capture the Flag, which are team-based competitive games, the resulting agents worked reasonably well even when one of their teammates was a human instead of an AI agent. We hypothesize that this is because the agents are powerful enough to play the game well alone, and so having a suboptimal human partner doesn't hurt them too much, but that they could perform significantly better when teaming up with humans if they had better models of them.
+%\MicahComent{Cody: seems to undercut your argument from the initial paragraphs, and this currently seems like a bit of a weird sweeping it under the rug. I know it's not possible to do anything qualitative in understanding this at this point, but it might be worth explicitly noting this as a counter to your argument in introduction, just because having it in related work feels a bit like you're hoping people will glaze over it, which I nearly did :P}
+
+\prg{Multiagent reinforcement learning.} Deep reinforcement learning has also been applied to multiagent settings, in which multiple agents take actions in a potentially non-competitive game \cite{MADDPG, CooperativeMultiagentDRL}. Some work tries to teach agents collaborative behaviors \citep{MARLSocialDilemmas,InequityAversion} in environments where rewards are \ita{not} shared across agents. The Bayesian Action Decoder \citep{BayesianActionDecoder} learns communicative policies that allow two agents to collaborate, and has been applied to the cooperative card game Hanabi. However, most multiagent RL research focuses on AI-AI interaction, rather than the human-AI setting.
+
+\citet{ObservationalSelfPlay} starts from the same observation that self-play will perform badly in general-sum games, and aims to do better given some data from agents that will be evaluated on at test time (analogous to our human data). However, they assume that the test time agents have settled into an equilibrium that their agent only needs to replicate, and so they train their agent with Observational Self-Play (OSP): a combination of imitation learning and MARL. In contrast, we allow for the case where humans do not play an equilibrium strategy (because they are suboptimal), and so we only use imitation learning to create human models, and train our agent using pure RL.
+
+\prg{Imitation learning.} Imitation learning \citep{ApprenticeshipViaIRL,GAIL} aims to train agents that mimic the policies of a \ita{demonstrator}. In our work, we use behavior cloning \citep{behaviorCloning} to imitate demonstrations collected from humans, in order to learn human models to collaborate with. However, the main focus of our work is in the design of agents that can collaborate with these models, and not the models themselves.
+
+\section{Preliminaries}
+
+% \prg{Markov Decision Process (MDP).} A Markov Decision Process (MDP) is defined by a tuple $\langle S, A, \mathcal{T}, \gamma, R \rangle$ where: $S$ is a finite set of states; $A$ is a finite set of actions available to the agent; $\mathcal{T}: S \times A \times S \to [0, 1]$ is a transition function that determines the distribution over next states when the agent takes an action in a given state, and $R: S \to \mathbb{R}$ is a real-valued reward function. A \ita{policy} is a function $S \to A$ that determines the agent's action in every possible state.
+
+\prg{Multi-agent MDP.} A multiagent Markov decision process \cite{multiMDP} is defined by a tuple $\langle S, \alpha, \{A_{i \in \alpha} \}, \mathcal{T}, R \rangle$. $S$ is a finite set of states, and $R: S \to \mathbb{R}$ is a real-valued reward function. $\alpha$ is a finite set of agents; $A_i$ is the finite set of actions available to agent $i$. $\mathcal{T}: S \times A_1 \times \dots \times A_n \times S \to [0, 1]$ is a transition function that determines the next state given \ita{all} of the agents' actions.
+
+% \prg{Multi-agent to single-agent MDP via embedding.}\label{subsec:multi-to-single} If we fix the policies of all but one of the agents in a multiagent MDP, we get a single agent MDP for the one agent whose policy is not fixed. Formally, suppose we are given the policies $\pi_i : S \to A_i$ for agents $2, \dots, n$ in a multiagent MDP $\langle S, \{1, \dots n\}, \{A_1, \dots A_n \}, \mathcal{T}, R \rangle$. We can then define a single-agent MDP for agent 1 as $\langle S, A_1, \mathcal{T}', R \rangle$, where $\mathcal{T}': S \times A \times S \to [0, 1]$ is defined by $\mathcal{T}'(s, a, s') = \mathcal{T}(s, a, \pi_2(s), \dots, \pi_n(s), s')$.
+
+\prg{Behavior cloning.} One of the simplest approaches to imitation learning is given by behavior cloning, which learns a policy from expert demonstrations by directly learning a mapping from observations to actions with standard supervised learning methods \citep{BehavioralCloning}. Since we have a discrete action space, this is a traditional classification task. Our model takes an encoding of the state as input, and outputs a probability distribution over actions, and is trained using the standard cross-entropy loss function.
+
+\prg{Population Based Training.} \label{PopulationBasedTraining} Population Based Training (PBT) \cite{PBT} is an online evolutionary algorithm which periodically adapts training hyperparameters and performs model selection. In multiagent RL, PBT maintains a population of agents, whose policies are parameterized by neural networks, and trained with a DRL algorithm. In our case, we use Proximal Policy Optimization (PPO) \cite{PPO}. During each PBT iteration, pairs of agents are drawn from the population, trained for a number of timesteps, and have their performance recorded. At the end of each PBT iteration, the worst performing agents are replaced with copies of the best agents with mutated hyperparameters. % This allows us to explore hyperparameter space online and autonomously find a hyperparameter schedule that works well for the task at hand.
+
+\section{Environment and Agents}
+
+\begin{figure}
+    \centering
+    \includegraphics[height=.145\linewidth]{images/layouts/cramped_room.png}
+    \includegraphics[height=.145\linewidth]{images/layouts/asymmetric.png}
+    \includegraphics[height=.145\linewidth]{images/layouts/coordination_ring.png}
+    \includegraphics[height=.145\linewidth]{images/layouts/forced_coordination.png}
+    \includegraphics[height=.145\linewidth]{images/layouts/counter_circuit.png}
+    \caption{\bo{Experiment layouts.} From left to right: \emph{Cramped Room} presents low-level coordination challenges: in this shared, confined space it is very easy for the agents to collide. \emph{Asymmetric Advantages} tests whether players can choose high-level strategies that play to their strengths, as illustrated in Figure~\ref{fig:overcooked}. In \emph{Coordination Ring}, players must coordinate to travel between the bottom left and top right corners of the layout. \emph{Forced Coordination} instead removes collision coordination problems, and forces players to develop a high-level joint strategy, since neither player can serve a dish by themselves. \emph{Counter Circuit} involves a non-obvious coordination strategy, where onions are passed over the counter to the pot, rather than being carried around.}
+\label{fig:example_layouts}
+\end{figure}
+
+
+\subsection{Overcooked}
+To test our hypotheses, we would like an environment in which coordination is challenging, and where deep RL algorithms work well. Existing environments have not been designed to be challenging for coordination, and so we build a new one based on the popular video game \ita{Overcooked} \citep{Overcooked}, in which players control chefs in a kitchen to cook and serve dishes. Each dish takes several high-level actions to deliver, making strategy coordination difficult, in addition to the challenge of motion coordination. 
+
+% Human-human play typically involves looking at the state of the map and choosing a high-priority task that complements the actions of the other players.
+
+We implement a simplified version of the environment, in which the only objects are onions, dishes, and soups (Figure~\ref{fig:overcooked}). Players place 3 onions in a pot, leave them to cook for 20 timesteps, put the resulting soup in a dish, and serve it, giving all players a reward of 20. The six possible actions are: up, down, left, right, noop, and "interact", which does something based on the tile the player is facing, e.g. placing an onion on a counter. Each layout has one or more onion dispensers and dish dispensers, which provide an unlimited supply of onions and dishes respectively. Most of our layouts (Figure~\ref{fig:example_layouts}) were designed to lead to either low-level motion coordination challenges or high-level strategy challenges. 
+
+% The interact action is used to pick up and put down objects, serve dishes, and pour soup in a player's plate. All movement actions change the location of the agent by one cell, unless facing a wall, colliding, or moving into the same cell as another player – in that case both players are left in their starting position.
+
+Agents should learn how to navigate the map, interact with objects, drop the objects off in the right locations, and finally serve completed dishes to the serving area. All the while, agents should be aware of what their partner is doing and coordinate with them effectively.
+
+%Our main goal is to quantify the difference in performance between agents designed for self-play and ones designed to play with humans, and so we design multiple examples of such agents. All agents use a direct state representation. We also learn human models to evaluate the agents with, using a hardcoded featurization.
+
+\subsection{Human models} \label{sec:human-models}
+
+We created a web interface for the game, from which we were able to collect trajectories of humans playing with other humans for the layouts in Figure~\ref{fig:example_layouts}. In preliminary experiments we found that human models learned through behavior cloning performed better than ones learned with Generative Adversarial Imitation Learning (GAIL) \cite{GAIL}, so decided to use the former throughout our experiments. To incentivize generalization in spite of the scarcity of human data, we perform behavior cloning over a manually designed featurization of the underlying game state.
+
+For each layout we gathered \textasciitilde{}16 human-human trajectories (for a total of 18k environment timesteps). We partition the joint trajectories into two subsets, and split each trajectory into two single-agent trajectories. For each layout and each subset, we learn a human model through behavior cloning. We treat one model, BC, as a human model we have access to, while the second model $H_{Proxy}$ is treated as the ground truth human proxy to evaluate against at test time. On the first three layouts, when paired with themselves, most of these models perform similarly to an average human. Performance is significantly lower for the last two layouts (Forced Coordination and Counter Circuit).
+
+The learned models sometimes got ``stuck'': they would perform the same action over and over again (such as walking into each other), without changing the state. We added a simple rule-based mechanism to get the agents unstuck by taking a random action. For more details see Appendix \ref{appendix:behaviorcloning}.
+
+\subsection{Agents designed for self-play} \label{subsec:baselines}
+
+We consider two DRL algorithms that train agents designed for self-play, and one planning algorithm.
+
+\prg{DRL algorithms.} For DRL we consider PPO trained in self-play (SP) and PBT. Since PBT involves training agents to perform well with a \ita{population} of other agents, we might expect them to be more robust to potential partners compared to agents trained via self-play, and so PBT might coordinate better with humans. For PBT, all of the agents in the population used the same network architecture.
+
+\prg{Planning algorithm.} Working in the simplified Overcooked environment enables us to also compute near-optimal plans for the joint planning problem of delivering dishes. This establishes a baseline for performance and coordination, and is used to perform \ita{coupled planning with re-planning}. With coupled planning, we compute the optimal joint plan for both agents. However, rather than executing the full plan, we only execute the first action of the plan, and then \ita{replan} the entire optimal joint plan after we see our partner's action (since it may not be the same as the action we computed for them).
+
+To achieve this, we pre-compute optimal joint motion plans for every possible starting and desired goal locations for each agent. We then create high-level actions such as \say{get an onion}, \say{serve the dish}, etc. and use the motion plans to compute the cost of each action. We use $A^*$ search to find the optimal joint plan in this high-level action space. This planner does make some simplifying assumptions, detailed in Appendix \ref{appendix:jointplanner}, making it near-optimal instead of optimal.
+
+\subsection{Agents designed for humans}
+
+We seek the simplest possible solution to having an agent that actually takes advantage of the human model. We embed our learned human model BC in the environment, treating it's choice of action as part of the dynamics. We then directly train a policy on this single-agent environment with PPO. We found empirically that the policies achieved best performance by initially training them in self-play, and then linearly annealing to training with the human model (see Appendix  \ref{appendix:ppo_bc}).
+
+% We evaluate such an agent at test time with a held-out human model BC$_{Test}$, trained on a different subset of the human trajectories (as detailed in Appendix~\ref{appendix:behaviorcloning}).
+
+For planning, we implemented a model-based planner that uses hierarchical $A^*$ search to act near-optimally, assuming access to the policy of the other player (see Appendix~\ref{appendix:model-based-planner}). In order to preserve near-optimality we make our training and test human models deterministic, as dealing with stochasticity would be too computationally expensive. 
+
+% \subsection{Imitation learning agent}
+% We also consider a pure imitation learning (rather than reinforcement learning or planning) agent. We simply use the behavior cloning model BC as an agent.
+
+\section{Experiments in Simulation} \label{sec:experiments}
+
+
+\begin{figure}[t!]
+
+\centering
+\begin{subfigure}[b]{1\textwidth}
+   \includegraphics[width=\linewidth]{images/experiments/ppo_experiments.pdf}
+   \caption{\bo{Comparison with agents trained in self-play.}}
+   \label{fig:ppo_experiments} 
+\end{subfigure}
+
+\vskip 0.2in
+
+\begin{subfigure}[b]{1\textwidth}
+   \includegraphics[width=\linewidth]{images/experiments/pbt_experiments.pdf}
+   \caption{\bo{Comparison with agents trained via PBT.}}
+   \label{fig:pbt_experiments}
+\end{subfigure}
+
+\vskip 0.2in
+
+\caption{Rewards over trajectories of 400 timesteps for the different agents (agents trained with themselves  -- SP or PBT -- in teal, agents trained with the human model -- PPO$_{BC}$ -- in orange, and imitation agents -- BC -- in gray), with standard error over 5 different seeds, paired with the proxy human H$_{Proxy}$. The white bars correspond to what the agents trained with themselves \emph{expect} to achieve, i.e. their performance when paired with itself (SP+SP and PBT+PBT). First, these agents perform much worse with the proxy human than with themselves. Second, the PPO agent that trains with human data performs much better, as hypothesized. Third, imitation tends to perform somewhere in between the two other agents. The red dotted lines show the "gold standard" performance achieved by a PPO agent with direct access to the proxy model itself -- the difference in performance between this agent and PPO$_{BC}$ stems from the innacuracy of the BC human model with respect to the actual $H_{Proxy}$. The hashed bars show results with the starting position of the agents switched. This most makes a difference for asymmetric layouts such as Asymmetric Advantages or Forced Coordination.}
+
+\label{fig:drl_experiments}
+\end{figure}
+
+We pair each agent with the proxy human model and evaluate the team performance.
+
+\noindent\textbf{Independent variables.} We vary the type of agent used. We have agents trained with themselves: self-play (SP), population-based training (PBT), coupled planning (CP); agents trained with the human model BC: reinforcement learning based (PPO$_{BC}$), and planning-based P$_{BC}$; and the imitation agent BC itself. Each agent is paired with H$_{Proxy}$ in each of the layouts in Figure~\ref{fig:example_layouts}.
+
+\noindent\textbf{Dependent measures.}
+As good coordination between teammates is essential to achieve high returns in this environment, we use cumulative rewards over a horizon of 400 timesteps for our agents as a proxy for coordination ability. For all DRL experiments, we report average rewards across 100 rollouts and standard errors across 5 different seeds. To aid in interpreting these measures, we also compute a "gold standard" performance by training the PPO and planning agents not with BC, but with H$_{Proxy}$ itself, essentially giving them access to the ground truth human they will be paired with.
+
+\begin{wrapfigure}{R}{0.4\textwidth}
+  \vspace{-1em}
+  \centering
+  \includegraphics[width=\linewidth]{images/experiments/planning_experiments.pdf}
+  \caption{\bo{Comparison across planning methods.} We see a similar trend: coupled planning (CP) performs well with itself (CP+CP) and worse with the proxy human (CP+H$_{Proxy}$). Having the correct model of the human (the dotted line) helps, but a bad model (P$_{BC}$+H$_{Proxy}$) can be much worse because agents get stuck (see Appendix \ref{appendix:planning-exp}).}
+  \label{fig:p_experiments}
+  %\vspace{-1em}
+\end{wrapfigure}
+
+
+\noindent\textbf{Analysis.}
+We present quantitative results for DRL in Figure~\ref{fig:drl_experiments}. Even though SP and PBT achieve excellent performance in self-play, when paired with a human model they struggle to even meet the performance of the imitation agent. There is a large gap between the imitation agent and gold standard performance. Note that the gold standard reward is lower than self-play methods paired with themselves, due to human suboptimality affecting the highest possible reward the agent can get. We then see that PPO$_{BC}$ outperforms the agents trained with themselves, getting closer to the gold standard. This supports our hypothesis that 1) self-play-like agents perform drastically worse when paired with humans, and 2) it is possible to improve performance significantly by taking the human into account. We show this holds (for these layouts) even when using an unsophisticated, behavior-cloning based model of the human.
+
+Due to computational complexity, model-based planning was only feasible on two layouts. Figure~\ref{fig:p_experiments} shows the results on these layouts, demonstrating a similar trend. As expected, coupled planning achieves better self-play performance than reinforcement learning. But when pairing it with the human proxy, performance drastically drops, far below the gold standard. Qualitatively, we notice that a lot of this drop seems to happen because the agent expects optimal motion, whereas actual human play is much slower. Giving the planner access to the true human model and planning with respect to it is sufficient to improve performance (the dotted line above P$_{BC}$). However, when planning with BC but evaluating with H$_{proxy}$, the agent gets stuck in loops (see Appendix \ref{appendix:planning-exp}).
+
+Overall, these results showcase the benefit of getting access to a \emph{good} human model -- BC is in all likelihood closer to H$_{Proxy}$ than to a real human. Next, we study to what extent the benefit is still there with a poorer model, i.e. when still using BC, but this time testing on real users.
+
+\section{User Study}
+
+\prg{Design.} We varied the AI agent (SP vs. PBT vs. PPO$_{BC}$) and measured the average reward per episode when the agent was paired with a human user. We recruited 60 users (38 male, 19 female, 3 other, ages 20-59) on Amazon Mechanical Turk and used a between-subjects design, meaning each user was only paired with a single AI agent. Each user played all 5 task layouts, in the same order that was used when collecting human-human data for training. See Appendix \ref{appendix:user-study} for more information.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\linewidth]{images/experiments/humanai_experiments.pdf}
+    \caption{Average rewards over 400 timesteps of agents paired with real humans, with standard error across study participants. In most layouts, the PPO agent that trains with human data (PPO$_{BC}$, orange) performs better than agents that don't model the human (SP and PBT, teal), and in some layouts significantly so. We also include the performance of humans when playing with other humans (gray) for information. Note that for human-human performance, we took long trajectories and evaluated the reward obtained at 400 timesteps. In theory, humans could have performed better by optimizing for short-term reward near the end of the 400 timesteps, but we expect that this effect is small.}
+    \label{fig:humanai_performance}
+    %\vskip -0.2in
+\end{figure}
+
+\prg{Analysis.} We present results in Figure~\ref{fig:humanai_performance}. PPO$_{BC}$ outperforms the self-play methods in three of the layouts, and is roughly on par with the best one of them in the other two. While the effect is not as strong as in simulation, it follows the same trend, where PPO$_{BC}$ is overall preferable.
+
+An ANOVA with agent type as a factor and layout and player index as covariates showed a significant main effect for agent type on reward ($F(2,224)=6.49$, $p<.01$), and the post-hoc analysis with Tukey HSD corrections confirmed that PPO$_{BC}$ performed significantly better than SP ($p=.01)$ and PBT ($p<.01$). This supports our hypothesis.
+
+In some cases, PPO$_{BC}$ also significantly outperforms human-human performance. Since imitation learning typically cannot exceed the performance of the demonstrator it is trained on, this suggests that in these cases PPO$_{BC}$ would also outperform imitation learning.
+
+We speculate that the differences across layouts are due to differences in the quality of BC and DRL algorithms across layouts. In Cramped Room, Coordination Ring, and the second setting of Asymmetric Advantages, we have both a good BC model as well as good DRL training, and so PPO$_{BC}$ outperforms both self-play methods and human-human performance. In the first setting of Asymmetric Advantages, the DRL training does not work very well, and the resulting policy lets the human model do most of the hard work. (In fact, in the second setting of Asymmetric Advantages in Figure~\ref{fig:ppo_experiments}, the human-AI team \emph{beats} the AI-AI team, suggesting that the role played by the human is hard to learn using DRL.) In Forced Coordination and Counter Circuit, BC is a very poor human model, and so PPO$_{BC}$ still has an incorrect expectation, and doesn't perform as well. %In particular, in Forced Coordination, BC playing with itself obtains only around a third of the reward that humans can achieve with each other.
+
+We also guess that the effects are not as strong in simulation because humans are able to adapt to agent policies and figure out how to get the agent to perform well, a feat that our simple $H_{Proxy}$ is unable to do. This primarily benefits self-play based methods, since they typically have opaque coordination policies, and doesn't help PPO$_{BC}$ as much, since there is less need to adapt to PPO$_{BC}$. We describe some particular scenarios in Section~\ref{sec:qualitative}.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\linewidth]{images/experiments/hai_losses.pdf}
+    \vskip 0.1in
+    \caption{Cross-entropy loss incurred when using various models as a predictive model of the human in the human-AI data collected, with standard error over 5 different seeds. Unsurprisingly, SP and PBT are poor models of the human, while BC and $H_{Proxy}$ are good models. See Appendix \ref{appendix:user-study} for prediction accuracy.}
+    \label{fig:proxy_ppo_bc_losses}
+\end{figure}
+
+Figure~\ref{fig:proxy_ppo_bc_losses} shows how well each model performs as a predictive model of the human, averaged across all human-AI data, and unsurprisingly finds that SP and PBT are poor models, while BC and $H_{Proxy}$ are decent. Since SP and PBT expect the other player to be like themselves, they are effectively using a bad model of the human, explaining their poor performance with real humans. PPO$_{BC}$ instead expects the other player to be BC, a much better model, explaining its superior performance.
+
+\section{Qualitative Findings}
+\label{sec:qualitative}
+Here, we \emph{speculate} on some qualitative behaviors that we observed. We found similar behaviors between simulation and real users, and SP and PBT had similar types of failures, though the specific failures were different.
+
+\prg{Adaptivity to the human.} We observed that over the course of training the SP agents became very specialized, and so suffered greatly from distributional shift when paired with human models and real humans. For example, in Asymmetric Advantages, the SP agents only use the top pot, and ignore the bottom one. However, humans use both pots. The SP agent ends up waiting unproductively for the human to deliver a soup from the top pot, while the human has instead decided to fill up the bottom pot. In contrast, PPO$_{BC}$ learns to use both pots, depending on the context.
+%It still appears to prefer the top pot and to incentivize the human to perform the actions for which it has a marginal advantage, but is somewhat more flexible than the SP policy.
+
+%However, all trained agents are not very robust in handling the case in which both agents in a game end up holding items that are of no use (i.e. dishes when there is no soup cooking, or onions when all the pots are full). For SP this is a natural consequence of not having this situation occur at training time in it's self-play equilibrium, while for PPO$_{BC}$ this is most likely caused by the scarcity of examples in the human training data in which this situation arises.
+
+\prg{Leader/follower behavior.} In Coordination Ring, SP and PBT agents tend to be very headstrong: for any specific portion of the task, they usually expect either clockwise or counterclockwise motion, but not both. Humans have no such preference, and so the SP and PBT agents often collide with them, and keep colliding until the human gives way. The PPO$_{BC}$ agent instead can take on both leader and follower roles. If it is carrying a plate to get a soup from the pot, it will insist on following the shorter path, even if a human is in the way. On the other hand, when picking which route to carry onions to the pots, it tends to adapt to the human's choice of route.
+
+\prg{Adaptive humans.} Real humans learn throughout the episode to anticipate and work with the agent's particular coordination protocols. For example, in Cramped Room, after picking up a soup, SP and PBT insist upon delivering the soup via right-down-interact instead of down-right-down-interact -- even when a human is in the top right corner, blocking the way. Humans can figure this out and make sure that they are not in the way. Notably, PPO$_{BC}$ \emph{cannot} learn and take advantage of human adaptivity, because the BC model is not adaptive.
+
+\section{Discussion} \label{sec:discussion}
+
+\noindent\textbf{Summary.} While agents trained via general DRL algorithms in collaborative environments are very good at coordinating with themselves, they are not able to handle human partners well, since they have never seen humans during training. We introduced a simple environment based on the game Overcooked that is particularly well-suited for studying coordination, and demonstrated quantitatively the poor performance of such agents when paired with a learned human model, and with actual humans. Agents that were explicitly designed to work well with a human model, even in a very naive way, achieved significantly better performance. Qualitatively, we observed that agents that learned about humans were significantly more \ita{adaptive} and able to take on both \ita{leader and follower roles} than agents that expected their partners to be optimal (or like them).
+
+\noindent\textbf{Limitations and future work.}
+An alternative hypothesis for our results is that training against BC simply forces the trained agent to be robust to a wider variety of states, since BC is more stochastic than an agent trained via self-play, but it doesn't matter whether BC models real humans or not. We do not find this likely a priori, and we did try to check this: PBT is supposed to be more robust than self-play, but still has the same issue, and planning agents are automatically robust to states, but still showed the same broad trend. Nonetheless, it is possible that DRL applied to a sufficiently wide set of states could recoup most of the lost performance. One particular experiment we would like to run is to rain a single agent that works on arbitrary layouts. Since agents would be trained on a much wider variety of states, it could be that such agents require more general coordination protocols, and self-play-like methods will be more viable since they are forced to learn the same protocols that humans would use.
+
+In contrast, in this work, we trained separate agents for each of the layouts in Figure~\ref{fig:example_layouts}. We limited the scope of each agent because of our choice to train the simplest human model, in order to showcase the importance of human data: if a naive model is already better, then more sophisticated ones will be too. Our findings open the door to exploring such models and algorithms:%Given this empirical result, we would like to develop new approaches that can use knowledge about humans for coordination. Such algorithms must take into account the fact that human data is expensive. While PPO$_{BC}$ is one potential approach, we expect that more sophisticated approaches can lead to better performance.
+
+\emph{Better human models:} Using imitation learning for the human model is prone to distributional shift that reinforcement learning will exploit. One method to alleviate this would be to add inductive bias to the human model that makes it more likely to generalize out of distribution, for example by using theory of mind \citep{UtilityOfModelLearning} or shared planning~\citep{SharedPlanning}. However, we could also use the standard data aggregation approach, where we periodically query humans for a new human-AI dataset with the current version of the agent, and retrain the human model to correct any errors caused by distribution shift.
+
+\emph{Biasing population-based training towards humans:} Agents trained via PBT should be able to coordinate well with any of the agents that were present in the population during training. So, we could train multiple human models using variants of imitation learning or theory of mind, and inject these human models as agents in the population. The human models need not even be accurate, as long as in aggregate they cover the range of possible human behavior. This becomes a variant of domain randomization \cite{ShadowDexterousHand} applied to interaction with humans.
+
+\emph{Adapting to the human at test time:} So far we have been assuming that we must deploy a static agent at test time, but we could have our agent adapt online. One approach would be to learn multiple human models (corresponding to different humans in the dataset). At test time, we can select the most likely human model \citep{kitani}, and choose actions using a model-based algorithm such as model predictive control \citep{MPCForMBRL}. We could also use a meta-learning algorithm such as MAML \citep{MAML} to learn a policy that can quickly adapt to new humans at test time.
+
+\emph{Humans who learn:} We modeled the human policy as stationary, preserving the Markov assumption. However, in reality humans will be learning and adapting as they play the game, which we would ideally model. We could take this into account by using recurrent architectures, or by using a more explicit model of how humans learn.
+
+
+% The \verb+natbib+ package will be loaded for you by default.  Citations may be
+% author/year or numeric, as long as you maintain internal consistency.  As to the
+% format of the references themselves, any style is acceptable as long as it is
+% used consistently.
+
+\subsubsection*{Acknowledgments}
+
+We thank the researchers at the Center for Human Compatible AI and the Interact lab for valuable feedback. This work was supported by the Open Philanthropy Project, NSF CAREER, the NSF VeHICaL project (CNS-1545126), and National Science Foundation Graduate Research Fellowship Grant No. DGE 1752814.
+
+\bibliography{references}
+\bibliographystyle{plainnat}
+
+\newpage
+
+\appendix
+
+\section{Behavior cloning} \label{appendix:behaviorcloning}
+
+We collected trajectories from Amazon Mechanical Turk. We removed trajectories that fell short of the intended human-human trajectory length of $T \approx 1200$ and very suboptimal ones (with reward roughly below to what could be achieved by one human on their own – i.e. less than 220 for Cramped Room, 280 for Asymmetric Advantages Ring, 150 for Coordination Ring, 160 for Forced Coordination, and 180 for Counter Circuit). After removal, we had 16 joint human-human trajectories for Cramped Room environment, 17 for Asymmetric Advantages, 16 for Coordination Ring, 12 for Forced Coordination, and 15 for Counter Circuit. 
+
+We divide the joint trajectories into two groups randomly, and split each joint trajectory $((s_0, (a^1_{0}, a^2_{0}), r_0), \dots, (s_T, (a^1_{T}, a^2_{T}), r_T))$ into two single agent trajectories: $((s_0, a^1_{0}, r_0), \dots, (s_T, a^1_{T}, r_T))$ and $((s_0, a^2_{0}, r_0), \dots, (s_T, a^2_{T}, r_T))$. At the end of this process we have twice as many single-agent trajectories than the joint human-human trajectories we started with, for a total of approximately 36k environment timesteps for each layout.
+
+We then use the two sets of single-agent human trajectories to train two human models, BC and H$_{Proxy}$, for each of the five layouts. We evaluate these trained behavior cloning models by pairing them with themselves averaging out reward across 100 rollouts with horizon $T=400$.
+
+In each subgroup, we used 85\% of the data for training the behavior cloning model, and 15\% for validation. To learn the policy, we used a feed-forward fully-connected neural network with 2 layers of hidden size 64. We report the hyperparameters used in Table \ref{tbl:bc_hyperparams}. We run each experiment with 5 different seeds, leading to 5 BC and 5 H$_{Proxy}$ models for each layout. We then manually choose one BC and one H$_{Proxy}$ model based on the heuristic that the H$_{Proxy}$ model should achieve slightly higher reward than the BC model – to make our usage of H$_{Proxy}$ as a human proxy more realistic (as we would expect BC to underperform compared to the expert demonstrator).
+
+Behavior cloning, unlike all other methods in this paper, is trained on a manually designed $64$-dimensional featurization the state to incentivize learning policies that generalize well in spite of the limited amount of human-human data. Such featurization contains the relative positions to each player of: the other player, the closest onion, dish, soup, onion dispenser, dish dispenser, serving location, and pot (one for each pot state: empty, 1 onion, 2 onions, cooking, and ready). It also contains boolean values encoding the agent orientation and indicating whether the agent is adjacent to empty counters. We also include the agent's own absolute position in the layout.
+
+To correct for a tendency of the learnt models to sometimes get stuck when performing low level action tasks, we added a hardcoded the behavior cloning model to take a random action if stuck in the same position for 3 or more consecutive timesteps. As far as we could tell, this does not significantly affect the behavior of the human models except in the intended way.
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{ |p{3.2cm}||p{1.6cm}|p{1.6cm}|p{1.6cm}|p{1.6cm}|p{1.6cm}|  }
+ \hline
+ \multicolumn{6}{|c|}{Behavior cloning hyperparameters} \\
+ \hline
+ Parameter & Cramped Rm. & Asym. Adv. & Coord. Ring & Forced Coord. & Counter Circ.\\
+ \hline
+ Learning Rate  &   1e-3    & 1e-3 &   1e-3 & 1e-3 & 1e-3\\
+ \# Epochs &   100  &     120   & 120 & 90 & 110\\
+ Adam epsilon  &   1e-8      & 1e-8 &  1e-8 & 1e-8 & 1e-8\\
+ \hline
+\end{tabular}
+\vskip 0.1in
+\caption{Hyperparameters for behavior cloning across the 5 layouts. \ita{Adam epsilon} is the choice of the $\epsilon$ for the Adam optimizer used in these experiments.}
+\label{tbl:bc_hyperparams}
+\end{table}
+
+\section{Self-play PPO} \label{appendix:ppo_sp}
+
+Unlike behavior cloning, PPO and other DRL methods were trained with a lossless state encoding consisting of 20 masks, each a matrix of size corresponding to the environment terrain grid size. Each mask contains information about a specific aspect of the state: the player's own position, the player's own orientation, location of dispensers of various types, location of objects on counters, etc.
+
+In order to speed up training, we shaped the reward function to give agents some reward when placing an onion into the pot, when picking up a dish while a soup is cooking, and when picking up a soup with a dish. The amount of reward shaping is reduced to 0 over the course of training with a linear schedule.
+
+We parameterize the policy with a convolutional neural network with 3 convolutional layers (of sizes $5 \times 5$, $3 \times 3$, and $3 \times 3$ respectively), each of which has 25 filters, followed by 3 fully-connected layers with hidden size 32. Hyperparameters used and training curves are reported respectively in Table \ref{tbl:ppo_sp_hyperparams} and Figures \ref{fig:ppo_sp_losses}.
+
+We use 5 seeds for our experiments, with respect to which we report all our standard errors.
+
+\begin{table}[h!]
+\vskip 0.1in
+\centering
+\begin{tabular}{ |p{3.2cm}||p{1.6cm}|p{1.6cm}|p{1.6cm}|p{1.6cm}|p{1.6cm}|  }
+ \hline
+ \multicolumn{6}{|c|}{PPO$_{SP}$ hyperparameters} \\
+ \hline
+ Parameter & Cramped Rm. & Asym. Adv. & Coord. Ring & Forced Coord. & Counter Circ.\\
+ \hline
+ Learning Rate  & 1e-3 & 1e-3 & 6e-4 & 8e-4 & 8e-4\\
+ VF coefficient & 0.5 & 0.5 &  0.5 & 0.5 & 0.5 \\
+ Rew. shaping horizon  &  2.5e6  & 2.5e6 & 3.5e6 & 2.5e6 & 2.5e6 \\
+ \# Minibatches  & 6 & 6 & 6 & 6 & 6 \\
+ Minibatch size  & 2000 & 2000 & 2000 & 2000 & 2000 \\
+%  \# env. timesteps & 6e6  & 7e6 & 1e7 & 1e7 & 8e6 \\
+ \hline
+\end{tabular}
+\vskip 0.1in
+\caption{Hyperparameters for PPO trained purely in self-play, across the 5 layouts. For simulation, we used 30 parallel environments. Similarly to the embedded human model case, parameters common to all layouts are: entropy coefficient $(= 0.1)$, gamma $(= 0.99)$, lambda $(= 0.98)$, clipping $(= 0.05)$, maximum gradient norm ($=0.1$), and gradient steps per minibatch per PPO step $(= 8)$. For a description of the parameters, see Table \ref{tbl:ppo_bc_hyperparams}.}
+\label{tbl:ppo_sp_hyperparams}
+\end{table}
+
+\begin{figure*}[h!]
+\centering
+\begin{subfigure}{.32\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{images/training_curves/rew_ppo_sp_simple.png}
+  \caption{Cramped Room}
+  \label{fig:layout1_loss_pposp}
+\end{subfigure} \space
+\begin{subfigure}{.32\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{images/training_curves/rew_ppo_sp_unident_s.png}
+  \caption{Asymmetric Advantages}
+  \label{fig:layout2_loss_pposp}
+\end{subfigure} \space
+\begin{subfigure}{.32\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{images/training_curves/rew_ppo_sp_random1.png}
+  \caption{Coordination Ring}
+  \label{fig:layout3_loss_pposp}
+\end{subfigure} \space \\ \vspace{5mm}
+\begin{subfigure}{.32\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{images/training_curves/rew_ppo_sp_random0.png}
+  \caption{Forced Coordination}
+  \label{fig:layout4_loss_pposp}
+\end{subfigure} \space
+\begin{subfigure}{.32\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{images/training_curves/rew_ppo_sp_random3.png}
+  \caption{Counter Circuit}
+  \label{fig:layout5_loss_pposp}
+\end{subfigure} \space
+\vskip 0.1in
+\caption{PPO$_{SP}$ self-play average episode rewards on each layout during training.}
+\label{fig:ppo_sp_losses}
+\end{figure*}
+
+
+\section{PPO with embedded-agent environment} \label{appendix:ppo_bc}
+
+To train PPO with an embedded human model we use the same network structure as in the PPO$_{SP}$ case in Appendix \ref{appendix:ppo_sp} and similar hyperparameters, reported in Table \ref{tbl:ppo_bc_hyperparams}. As in the PPO$_{SP}$ case, we use reward shaping and anneal it linearly throughout training.
+
+Empirically, we found that -- for most layouts -- agents trained directly with competent human models to settle in local optima, never developing good game-play skills and letting the human models collect reward alone. Therefore, on all layouts except Forced Coordination, we initially train in pure self-play, and then anneal the amount of self-play linearly to zero, finally continuing training purely with the human model. We found this to improve the trained agents' performance. In Forced Coordination, both players need to learn game-playing skills in order to achieve any reward, so this problem doesn't occur.
+
+Training curves for the training (BC) and test (H$_{Proxy}$) models are reported respectively in Figures \ref{fig:ppo_bc_losses} and \ref{fig:ppo_bc_test_losses}.
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{ |p{3.2cm}||p{1.6cm}|p{1.6cm}|p{1.6cm}|p{1.6cm}|p{1.6cm}|  }
+ \hline
+ \multicolumn{6}{|c|}{PPO$_{BC}$ and PPO$_{H_{Proxy}}$ hyperparameters} \\
+ \hline
+ Parameter & Cramped Rm. & Asym. Adv. & Coord. Ring & Forced Coord. & Counter Circ.\\
+ \hline
+ Learning Rate  &   1e-3    & 1e-3 &   1e-3 & 1.5e-3 & 1.5e-3\\
+ LR annealing factor  & 3 & 3 & 1.5 & 2 & 3\\
+ VF coefficient  &   0.5 & 0.5 &  0.5 & 0.1 & 0.1 \\
+ Rew. shaping horizon  &   1e6      & 6e6 &  5e6 & 4e6 & 4e6 \\
+ Self-play annealing  &   [5e5, 3e6]  & [1e6, 7e6] &  [2e6, 6e6] & N/A & [1e6, 4e6] \\
+ \# Minibatches  &   10      & 12 &  15 & 15 & 15 \\
+ Minibatch size  & 1200 & 1000 & 800 & 800 & 800 \\
+%  Environment timesteps & 8e6  & 1e7 & 1.5e7 & 9e6 & 1e7 \\
+ \hline
+\end{tabular}
+\vskip 0.1in
+\caption{Hyperparameters for PPO trained on an embedded human model environment, across the 5 layouts. \ita{LR annealing factor} corresponds to what factor the learning rate was annealed by linearly over the course of the training (i.e. ending at $LR_0 / LR_{factor}$). \ita{VF coefficient} is the weight to assign to the value function portion of the loss. \ita{Reward shaping horizon} corresponds to the environment timestep in which reward shaping reaches zero, after being annealed lineraly. Of the two numbers reported for \ita{self-play annealing}, the former refers to the environment timestep we begin to anneal from pure self-play to embedded human model training, and the latter to the timestep in which we reach pure human model embedding training. \ita{N/A} indicates that no self-play was used during training. \ita{\# Minibatches} refers to the number of minibatches used at each PPO step, each of size \ita{minibatch size}. For simulation, we used 30 parallel environments. Further parameters common for all layouts are: entropy coefficient $(= 0.1)$, gamma $(= 0.99)$, lambda $(= 0.98)$, clipping $(= 0.05)$, maximum gradient norm ($=0.1$), and gradient steps per minibatch per PPO step $(= 8)$. For further information, see the OpenAI baselines PPO documentation \cite{baselines}.}
+\label{tbl:ppo_bc_hyperparams}
+\end{table}
+
+\begin{figure*}[h!]
+\centering
+\begin{subfigure}{.32\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{images/training_curves/rew_ppo_bc_bc_train_simple.png}
+  \caption{Cramped Room}
+  \label{fig:layout1_loss_ppobc}
+\end{subfigure} \space
+\begin{subfigure}{.32\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{images/training_curves/rew_ppo_bc_bc_train_unident_s.png}
+  \caption{Asymmetric Advantages}
+  \label{fig:layout2_loss_ppobc}
+\end{subfigure} \space
+\begin{subfigure}{.32\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{images/training_curves/rew_ppo_bc_bc_train_random1.png}
+  \caption{Coordination Ring}
+  \label{fig:layout3_loss_ppobc}
+\end{subfigure} \space \\ \vspace{5mm}
+\begin{subfigure}{.32\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{images/training_curves/rew_ppo_bc_bc_train_random0.png}
+  \caption{Forced Coordination}
+  \label{fig:layout4_loss_ppobc}
+\end{subfigure} \space
+\begin{subfigure}{.32\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{images/training_curves/rew_ppo_bc_bc_train_random3.png}
+  \caption{Counter Circuit}
+  \label{fig:layout5_loss_ppobc}
+\end{subfigure} \space
+\vskip 0.1in
+\caption{PPO$_{BC}$ average episode rewards on each layout during training over 400 horizon timesteps, when pairing the agent with itself or with BC in proportion to the current self-play annealing.}
+\label{fig:ppo_bc_losses}
+\end{figure*}
+
+\begin{figure*}[h!]
+\centering
+\begin{subfigure}{.32\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{images/training_curves/rew_ppo_bc_bc_test_simple.png}
+  \caption{Cramped Room}
+  \label{fig:layout1_loss_ppobc_test}
+\end{subfigure} \space
+\begin{subfigure}{.32\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{images/training_curves/rew_ppo_bc_bc_test_unident_s.png}
+  \caption{Asymmetric Advantages}
+  \label{fig:layout2_loss_ppobc_test}
+\end{subfigure} \space
+\begin{subfigure}{.32\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{images/training_curves/rew_ppo_bc_bc_test_random1.png}
+  \caption{Coordination Ring}
+  \label{fig:layout3_loss_ppobc_test}
+\end{subfigure} \space \\ \vspace{5mm}
+\begin{subfigure}{.32\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{images/training_curves/rew_ppo_bc_bc_test_random0.png}
+  \caption{Forced Coordination}
+  \label{fig:layout4_loss_ppobc_test}
+\end{subfigure} \space
+\begin{subfigure}{.32\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{images/training_curves/rew_ppo_bc_bc_test_random3.png}
+  \caption{Counter Circuit}
+  \label{fig:layout5_loss_ppobc_test}
+\end{subfigure} \space
+\vskip 0.1in
+\caption{PPO$_{H_{Proxy}}$ average episode rewards on each layout during training over 400 horizon timesteps, when pairing the agent with itself or with H$_{Proxy}$ in proportion to the current self-play annealing.} 
+\label{fig:ppo_bc_test_losses}
+\end{figure*}
+
+\section{Population Based Training} \label{appendix:PBT}
+
+We trained population based training using a population of 3 agents, each of which is parameterized by a neural network trained with PPO, with the same structure as in \ref{appendix:ppo_bc}. 
+
+During each PBT iteration, all possible pairings of the 3 agents are trained using PPO, with each agent training on a embedded single-agent MDP with the other PPO agent fixed. PBT selection was conducted by replacing the worst performing agent with a mutated version of the hyperparameters. The parameters that could be mutated are lambda (initialized $= 0.98$), clipping (initialized $= 0.05$), learning rate (initialized $= 5e-3$), gradient steps per minibatch per PPO update (initialized $= 8$), entropy coefficient (initialized $= 0.5$), and value function coefficient (initialized $= 0.1$). At each PBT step, each parameter had a $33\%$ chance of being mutated by either a factor of $0.75$ or $1.25$ (and clipped to the closest integer if necessary). For the lambda parameter, we mutate by $\pm \frac{\epsilon}{2}$ where $\epsilon$ is the distance to the closest of $0$ or $1$, to ensure that it will not go out of bounds.
+
+As for the other DRL algorithms, we use reward shaping and anneal it linearly throughout training, and evaluate PBT reporting means and standard errors over 5 seeds. Hyperparameters and training reward curves are reported respectively in Table \ref{tbl:pbt_hyperparams} and Figure \ref{fig:pbt_losses}.
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{ |p{3.2cm}||p{1.6cm}|p{1.6cm}|p{1.6cm}|p{1.6cm}|p{1.6cm}|  }
+ \hline
+ \multicolumn{6}{|c|}{PBT hyperparameters} \\
+ \hline
+ Parameter & Cramped Rm. & Asym. Adv. & Coord. Ring & Forced Coord. & Counter Circ.\\
+ \hline
+ Learning Rate  & 2e-3 & 8e-4 & 8e-4 & 3e-3 & 1e-3\\
+ Rew. shaping horizon  &  3e6  & 5e6 & 4e6 & 7e6 & 4e6 \\
+ Env. steps per agent  & 8e6 & 1.1e7 & 5e6 & 8e6 & 6e6 \\
+  \# Minibatches  & 10 & 10 & 10 & 10 & 10 \\
+ Minibatch size  & 2000 & 2000 & 2000 & 2000 & 2000 \\
+ PPO iter. timesteps  & 40000 & 40000 & 40000 & 40000 & 40000 \\
+ \hline
+\end{tabular}
+\vskip 0.1in
+\caption{Hyperparameters for PBT, across the 5 layouts. \ita{PPO iteration timesteps} refers to the length in environment timesteps for each agent pairing training. For simulation, we used 50 parallel environments. The mutation parameters were equal across all layouts. For further description of the parameters, see Table \ref{tbl:ppo_bc_hyperparams}.}
+\label{tbl:pbt_hyperparams}
+\end{table}
+
+\begin{figure*}[h!]
+\centering
+\begin{subfigure}{.32\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{images/training_curves/rew_pbt_simple.png}
+  \caption{Cramped Room}
+  \label{fig:layout1_loss_pbt}
+\end{subfigure} \space
+\begin{subfigure}{.32\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{images/training_curves/rew_pbt_unident_s.png}
+  \caption{Asymmetric Advantages}
+  \label{fig:layout2_loss_pbt}
+\end{subfigure} \space
+\begin{subfigure}{.32\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{images/training_curves/rew_pbt_random1.png}
+  \caption{Coordination Ring}
+  \label{fig:layout3_loss_pbt}
+\end{subfigure} \space \\ \vspace{5mm}
+\begin{subfigure}{.32\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{images/training_curves/rew_pbt_random0.png}
+  \caption{Forced Coordination}
+  \label{fig:layout4_loss_pbt}
+\end{subfigure} \space
+\begin{subfigure}{.32\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{images/training_curves/rew_pbt_random3.png}
+  \caption{Counter Circuit}
+  \label{fig:layout5_loss_pbt}
+\end{subfigure} \space
+\vskip 0.1in
+\caption{Average episode rewards on each layout during training for PBT agents when paired with each other, averaged across all agents in the population.}
+\label{fig:pbt_losses}
+\end{figure*}
+
+
+\section{Near-optimal joint planner} \label{appendix:jointplanner}
+
+As mentioned in \ref{subsec:baselines}, to perform optimal planning we pre-compute optimal joint motion plans for every possible starting and desired goal location for each agent. This enables us to quickly query the cost of each motion plan when performing $A^*$ search.
+
+We then define the high-level actions: \say{get an onion}, \say{serve the dish}, etc, and map each joint high-level action onto specific joint motion plans. We then use $A^*$ search to find the optimal joint plan in this high-level action space.
+
+This planner does make some assumptions for computational reasons, making it near-optimal instead of optimal. In order to reduce the number of required joint motion plans by a factor of 16, we only consider position-states for the players, and not their orientations. This adds the possibility of wasting one timestep when executing certain motion plans, in order to get into the correct orientation. We have added a set of additional conditions to check for such a case and reduce the impact of such an approximation, but they are not general.
+
+Another limitation of the planning logic is that counters are not considered when selecting high level action, as it would increase the runtime of $A^*$ by a large amount (since the number of actions available when holding an item would greatly increase). This is not of large importance in the two layouts we run planning experiments on. The use of counters in such scenarios is also minimal in human gameplay.
+
+Another approximation made by the planner is only considering a 3 dish delivery look-ahead. Analyzing the rollouts, we would expect that increasing the horizon to 4 would not significantly impact the reward for the two layouts used in Section~\ref{sec:experiments}.
+
+\section{Near-optimal model-based planner} \label{appendix:model-based-planner}
+
+Given a fixed partner model, we implement a near-optimal model-based planner that plays with the fixed partner. The planner uses a two-layered $A^*$ search in which: 
+
+\bo{1)} on a low level we use $A^*$ in the game state space with edges being basic player joint actions (one of which is obtained by querying the partner model). To reduce the complexity of such search, we remove stochasticity from the partner model by taking the argmax probability action.
+
+\bo{2)} on a higher level we use $A^*$ search in the state space in which edges are high level actions, similarly to those of the near-optimal joint planner described in Appendix~\ref{appendix:jointplanner}. Unlike in that case, it is unfeasible to pre-compute all low-level motion plans, as each motion plan does not only depend on the beginning positions and orientations of the agents, but also on other features of the state (since they could influence the actions returned by the partner model).
+
+\section{Planning experiments} \label{appendix:planning-exp}
+
+Due to computational constrains, when evaluating planning methods (such as in Figure \ref{fig:p_experiments}), we evaluated on a horizon of 100 timesteps, and then multiplied by 4 to make the environment horizon comparable to all other experiments. This is another source of possible suboptimality in the planning experiments.
+
+When observing Figure \ref{fig:p_experiments}, we see that P$_{BC}$+H$_{Proxy}$ performs much worse than the red dotted line (representing planning with respect to the actual test model H$_{Proxy}$). This is due to the fact that in the planning experiments all agents are set to choose actions deterministically (in order reduce the planning complexity -- as mentioned in appendix \ref{appendix:model-based-planner}), leading the agents to get often stuck in loops that last the whole remaining part of the trajectory, leading to little or no reward.
+
+\section{Human-AI experiments} \label{appendix:user-study}
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=\linewidth]{images/experiments/humanai_base_experiments.pdf}
+    \caption{The results are mostly similar to those in Figure \ref{fig:humanai_performance}, with the exception of larger standard errors introduced by the non-cooperative trajectories. The reported standard errors are across the human participants for each agent type.} 
+    \label{fig:humanai_base_experiments}
+\end{figure}
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=\linewidth]{images/experiments/hai_accuracies.pdf}
+    \caption{Accuracy of various models when used to predict human behavior in all of the human-AI trajectories. The standard errors for DRL are across the 5 training seeds, while for the human models we only use 1 seed. For each seed, we perform 100 evaluation runs.} 
+    \label{fig:humanai_accuracies}
+\end{figure}
+
+The human-AI trajectories were collected with a horizon of 400 timesteps. The agents used in this experiment were trained with slightly different hyperparameters than those in the previous appendices: after we had results in simulation and from this user study, we improved the hyperparameters and updated the simulation results, but did not rerun the user study. 
+
+After manually inspecting the collected human-AI data, we removed all broken trajectories (human not performing any actions, and trajectories shorted than intended horizon). We also noticed that in a large amount of trajectories, humans were extremely non-cooperative, not trying to perform the task well, and mainly just observing the AI agent and interacting with it (e.g. getting in its way). Our hypothesis was that these participants were trying to "push the boundaries" of the AI agents and test where they would break – as they were told that they would be paired with AI agents. We also removed these non-cooperative trajectories before obtaining our results. Cumulatively across all layouts, we removed 15, 11, and 15 trajectories of humans paired with PBT, PPO$_{SP}$, and PPO$_{BC}$ agents respectively.
+
+In Figure~\ref{fig:humanai_base_experiments} we report human-AI performance without these trajectories removed. Performing an ANOVA on all the data with agent type as a factor and layout and player index as a covariates showed a significant main effect for agent type on reward ($F(2,250)=4.10$, $p<.01$), and the post-hoc analysis with Tukey HSD corrections confirmed that PPO$_{BC}$ performed significantly better than for PBT ($p<.01$), while fell just short of statistical significance for SP ($p=.06)$.
+
+We also report the results of using various agents as predictive models of human behavior in Figure~\ref{fig:humanai_accuracies}. This is the same setup as in Figure~\ref{fig:proxy_ppo_bc_losses}, except we are reporting accuracies here instead of cross-entropy losses.
+
+Another thing to note is that in order to obtain Figure~\ref{fig:proxy_ppo_bc_losses}, to prevent numerical overflows in the calculation of cross-entropy for the PBT and PPO$_{SP}$ models, we lower-bounded the probability outputted by all models for the correct action to $\epsilon=1 \times 10^{-3}$. This reduces the loss of all models, but empirically affects PBT and PPO$_{SP}$ the most, as they are the models that are most commonly confidently-incorrect in predicting the human's action. We chose this $\epsilon$ as it is about 1 order of magnitude smaller than the smallest predictions assigned to the correct actions by the human models (i.e. the worst mistakes of the human models).
+
+\end{document}

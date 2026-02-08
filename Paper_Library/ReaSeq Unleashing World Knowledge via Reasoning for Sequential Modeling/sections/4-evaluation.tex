@@ -1,0 +1,308 @@
+\section{Evaluation}
+\label{sec:evaluation}
+
+\subsection{Evaluation for Reasoning-Enhanced Representation}
+
+\subsubsection{Ablation Analysis}
+To quantitatively compare the contributions of each component in our representation‑generation pipeline, we conduct a series of ablation studies. In real‑world industrial workflows, product images are also utilized, thus we employ a pretrained multimodal encoder to encode product information into representations for downstream tasks. We therefore ablate the following components:
+\begin{itemize}
+    \item \textbf{CNC/GME}: Different encoder architectures with publicly available pretrained weights, including a regular CN‑CLIP-0.2B (\textit{abbr.} CNC) and an LLM‑based GME-3B (\textit{abbr.} GME).
+    \item \textbf{I2T}: Domain adaptation via contrastive learning between product images and texts on Taobao’s product corpus.
+    \item \textbf{IUI}: Contrastive learning within user historical interaction sequences to inject collaborative signals into the multimodal encoder (described in Section~\ref{sec:semantic_item_encoding}).
+    \item \textbf{MAKR}: Knowledge augmentation on product text, \textit{e.g.} multi‑agent reasoning (described in Section~\ref{sec:structured_knowledge}), supplementary text information.
+\end{itemize}
+
+To evaluate the quality of representations produced by different configurations, we adopt metrics commonly used in recommendation scenarios, which measure the ability of representations to capture collaborative signals in downstream tasks. Since these representations are finally fed into sequential modeling, we compute the following metrics on sampled impression data, which contains target item and user historical click sequence information:
+\begin{itemize}
+    \item \textbf{Hit Rate at k (HR@k)} measures the recall ability of the user historical click sequence with respect to the target item. For each item in a user sequence of length $N$, we retrieve the top‑$K$ nearest neighbors from the item pool using cosine similarity, producing $N*K$ retrieved items for the user. A hit is recorded if the clicked target item appears in this retrieved set.
+    \item  \textbf{Same-Model Hit Rate at k (SM-HR@k)} is a metric designed to evaluate the instance-level recognition quality of item embeddings. The evaluation is conducted by performing Approximate Nearest Neighbor (A-NN) search for a set of query items against a production-scale corpus. For each query, we retrieve a top-k list of candidates and record a "hit" if this list contains at least one item that shares the same Standard Product Unit (SPU) ID as the query. The final SM-HR@k is the average hit rate across all queries. This metric provides a deterministic measure of an embedding's ability to capture an item's intrinsic attributes, independent of user interaction signals, thereby directly assessing its fine-grained discriminative power in a real-world, large-scale retrieval scenario.
+\end{itemize}
+The results are shown in Table~\ref{tab:recall_performance}. The following analysis validates our design choices and yields several key insights from an industrial perspective.
+
+
+\begin{table}[tbp]
+\centering
+\caption{Performance comparison of various models on recall-oriented metrics. All metrics are reported in percentage (\%). The best results in each column are highlighted in \textbf{bold}.}
+\label{tab:recall_performance}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lrrrrrrrr@{}}
+\toprule
+\textbf{Model} & \textbf{HR@30} & \textbf{HR@50} & \textbf{HR@100} & \textbf{HR@200} & \textbf{HR@500} & \textbf{HR@1000} & \textbf{HR@2000} & \textbf{Macro Recall} \\
+\midrule
+CNC & 5.8147 & 7.4084 & 9.8393 & 12.8740 & 17.5118 & 21.6971 & 26.3568 & 10.7899 \\
+CNC + I2T & 6.6301 & 8.3395 & 11.1559 & 14.5179 & 19.8336 & 24.5121 & 29.9609 & 12.2109 \\
+GME & 6.2504 & 7.9256 & 10.5449 & 13.6865 & 18.6276 & 22.8668 & 27.6842 & 11.4249 \\
+CNC + I2T + IUI & 7.7743 & 9.9121 & 13.3533 & 17.5096 & 23.9309 & 29.3427 & 35.2294 & 14.5261 \\
+GME + I2T + IUI & 7.8405 & 10.0866 & 13.7192 & 17.9351 & 24.4954 & 29.9871 & 35.9946 & 14.8050 \\
+CNC + I2T + IUI + MAKR & 8.2114 & 10.4831 & 14.1723 & 18.6145 & 25.3755 & 31.2666 & 37.4908 & 15.4127 \\
+GME + I2T + IUI + MAKR & \textbf{8.4209} & \textbf{10.8162} & \textbf{14.6313} & \textbf{19.0560} & \textbf{25.8410} & \textbf{31.6550} & \textbf{37.8712} & \textbf{15.6966} \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\textbf{The Critical Role of Supervised Fine-Tuning (I2T and IUI).} Our primary observation is that supervised fine-tuning is indispensable for adapting large pre-trained models to the e-commerce domain. \textbf{(i) Domain adaptation:} As shown in Table 1, applying Image-to-Text (I2T) contrastive learning on the in-house corpus provides a significant performance uplift. For the CNC model, I2T improves Macro Recall from 10.79\% to 12.21\%. This demonstrates that aligning the model's feature space with the specific semantics of the target domain is a crucial first step. \textbf{(ii) Collaborative signal injection (IUI):} Further incorporating collaborative signals via Intra-User-Interaction (IUI) contrastive learning consistently enhances performance across all metrics. For instance, GME + I2T + IUI surpasses GME + I2T (a configuration not explicitly shown but logically intermediate) and significantly outperforms the base GME model. In the SM-HR task (Table 2), GME + I2T + IUI achieves the best overall performance, boosting SM-HR@10 from 47.10\% (base GME) to 51.96\%, and Macro Recall from 60.37\% to a remarkable 65.21\%. This highlights that injecting user behavior patterns into the multimodal encoder enables it to learn representations that are not only semantically rich but also aligned with user preferences, a key requirement for production ranking systems.
+
+\textbf{Encoder Scaling.} The comparison between CNC (0.2B) and GME (3B) encoders reveals a nuanced insight about model scaling. \textbf{(i) Without fine-tuning:} The raw, pre-trained GME model shows only marginal gains and sometimes underperforms the smaller CNC model on certain metrics (e.g., SM-HR@1 in Table 2, 24.09\% for CNC vs. 25.29\% for GME, a minor improvement for a 15x scale-up). This suggests that simply increasing model size does not guarantee better out-of-the-box performance for specific downstream tasks. The larger model's capacity may not be effectively utilized without domain-specific guidance. \textbf{(ii) With fine-tuning:} However, after applying domain-adaptive fine-tuning (I2T + IUI), the larger GME model consistently and significantly outperforms its CNC counterpart. For example, GME + I2T + IUI achieves a Macro Recall of 14.81\% in Table 1, substantially higher than the 14.53\% of CNC + I2T + IUI. This confirms that larger models possess greater potential, but this potential can only be unlocked through targeted, supervised fine-tuning. The larger capacity enables the model to better absorb the complex signals from both domain-specific (I2T) and collaborative (IUI) data.
+
+\textbf{Knowledge Augmentation (MAKR).} A Trade-off Between Semantic Richness and Instance-level Specificity. The introduction of Multi-Agent Knowledge Reasoning (MAKR) presents an interesting trade-off. \textbf{(i) Benefit in recall task:} In the recall task (Table \ref{tab:recall_performance}), which rewards a broad understanding of user interests, MAKR provides a consistent performance boost. The final GME + I2T + IUI + MAKR model achieves the highest scores across all recall metrics, with Macro Recall reaching a peak of 15.70\%. This indicates that reasoning-based knowledge augmentation enriches the product text with deeper semantic context, helping the model to better capture nuanced user intents. \textbf{(ii) Detriment in SM-HR task:} Conversely, in the SM-HR task (Table \ref{tab:sm_hr_performance}), which demands precise instance-level identification, MAKR leads to a significant performance degradation. For instance, CNC + I2T + IUI + MAKR's SM-HR@1 drops sharply from 27.40\% to 20.30\%. The MAKR process, by its nature, abstracts these fine-grained details into higher-level concepts. It encourages the model to view a "Nike Air Jordan 1, size 42, in Chicago colorway" not just as that specific shoe, but also as a "collectible sneaker," a "basketball shoe," and "part of 80s fashion." This abstraction creates a semantic "blurring" effect at the instance level.
+
+
+\begin{table}[tbp]
+\centering
+\caption{Performance on Same-Model Hit Rate (SM-HR). All metrics are reported in percentage (\%). The best results in each column are highlighted in \textbf{bold}.}
+\label{tab:sm_hr_performance}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lrrrrrrrr@{}}
+\toprule
+\textbf{Model} & \textbf{SM-HR@1} & \textbf{SM-HR@5} & \textbf{SM-HR@10} & \textbf{SM-HR@30} & \textbf{SM-HR@50} & \textbf{SM-HR@100} & \textbf{SM-HR@200} & \textbf{Macro Recall} \\
+\midrule
+CNC & 24.0900 & 38.4660 & 43.7620 & 51.8655 & 55.6039 & 60.6393 & 65.6118 & 56.9229 \\
+CNC + I2T & 27.1294 & 43.5166 & 49.3617 & 58.0366 & 61.9201 & 67.0251 & 71.9308 & 62.5174 \\
+GME & 25.2850 & 41.2064 & 47.0972 & 55.8767 & 59.7959 & 64.9361 & 69.8381 & 60.3689 \\
+CNC + I2T + IUI & 27.3970 & 44.6171 & 50.9081 & 60.2427 & 64.4017 & 69.7997 & 74.8466 & 64.5652 \\
+GME + I2T + IUI & \textbf{28.3508} & \textbf{45.8085} & \textbf{51.9645} & \textbf{60.9992} & \textbf{65.0083} & \textbf{70.2454} & \textbf{75.1920} & \textbf{65.2103} \\
+CNC + I2T + IUI + MAKR & 20.2985 & 37.4966 & 44.8550 & 56.0930 & 61.0400 & 67.3628 & 73.1517 & 61.1497 \\
+GME + I2T + IUI + MAKR & 24.6164 & 42.4050 & 49.2282 & 59.2713 & 63.6393 & 69.2249 & 74.3593 & 63.4745 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+
+
+\subsubsection{Applying to Industrial Ranking Systems}\label{sssec:rep_apply}
+
+\textbf{Effectiveness of Representation.} To validate the end-to-end effectiveness of our reasoning-enhanced representations in a production environment, we integrated them into the downstream Click-Through Rate (CTR) model. This model, a SIM-based architecture, is the critical component of our ranking stage. The baseline configuration utilizes a two-stage "GSU-ESU" paradigm, where the General Search Unit (GSU) relies on simple category-based retrieval rules. We conducted a series of ablation studies to systematically measure the impact of different representation integration schemes, with performance gains reported in Table \ref{tab:rank_compare_rar}. From Table~\ref{tab:rank_compare_rar}, we observe: \textbf{(i) Representation-based GSU is more effective than rule-based.} Our first investigation focuses on upgrading the GSU, the crucial candidate generation stage. By replacing the rule-based retrieval with a Retrieval-Based strategy that leverages our learned representations, we observe a significant and immediate performance lift. As shown in the first row of Table \ref{tab:rank_compare_rar}, this single change yields +0.20\% GAUC improvement overall. Notably, the gains are more pronounced for Cold-Start Users (+0.31\% GAUC) compared to Hot Users (+0.24\% GAUC). This confirms a key industrial insight: semantic, representation-based retrieval provides far superior candidate quality than simple rules, and its value is most pronounced when user behavior signals are sparse, forcing the model to rely on genuine content understanding. \textbf{(ii) Compression-based modeling is more effective than retriving-based.} Next, we evaluate a fundamental architectural shift, moving from the gradient-isolated two-stage paradigm to an end-to-end Compression-Based framework. The ``Compression-Based'' model achieves a +0.34\% GAUC lift, substantially outperforming the +0.20\% from the retrieval-based GSU alone. This demonstrates that breaking the gradient isolation between the search and ranking stages allows for joint optimization, leading to a more globally optimal system. The ranking model can now implicitly influence the "search" process, resulting in a more efficient and accurate pipeline. \textbf{(iii) Semantic IDs (SIDs) have much complementary value.} We further investigate the value of incorporating discrete Semantic IDs (SIDs), the quantized version of our representations, as features within the ranking model. By adding SIDs to the compression-based model (``Compression-Based + SID''), we observe an additional gain, pushing the overall GAUC improvement to +0.36\%. This demonstrates that SIDs provide a valuable, complementary signal to the continuous representations. They act as powerful, memory-efficient categorical features that allow the model to learn specific, high-level patterns and relationships between items, which might be harder to capture from the continuous vector space alone. \textbf{(iv) Two paradigms have orthogonal and compounding gains.} Finally, we validate the orthogonality of these improvements by combining all enhancements in our full model, \textit{i.e.} ``Retrieval-Based + Compression-Based + SID''. This configuration achieves the highest performance lift across all metrics, with an overall GAUC improvement of +0.41\% and a remarkable +0.45\% GAUC gain for Cold-Start Users. This result is particularly compelling from a system design perspective. It confirms that the performance gains from an optimized candidate generation stage (the Retrieval-Based GSU) and an advanced, end-to-end ranking architecture (``Compression-Based + SID'') are largely additive and complementary. Improving one part of the system does not diminish the returns from improving another. Instead, they compound to deliver maximum end-to-end performance.
+
+
+\begin{table}[htbp]
+\centering
+\caption{Performance improvements of different representation integration schemes on the CTR model. All values represent percentage point improvements (\%) over the baseline.}
+\centering
+\label{tab:rank_compare_rar}
+\resizebox{0.95\textwidth}{!}{%
+\begin{tabular}{@{}l rr rr rr@{}}
+\toprule
+\multirow{2}{*}{\textbf{Method}} & \multicolumn{2}{c}{\textbf{Overall}} & \multicolumn{2}{c}{\textbf{Hot Users}} & \multicolumn{2}{c}{\textbf{Cold-Start Users}} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7}
+& \textbf{AUC} & \textbf{GAUC} & \textbf{AUC} & \textbf{GAUC} & \textbf{AUC} & \textbf{GAUC} \\
+\midrule
+Retrieval-Based & +0.12 & +0.20 & +0.10 & +0.24 & +0.15 & +0.31 \\
+Compression-Based & +0.18 & +0.34 & +0.16 & +0.31 & +0.27 & +0.35 \\
+Compression-Based + SID & +0.20 & +0.36 & +0.17 & +0.33 & +0.36 & +0.39 \\
+Retrieval-Based + Compression-Based + SID & \textbf{+0.29} & \textbf{+0.41} & \textbf{+0.29} & \textbf{+0.40} & \textbf{+0.39} & \textbf{+0.45} \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+
+\textbf{Impact of Representation Quality.} To directly quantify the impact of representation quality on the final ranking performance, we conducted a comparative experiment. We integrated different high-quality item representations (\textit{i.e.} those enhanced by our reasoning-based MAKR framework and those from our most advanced GME model) as features into a baseline CTR model. The results, reported as improvements in AUC and GAUC over the base model, are detailed in Table \ref{tab:rank_compare_rep}. This analysis provides clear evidence that enhancing representation quality is a direct and effective pathway to improving ranking accuracy. \textbf{(i) Universal performance gains: }The most immediate and crucial observation is that integrating either MAKR or GME enhanced representations leads to significant performance improvements across all user segments. The ``Base + GME'' model, which leverages our most advanced representation, achieves a substantial +0.120\% GAUC improvement overall. This result strongly validates our core hypothesis: a higher-quality item representation, rich in both semantic and instance-level detail, provides the CTR model with a more powerful and discriminative feature set, leading to more accurate preference estimation. \textbf{(ii) Disproportionate gains for Cold-Start Users:} A key insight from an industrial perspective is the disproportionate benefit observed for Cold-Start Users. While the ``Base + GME'' model improves overall GAUC by +0.120\%, its improvement for cold-start users is a much more pronounced +0.150\%. Cold-start scenarios are a persistent challenge in recommender systems due to the lack of historical interaction data, forcing the model to rely on content features. The superior performance of our GME representation in this segment demonstrates its strong content understanding and generalization capabilities. It allows the model to make accurate predictions based on the intrinsic properties of the items even without user behavior signals, which is invaluable for user acquisition and onboarding. \textbf{(iii) Superiority of the GME Representation:} When comparing the two enhanced representations, the GME-based model consistently outperforms the MAKR-enhanced one across all metrics and user segments. For instance, in the overall population, GME delivers a +0.120\% GAUC lift compared to MAKR's +0.090\%. The performance gap is even more significant for Hot Users (+0.117\% for GME vs. +0.081\% for MAKR) and especially for Cold-Start Users (+0.150\% for GME vs. +0.102\% for MAKR). This indicates that while both methods improve upon the baseline, the comprehensive fine-tuning and larger capacity of the GME model produce a universally more effective representation for the downstream ranking task.
+
+\begin{table}[tbp]
+\centering
+\caption{Performance comparison of different item representations applied to the CTR model. Results are reported as improvements over the baseline model.}
+\label{tab:rank_compare_rep}
+\begin{tabular}{@{}l rr rr rr@{}}
+\toprule
+\multirow{2}{*}{\textbf{Method}} & \multicolumn{2}{c}{\textbf{Overall}} & \multicolumn{2}{c}{\textbf{Hot Users}} & \multicolumn{2}{c}{\textbf{Cold-Start Users}} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7}
+& \textbf{AUC} & \textbf{GAUC} & \textbf{AUC} & \textbf{GAUC} & \textbf{AUC} & \textbf{GAUC} \\
+\midrule
+Base + MAKR  & +0.035 & +0.090 & +0.035 & +0.081 & +0.050 & +0.102 \\
+Base + GME & +0.041 & +0.120 & +0.039 & +0.117 & +0.065 & +0.150 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+
+\subsection{Evaluation for Generative Behavior Reasoning}
+
+\subsubsection{Experiment Settings}\label{sssec:exp_set}
+
+\textbf{User Group Selection.}
+We first selected users from the "Guess What You Like" business on the Taobao App's homepage who were in the tail third in terms of activity (with sparse in-log behavior), and then randomly sampled an equal number of users from the remaining users. These two groups were then combined to form the final user group for the subsequent experiment conduction, including offline and online evaluation for behavioral reasoning and CTR modeling.
+
+\textbf{Metrics.}
+To evaluate GBR's reasoning ability, we use the following two metrics on supervised \texttt{[MASK]} tokens and unsupervised \texttt{[FILL]} tokens, respectively:
+\begin{itemize}
+    \item \textbf{IB‑PPL} (In‑Batch Perplexity): Since the item vocabulary is excessively large, we adopt in‑batch sampled softmax to approximate perplexity following Eq.(\ref{eq:sampled_softmax}). Therefore, the IB‑PPL of one sample is defined as Eq.(\ref{eq:ib-ppl}) (taking the \texttt{[MASK]} tokens as an example), where \(M\) is the number of \texttt{[MASK]} tokens in the sequence. Then, the overall IB‑PPL for the dataset is computed as the arithmetic mean of the IB‑PPL values across all samples.
+    \begin{equation}
+    \label{eq:ib-ppl}
+            \text{IB-PPL}=\exp\Big( -\frac{1}{M}\sum_{i=1}^{M} \log\Big( \frac{\exp\big(\cos(\mathbf{h}^{lm}_i,y_i^+)\big)}{
+        \exp\big(\cos(\mathbf{h}^{lm}_i,y_i^+)\big)+\sum_{j=1}^{K} \exp\big(\cos(\mathbf{h}^{lm}_i,y_{i,j}^-)\big)
+        } \Big) \Big)
+    \end{equation}
+    
+    \item \textbf{IB‑ACC} (In‑Batch Accuracy): This metric can be viewed as the ``hard'' counterpart of IB‑PPL. Specifically, the model prediction is considered accurate if and only if the predicted representation is closer to the ground-truth than to any in‑batch negative sample, as shown in Eq.(\ref{eq:ib-acc}) (taking the \texttt{[MASK]} tokens as an example, and \(\mathbf{1}\{\cdot\}\) denotes the indicator function). The overall IB‑ACC for the dataset is obtained by taking the arithmetic mean of the IB‑ACC values across all samples.
+    \begin{equation}
+    \label{eq:ib-acc}
+        \text{IB-ACC}=\frac{1}{M}\sum_{i=1}^{M} \mathbf{1}\Big\{ y_i^+=\text{argmax}_{y\in\{y_i^+\}\cup \{ y_{i,j}^- \}_{j=1}^K} \cos(\mathbf{h}^{lm}_i,y) \Big\}
+    \end{equation}
+    
+\end{itemize}
+
+To compute the above two metrics for unsupervised \texttt{[FILL]} tokens, we need to define its positive (\textit{i.e.} ground-truth) and negative samples. Specifically, we treat the ground-truth representation of \texttt{[MASK]} position in the same sequence with the closest cosine distance to the \texttt{[FILL]}'s prediction as the positive sample, and define negative samples following the same rule used for \texttt{[MASK]}. To ensure fairness, all conducted evaluation adopt the identical batch size and the same negative‑sampling strategy. Particularly, for each sample, one item token is randomly selected from every other sample in the batch as a negative sample, yielding \(K = \texttt{batch\_size} - 1\).
+
+\textbf{Implementation Details.}
+Considering GBR's practicality and adaptability in industrial scenarios, we follow (\cite{nie2025large}) to implement a tiny version of LLaDA as our Bidirectional Implicit Behavior Reasoning models (BIBR) in our experiments, where the dimensions of input, output, and hidden layer were all set to 128, the model layer number is set to 4, learnable positional encoding (\cite{devlin2019bert}) was adopted, and the number of heads for multi-head attention was set to 8. During model training, the input representations were frozen to stabilize the training, a temperature coefficient of 0.07 was introduced when using the sampled softmax loss function (as defined in Eq.(\ref{eq:sampled_softmax})), and the batch size was set to 3200. Since only the dense parameters of our LLaDA are learnable, we adopted Adam optimizer with an initial learning rate of 0.0075, where linear warmup and cosine annealing learning rate schedulers were applied subsequently. For downstream applications, we conducted experiments on a simplified CTR model. This simplified base model utilized all non-sequential features from the real-world online base and only one historical click sequence feature (truncated to a length of 500). Our simplified base adopted DIN (\cite{din}) to model this click sequence, where the interacted items in the sequence only adopted the reasoning-enhanced representations as their features. Therefore, we appended the representations inferred by GBR at the \texttt{[FILL]} token to the original input sequence features of the simplified base as GBR's application to rank models, where these filled features were normalized before entering the DIN model.
+
+% Please add the following required packages to your document preamble:
+% \usepackage{booktabs}
+% \usepackage{graphicx}
+\begin{table}[tb]
+\centering
+\caption{Performance comparison of GBR with different schemes of Beyond-Log Behavior Location (BLBL) and different losses of Bidirectional Implicit Behavior Reasoning (BIBR).}
+\label{tab:gbr}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lccccccc@{}}
+\toprule
+\textbf{Models} &
+  \textbf{BLBL} &
+  \multicolumn{1}{c|}{\textbf{BIBR Loss}} &
+  \multicolumn{1}{c|}{\textbf{\texttt{[FILL]} Ratio (\%)}} &
+  \textbf{IB-PPL$_\texttt{[MASK]}$} &
+  \multicolumn{1}{c|}{\textbf{IB-ACC$_\texttt{[MASK]}$ (\%)}} &
+  \textbf{IB-PPL$_\texttt{[FILL]}$} &
+  \textbf{IB-ACC$_\texttt{[FILL]}$ (\%)} \\ \midrule
+\multicolumn{8}{c}{BLBL Variants} \\ \midrule
+GBR-T-0 &
+  TD &
+  \multicolumn{1}{c|}{$\mathcal{L}_{\text{InfoNCE}}^{\cos}$} &
+  \multicolumn{1}{c|}{13.74} &
+  11.03 &
+  \multicolumn{1}{c|}{57.55} &
+  6.09 &
+  66.41 \\
+GBR-C-0 &
+  CD &
+  \multicolumn{1}{c|}{$\mathcal{L}_{\text{InfoNCE}}^{\cos}$} &
+  \multicolumn{1}{c|}{30.63} &
+  \textbf{5.87} &
+  \multicolumn{1}{c|}{\textbf{67.46}} &
+  \textbf{4.75} &
+  \textbf{75.8} \\
+GBR-TC-0 &
+  TD$\cup$CD &
+  \multicolumn{1}{c|}{$\mathcal{L}_{\text{InfoNCE}}^{\cos}$} &
+  \multicolumn{1}{c|}{31.94} &
+  7.36 &
+  \multicolumn{1}{c|}{62.88} &
+  5.08 &
+  72.23 \\ \midrule
+\multicolumn{8}{c}{BIBR Loss Variants} \\ \midrule
+GBR-C-0 &
+  CD &
+  \multicolumn{1}{c|}{$\mathcal{L}_{\text{InfoNCE}}^{\cos}$} &
+  \multicolumn{1}{c|}{30.63} &
+  \textbf{5.87} &
+  \multicolumn{1}{c|}{\textbf{67.46}} &
+  \textbf{4.75} &
+  \textbf{75.8} \\
+GBR-C-1 &
+  CD &
+  \multicolumn{1}{c|}{$\mathcal{L}_\text{cos}$} &
+  \multicolumn{1}{c|}{30.63} &
+  530.33 &
+  \multicolumn{1}{c|}{0.5} &
+  18.17 &
+  20.01 \\
+GBR-C-2 &
+  CD &
+  \multicolumn{1}{c|}{$\mathcal{L}_\text{mse}$} &
+  \multicolumn{1}{c|}{30.63} &
+  795.08 &
+  \multicolumn{1}{c|}{0.3} &
+  27.12 &
+  14.8 \\ \bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\subsubsection{Quantitative Validation of GBR's Reasoning Ability}\label{sssec:gbr_comp}
+To compare how different settings affect the model’s ability for reasoning behavior, we examine the impact of various behavior‑discontinuity location methods and different loss options for behavior reasoning tasks. The results are shown in the Table~\ref{tab:gbr}, where \textbf{TD} denotes temporal-discontinuity-based location, \textbf{CD} denotes category-discontinuity-based one, \textbf{TD}$\mathbf{\cup}$\textbf{CD} refers to the hybrid strategy by taking the union of their locations, $\mathcal{L}_{\text{InfoNCE}}^{\cos}$ denotes the loss function defined by Eq(\ref{eq:loss},\ref{eq:sampled_softmax}), and $\mathcal{L}_\text{cos}$ and $\mathcal{L}_\text{mse}$ indicate utilizing point-wise loss function $\mathcal{L}_\texttt{dist}=\frac{1}{M}\sum_{i=1}^{M}  \texttt{dist}(\mathbf{h}^{lm}_i,y_i^+)$, with \texttt{dist} being cosine distance and Euclidean distance, respectively. 
+
+From Table~\ref{tab:gbr}, we observe: \textbf{(i) CD is easier to reason than TD.} Though \texttt{[FILL]} token's ratio of CD is higher than that of TD, its reasoning difficulty is much lower, as CD's IB-PPL and IB-ACC on \texttt{[FILL]} tokens is more superior than TD's. \textbf{(ii) Easy \texttt{[FILL]} tokens help MLM.} Since IB-PPL and IB-ACC of CD on \texttt{[MASK]} tokens is also more superior than that of TD while their \texttt{[MASK]} sampling strategies are exactly identical, it is implied that inserting \texttt{[FILL]} tokens in locations with lower reasoning difficulty can simultaneously improve the model's discriminative ability for masked language models task (MLM ). \textbf{(iii) \texttt{[FILL]} position matters more than its ratio.} Taking union of the two discontinuity location schemes does not improve the model's performance, thus relying solely on promoting \texttt{[FILL]}'s insertion ratio probabily fails to improve the model's reasoning capability. In contrast, the selection of insertion position for \texttt{[FILL]} tokens has a greater impact on the model's reasoning capability. \textbf{(iv) Only context-aware loss is effective.} Compared to using point-wise losses (\textit{i.e.} $\mathcal{L}_\text{cos}$ and $\mathcal{L}_\text{mse}$), only employing the context-aware $\mathcal{L}_{\text{InfoNCE}}^{\cos}$ allows our model to learn discriminative semantic representations, thus achieving promising results of IB-ACC and IB-PPL on \texttt{[MASK]} tokens. \textbf{(v) \texttt{[FILL]}'s metrics are simpler than \texttt{[MASK]}'s.} It is worth noting that although using point-wise losses causes the model to essentially lose discriminative ability on \texttt{[MASK]} tokens, their IB-ACC$_\texttt{[FILL]}$ still exceeds 10\%, which is possibly because the metric for \texttt{[FILL]} tokens is much simpler than that of \texttt{[MASK]} tokens, \textit{i.e.} IB-ACC$_\texttt{[FILL]}$ only requires the inferred representation for \texttt{[FILL]} to hit \textit{any one} of the same sequence's \texttt{[MASK]} ground-truth set while IB-ACC$_\texttt{[FILL]}$ requires the inferred one to hit the \textit{exact one} ground-truth behind the \texttt{[MASK]}. 
+
+\begin{figure}[htp]
+    \centering
+    \includegraphics[width=\textwidth]{figs/case_all.pdf}
+    \caption{Case visualization for validating GBR's reasoning ability from item and representation perspective. (a) Comparison of top-one real items retrieved by different \texttt{[FILL]} tokens and their contextual items. (b) Distribution of token representation (including real item tokens and \texttt{[FILL]} tokens) in two users' historical sequences.}
+    \label{fig:case}
+\end{figure}
+
+\subsubsection{Qualitative Validation of GBR's Reasoning Ability}
+
+\textbf{Item Perspective.} To illustrate the semantics of the inferred representations in item perspective, we use the extrapolated representations at \texttt{[FILL]} positions to retrieve the top‑one real items from the item pool based on cosine similarity, and then compare them with the contextual items in the logged clicked item sequence, as shown in Figure~\ref{fig:case}.a. \textbf{(i) Case 1:} The abrupt transition from recreational products to medical treatments suggests an beyond-log interests, where our GBR reconstructs this unobserved intent as cartoon-patterned waterproof bandages. This inference exhibits semantic consistency through shared contextual attributes: the ``waterproof'' property maintains aquatic activity relevance, ``cartoon-patterned'' retains product attribute related to children recreation, ``wound care'' addresses emergent medical needs implied by subsequent interactions, and ``child-safe'' preserves targeted user consistency. \textbf{(ii) Case 2:} The interaction discontinuity between mobility aids and food processors indicates a missing culinary ingredient interest. GBR bridges this gap with locally grown seasonal vegetables, where ``farm-fresh'' provides the logical acquisition target for the shopping trolleys, ``salad greens'' aligns with the slicer's function. This semantically grounded reconstruction of fresh produce as the intermediary demonstrates GBR's capacity to synthesize holistic behavior chains (grocery acquisition → ingredient preparation → storage) from fragmented logs. \textbf{(iii) Takeaway:} These cases substantiate GBR's paradigm-shifting advantage: resolving behavioral discontinuities through world-knowledge-guided inference rather than historical pattern matching, enabling the reconstruction of interests absent from platform logs but essential for coherent user modeling.
+
+\textbf{Representation Perspective.} We further visualize the distribution of token representation (including real item tokens and \texttt{[FILL]} tokens) in different users' historical sequences, as shown in Figure~\ref{fig:case}.b. We observe: \textbf{(i) The two users' interests differ.} The interactive items of different users show significant distribution differences in the representation space, which is probabily because these two users' interest profiles are very different. \textbf{(ii) Most \texttt{[FILL]} are semantically consistent with contexts.} Most \texttt{[FILL]} representations are distributed around the real item representation clusters, and are not simply duplicates of the real ones, which implies that the GBR not only maintains semantic continuity when inferring \texttt{[FILL]} tokens, but also exhibits a certain degree of generalization ability. \textbf{(iii) GBR can reason beyond sequence.} There are indeed a small number of \texttt{[FILL]} representations that do not have an associated real item representation cluster. We visualized two such cases in Figure~\ref{fig:case}.b, showing the nearest real items retrieved from the item pool. Although these items do not maintain semantic consistency with the contextual items in the representation perspective, they have high behavioral continuity from the item perspective (as shown in Figure~\ref{fig:case}.a), which fully demonstrates that the our GBR has at least \textit{beyond-sequence} reasoning capabilities for \texttt{[FILL]} tokens. \textbf{(iv) Representation collapse of \texttt{[FILL]}.} In areas where the real item representations are distributed densely, \texttt{[FILL]} representations tend to collapse (\textit{i.e.} overly clustered), indicating that excessive semantically similar interactive items in the behavior may cause representations collapse of some \texttt{[FILL]} tokens.
+
+% \begin{figure}[tp]
+%     \centering
+%     \includegraphics[width=0.5\textwidth]{figs/emb.pdf}
+%     \caption{todo.}
+%     \label{fig:emb}
+% \end{figure}
+
+\subsubsection{Applying GBR to Industrial Ranking Systems}
+To validate the effectiveness of GBR's inferred representation in downstream ranking scenarios, we replace the original user historical sequence with the extended sequence as the input for sequential modeling in the CTR model at the ranking stage. The results are presented in the Table~\ref{tab:gbr_rank}, evaluated using common AUC and GAUC metrics. 
+
+
+% Please add the following required packages to your document preamble:
+% \usepackage{booktabs}
+% \usepackage{graphicx}
+\begin{table}[tb]
+\centering
+\caption{Performance comparison of different GBR models applied to CTR models.}
+\label{tab:gbr_rank}
+% \resizebox{0.55\textwidth}{!}{%
+\begin{tabular}{@{}l|cc|cc@{}}
+\toprule
+Method          & AUC             & Impr            & GAUC            & Impr            \\ \midrule
+Base            & 0.7495          & -               & 0.6176          & -               \\
+GBR-T-0  & 0.7508          & 0.0013          & 0.628           & 0.0104          \\
+GBR-C-1 & 0.7491          & -0.0004         & 0.618           & 0.0004          \\ \midrule
+GBR-C-0 & \textbf{0.7513} & \textbf{0.0018} & \textbf{0.6284} & \textbf{0.0108} \\ \bottomrule
+\end{tabular}%
+% }
+\end{table}
+
+% Please add the following required packages to your document preamble:
+% \usepackage{booktabs}
+% \usepackage{multirow}
+% \usepackage{graphicx}
+\begin{table}[t]
+\centering
+\caption{Performance gains brought by ReaSeq and GBR in online A/B test.}
+\label{tab:gbr_online}
+% \resizebox{0.6\textwidth}{!}{%
+\begin{tabular}{@{}l|l|cccc@{}}
+\toprule
+\multirow{2}{*}{Models} &
+  \multirow{2}{*}{Scenarios} &
+  \multicolumn{4}{c}{Metrics (Absolute Improvements)} \\ \cmidrule(l){3-6} 
+                        &       & IPV     & CTR     & Order   & GMV     \\ \midrule
+\multirow{2}{*}{ReaSeq} & Guess & +6.50\% & +6.57\% & +2.98\% & +2.52\% \\
+                        & PB    & +7.68\% & +7.80\% & +4.54\% & +3.14\% \\ \midrule
+GBR &
+  Guess &
+  \multicolumn{1}{l}{+2.40\%} &
+  \multicolumn{1}{l}{+2.08\%} &
+  \multicolumn{1}{l}{+4.09\%} &
+  \multicolumn{1}{l}{+5.12\%} \\ \bottomrule
+\end{tabular}%
+% }
+\end{table}
+
+\subsection{Online A/B Test}
+To validate the effectiveness of ReaSeq on online business metrics, we conduct a two‑week online A/B test by deploying the ReaSeq‑enhanced CTR model in two Taobao App scenarios, \textit{i.e.} ``Guess What You Like'' (Guess) business of the homepage, and the ``Post‑Buy'' (PB) scenario. The experiment runs from 2025.10.30 to 2025.11.11, with both the experiment and control group each receiving 1\% of total traffic. We use the following metrics to evaluate online performance:
+\begin{itemize}
+    \item \textbf{IPV} (Item Page Views): The number of times item pages are viewed from recommendations
+     \item \textbf{CTR} (Click-Through Rate): The ratio of clicks to impressions for recommended items
+     \item \textbf{Order}: The number of paid orders for all clicked items within the next one day
+     \item \textbf{GMV} (Gross Merchandise Volume within 1 day): The total transaction value of paid orders for all clicked items within the next one day
+\end{itemize}
+
+The results are presented in the Table~\ref{tab:gbr_online}. As shown, applying ReaSeq in both scenarios not only yields substantial improvements in click‑related metrics (\textbf{> +6\%} in \textbf{IPV} and \textbf{CTR}), but also boosts conversion‑related metrics. These results demonstrate that enhancing the ranking system with world‑knowledge‑based reasoning is able to bring promising online gains. In addition, we further validate the unilateral effectiveness of GBR by conducting a 3-day online A/B test on the selected user group (see Section~\ref{sssec:exp_set}) on Guess scenario from 2025.12.22 to 2025.12.24, where ``Base + GBR-C-0'' in Table~\ref{tab:gbr_rank} is adopted as the experiment CTR model and both the experiment and control group each received 0.2\% of total traffic. The results (also shown in Table~\ref{tab:gbr_online}) demonstrate superior performance consistent with ReaSeq, further validating the business value that GBR brings to online recommendation systems.

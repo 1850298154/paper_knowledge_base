@@ -1,0 +1,135 @@
+\section{Deadlock Detection Algorithm}
+\label{sec:detector}
+
+Now that we have established the relationship between promises and
+tasks, it is possible to describe what a deadlock is.
+%
+A deadlock is a cycle of $n$ tasks, $t_i$, and $n$ promises, $p_i$,
+such that $t_i$ awaits $p_i$ while $p_i$ is owned by $t_{i+1}$
+($\mathrm{mod}~n$).
+%
+The information required to identify such a deadlock is, for the first
+time, made available explicitly at runtime through the use of the \Po
+policy.
+%
+We can now develop a runtime detection mechanism to identify deadlocks
+based on this information and raise an alarm as soon as one is
+created.
+
+\subsection{Approach}
+
+Even assuming sequential consistency, the algorithm for finding such a
+cycle is non-trivial. Conceptually, whenever a $\kwget p$ is executed
+by $t$, $t$ must alternately traverse owned-by and waits-for edges to
+see if the path of dependences returns to $t$. If another task, $t'$,
+is encountered which is not currently awaiting a promise, this proves
+that progress is still being made and there is no deadlock (yet). In
+this case, $t$ passes verification and commits to blocking on
+$p$. Should this path of dependences grow due to a subsequent
+$\kwget p'$ by $t'$, then the same algorithm runs again in task $t'$
+to verify that the new waits-for edge does not create a deadlock.
+
+Crucially, during verification $t$ must establish a waits-for edge to
+mark that it is awaiting $p$ \emph{prior} to traversing the dependence
+path. That is, a waits-for edge is created before it is determined
+that $t$ will be allowed to await $p$. A two-task cycle shows what
+would go wrong if this procedure is not followed. If $t$ begins to
+verify its wait of $p$ (say, owned by $t'$) without marking that $t$
+is awaiting $p$, and concurrently $t'$ begins to verify its wait of
+$p'$ (owned by $t$) without marking that $t'$ is awaiting $p'$, then
+each task may find that the other is apparently not awaiting any
+promises at this time, and both commit to blocking, creating an
+undetected deadlock. However, by ensuring that each task marks itself
+as awaiting a promise prior to verifying whether that wait is safe, we
+guarantee the last task to arrive in the formation of a deadlock cycle
+will be able to detect this cycle.
+
+A second consideration is how this approach handles concurrent
+transfer of promise ownership or concurrent fulfillment of
+promises. Suppose that while the cycle detection algorithm is
+traversing a dependence path, an earlier promise in the path is
+transferred to a new owner or is fulfilled, thereby invalidating the
+remainder of the traversed path. Failure to handle this correctly
+could result in an alarm when there is no deadlock. The first
+observation we make is that this scenario cannot arise for any but the
+most recent promise encountered on the path. If $p_0$ is owned by
+$t_1$, awaiting $p_1$, owned by $t_2$, then it is impossible for $p_0$
+to move into a new task or to become fulfilled, since its current
+owner, $t_1$, is blocked (or about to block, pending successful
+verification). The concern is only that $t_2$ has not yet blocked and
+may transfer or fulfill $p_1$. The natural solution is that when
+traversing the dependence path, upon reaching each promise in the path
+we must go back and double-check that the \emph{preceding} promise
+still belongs to the task it belonged to in the previous iteration and
+is still unfulfilled. If this check fails, then the present
+verification passes because progress is still being made.
+
+\subsection{Detection Algorithm}
+
+\algDetector
+
+The deadlock detector occupies the implementation of the \kwget
+instruction, given in \cref{alg:detector}.
+%
+This detector can thereby raise an alarm in a task as soon as the task
+attempts a deadlock-forming await of a promise.
+%
+At the time of raising an alarm, the available diagnostic information
+that can be reported includes the task, the awaited promise, as well
+as every other task and promise in the cycle, if desired.
+
+For a preliminary understanding of the procedure's logic, we assume
+sequential consistency in this section.
+%
+Upon entering \textsc{Get}, the currently executing task records the
+promise that it will be waiting on (line~\ref{ln:detector:enter}).
+%
+This $\fldwaitingOn$ field was initialized to $\Null$ in
+\cref{alg:owners} line~\ref{ln:owners:async:B}, and is always reset to
+$\Null$ upon exiting \textsc{Get} (\cref{alg:detector}
+line~\ref{ln:detector:final}), either normally
+(line~\ref{ln:detector:return}) or abnormally
+(line~\ref{ln:detector:fail}). Doing so makes the algorithm robust to
+programs with more than one deadlock.
+
+The loop in the detection algorithm traverses the chain of alternating
+$\fldowner$ and $\fldwaitingOn$ fields.
+%
+If task $t$ is waiting on promise $p$, which is owned by a task $t'$,
+then $t$ is effectively waiting on whatever $t'$ awaits.
+%
+In traversing this chain, if $t$ finds that it is transitively waiting
+on itself, then we have identified a deadlock
+(lines~\ref{ln:detector:loop},~\ref{ln:detector:fail}).
+%
+If the algorithm reaches the end of this chain without finding $t$
+again, as indicated by finding a $\Null$ value in
+line~\ref{ln:detector:breakt} ($p_i$ is already fulfilled) or in
+line~\ref{ln:detector:breakp} ($t_{i+1}$ is not awaiting a promise),
+then it is safe to commit to a blocking wait on the desired promise
+(line~\ref{ln:detector:return}).
+%
+Recall that $p_i.\fldowner$ is $\Null$ after $p_i$ has been fulfilled,
+and $t_{i+1}.\fldwaitingOn$ is $\Null$ when $t_{i+1}$ is not currently
+executing \textsc{Get}.
+
+In order to guarantee that an apparent cycle always corresponds to a
+real deadlock, even under concurrent updates to promises, we rely on
+line~\ref{ln:detector:changed} to establish that task $t_{i+1}$ was
+waiting on promise $p_{i+1}$ \emph{while} $t_{i+1}$ was still the
+owner of promise $p_i$.
+%
+This is achieved by reading the $\fldowner$ field both before
+(line~\ref{ln:detector:owner1},~\ref{ln:detector:owner2}) and after
+(line~\ref{ln:detector:changed}) reading the $\fldwaitingOn$ field
+(line~\ref{ln:detector:waitingOn}).
+%
+If the task observes the owner of $p_i$ to have changed, it turns out
+that it is safe to abandon the deadlock check and commit to the
+blocking wait.
+
+In \crefrange{sec:def}{sec:correct}, we will move to a weaker memory
+model. There are two crucial points to remember. We must preserve the
+ability to reason temporally over the edges in the dependence path,
+and we must guarantee that at least one task entering a deadlock can
+observe the existence of the whole deadlock cycle.

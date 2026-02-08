@@ -1,0 +1,236 @@
+\section{Routing, Scheduling, and Risk Minimization}\label{sec:problem_model}
+
+In this section, we formally define the heterogeneous teaming problem with uncertain agent capabilities and task requirements. We describe the task requirement functions and agent capability vectors used to represent the task structure, organize them in a graphical model, and then encode the task allocation problem as a stochastic mixed-integer program whose objective jointly consists of time, energy, and risk cost.
+
+The modeling assumptions are listed as follows:
+\begin{itemize}
+    \item Tasks are distributed spatially and can be completed after a known time once a team with the required capabilities arrives.
+    \item The agent capabilities can be modeled as a vector of known continuous random distributions.
+    \item The task requirement can be verified by a binary function of the agent team's capabilities. The parameters in the function are task-required capabilities and are known continuous random distributions.
+    \item Different types of capabilities are independent and do not affect each other.
+    \item The completion of one task does not depend on other tasks. But the scheduling dependency between tasks is considered, i.e., agents should arrive at the same time for a task, and the delay of one task could delay the subsequent tasks. The model can be extended with other time constraints, e.g., precedence constraints.
+\end{itemize}
+
+
+\subsection{Heterogeneous Teaming Problem Description}\label{sec:problem_description}
+We simplify the graphical model in \cite{fu2020heterogeneous} for this work.
+Consider a set of agent species \(V = \{1,\cdots,{n_v}\}\), capability types \(A = \{1,\cdots,{n_a}\}\), and tasks \(M = \{1, \cdots, {n_m}\}\). 
+Note that \(V, A, M \subset \mathbb{N}\) are three integer sets.
+Each agent species \(k \in V\) is associated with a non-negative capability vector \(\mathbf{c}_k = [c_{k 1}, \cdots, c_{k {n_a}}]^\transpose\), where \(c_{k a}\) is a random variable with a known distribution, representing the uncertain task capability of type \(a \in A\) for agent \(k \in V\). Each task \(i \in M\) requires an agent team with appropriate capabilities that drives a task requirement function \(\rho_i(\cdot)\) to 1. 
+
+A task requirement function is a binary function of a similar structure as \eqref{eqn:task_requirement_function}. The logical operators \(\geq\), \(\land\), and \(\lor\) are `greater than or equal to', `and', and `or' that return 1 if their conditions are satisfied, and 0 otherwise. \(\gamma_{1 a}\) describes the task \(1\)'s requirement on capability \(a\), and is modeled as a random variable with a known distribution. We define \(\gamma_{1 a} = 0\) if it does not appear in \eqref{eqn:task_requirement_function}. Note that \eqref{eqn:task_requirement_function} is an example of a task that requires four types of capabilities. In practice, there can be an arbitrary number of \(\land\) and \(\lor\), theoretically. 
+\begin{align}
+    & \rho_{1}(\alpha_{1}, \alpha_{2}, \cdots) = [(\alpha_{1} \geq \gamma_{1 1}) \lor (\alpha_{2} \geq \gamma_{1 2})] \nonumber \\
+    & \quad\quad\quad\quad\quad\quad\quad \land [\alpha_{3} \geq \gamma_{1 3}] \land[\alpha_{4} \geq \gamma_{1 4}]. \label{eqn:task_requirement_function} \\
+    & \alpha_a =
+    \begin{cases} {\sum}_{k \in V} c_{k a} \cdot y_{k 1}, \ a \text{ is cumulative} \\
+    {\min}_{k \in V} c_{k a} \cdot r_{k 1}, a \text{ is noncumulative}
+    \end{cases}\hspace{-0.1in}, 
+    \forall a \in A.
+     \label{eqn:task_input}
+\end{align}
+
+\(\alpha_a\) is the capability \(a\) of the agent team.
+\(y_{k i}\) is the number of agents at task \(i \in M\) with species \(k \in V\). \(r_{k i}\) is binary and indicates whether there is an agent with species \(k \in V\) at task \(i \in M\). Depending on whether the capability is cumulative, we can compute \(\alpha_a\) according to \eqref{eqn:task_input}. An example of noncumulative capabilities is the speed limit of a team. It equals the speed of the slowest moving agent in the team.
+
+The requirement to drive these functions to 1 could be satisfied with appropriate team formation planning. This requirement constraint can be encoded as linear constraints according to \cite{fu2020heterogeneous}. Note that the only part that could introduce non-convexity is the logic \(\lor\), which takes the union of two feasible regions. Reducing the number of \(\lor\) operators is desired as it facilitates the optimization.
+
+With stochasticity in task requirements and agent capabilities, the goal is to determine the optimal task schedule for a selected set of agents, such that the energy, time, and path constraints are satisfied, and the energy cost and risk of the task's non-completion are jointly minimized.
+
+The task is considered complex for two reasons. First, the logic \(\lor\) operator results in multiple decompositions. Secondly, there is no fixed way to decompose the requirements in \eqref{eqn:task_requirement_function} into single-agent elemental tasks; instead, they are optimized together with the assignment and scheduling problem.
+
+There are inter-schedule dependencies between tasks since the overall time cost for one agent to achieve one task depends on the schedule of other agents. For example, if one agent delays its work at another task and arrives late at the current task, the time cost increases for all agents at the current task.
+
+\subsection{Routing Model}
+As shown in Fig. \ref{fig:graphical_model}, we first define a directed graph \mbox{\(G = (N,E)\)}, with a set of vertices \(N = S \cup U \cup M\) and edges \(E\). \(M = \{1, \cdots, {n_m}\}\) is the set of task nodes. \(S = \{n_m + 1, \cdots, n_m + n_v\}\) and \(U = \{n_m + n_v + 1, \cdots, n_m + 2 n_v\}\) are the sets of start and terminal nodes for each agent species \(k \in V\).
+The prefix \(n_m\) and \(n_m + n_v\) are added such that the vertex indices in \(M\), \(S\), and \(U\) are unique integers.
+The size of the vertices set \(M\), \(S\), and \(U\) are \(n_m\), \(n_v\), and \(n_v\), respectively. Note that these nodes can represent the same or different physical locations in the real world.
+A practical example of this graphical model is in Fig. \ref{fig:model_overview}.
+
+\begin{figure}[hbt!]
+	\centering
+	\includegraphics[width=0.9\linewidth]{figure/graphical_model.pdf}
+	\caption{Graphical model with \(n_v = 3\) agent species and \(n_m = 2\) tasks.
+	}
+	\label{fig:graphical_model}
+\end{figure}
+
+The edge set \(E = \{(i,j) | \ \forall i \in S \cup M, \ j \in M \cup U\}\): there are edges from the starts to all tasks, from all tasks to the terminals, and between all the tasks.
+The edges are associated with their time and energy costs and the pre-computed real-world paths between two node locations. There is an edge between every task node pair in Fig. \ref{fig:graphical_model}, but in practice, we only add an edge if there is a feasible path between two nodes.
+
+Under this setting, the agents of species \(k \in V\) should start at \(s_k\), follow the edges to visit a subset of task nodes (often together with other agents), and terminate at \(u_k\). As a result, the agent numbers on the edges form a network flow from the start to the terminal nodes in the given graph \(G\).
+
+
+\subsection{Risk Minimization Model - A Mixed-Integer Program}
+
+We discuss an MIP model that generates a schedule and agent team for each task and the corresponding agent flow by minimizing the energy cost and the risk of the task's non-completion.
+Here we provide common notations that will be used in TABLE \ref{tab:variable_definition}. Note that the decision variables are \(x_{kij}\), \(y_{ki}\), \(r_{kij}\), \(r_{ki}\), \(q_i\), and \(g_{k i}\). 
+
+\begin{table}[t]
+  \caption{Definition of the notation.}
+  \label{tab:variable_definition}%
+    \begin{tabular}{p{0.06\linewidth}|p{0.8\linewidth}} 
+    \toprule
+     & Meaning
+    \\
+    \midrule
+    \(x_{k i j}\)& The number of agents on edge \((i, j)\) with species \(k \in V\), where node \(i, j \in N\).
+    For simplicity, \(x_{k s_k i}\) and \(x_{k i u_k}\) \(\forall k \in V, i \in N\) are abbreviated to  \(x_{k s i}\) and \(x_{k i u}\) since there is no ambiguity.
+    The colored numbers in Fig. \ref{fig:model_overview} are solutions to \(x_{k i j}\) for that example problem.
+    \\
+    \(y_{k i}\)& The number of agents at task \(i \in M\) with species \(k \in V\).
+    \\
+    \(r_{k i j}\)& = 1, if \(x_{k i j} \geq 1\), otherwise 0. (A helper variable indicating whether there are agents with species \(k\) on that edge.)
+    \\
+    \(r_{k i}\)& = 1, if \(y_{k i} \geq 1\), otherwise 0. (A helper variable indicating whether there are agents with species \(k\) at that task.)
+    \\
+    \(q_i\)& The time that task \(i \in M\) begins.
+    \\
+    \(g_{ki}\)& The maximum cumulative energy that an agent of species \(k \in V\) has spent at node \(i\). (A helper variable.)
+    \\
+    \(b_{k i j}\)& The deterministic energy cost for agent \(k \in V\) to travel edge \((i, j) \in E\).
+    \\
+    \(t_{k i j}\)& The deterministic time for \(k \in V\) to travel edge \((i,j) \in E\).
+    \\
+    \(t_{k i}\)& The deterministic time for agent species \(k \in V\) to complete its part for task \(i \in M\).
+    \\
+    \(C_{q}\)& Time penalty coefficient.
+    \\
+    \(C_{\text{large}}\)& A large constant number for the MIP.
+    \\
+    \(B_k\)& The energy capacity of agent \(k \in V\).
+    \\
+    \(B_{\text{large}}\) & A large constant energy for the MIP.
+    \\
+     \(h_i\)& The conditional value at risk from task \(i \in M\).
+    \\
+    \(n_k\) & The number of agents with species \(k \in V\).
+    \\
+    \bottomrule
+    \end{tabular}
+\end{table}
+
+Compared to \cite{fu2020heterogeneous}, the \(x_{kij}\) and \(y_{ki}\) variables in this work are defined for agent species instead of individual agents, and their values are now real instead of binary. This change reduces the number of variables and, therefore, decreases the computational cost of the planner. However, as the model does not specify variables for individual agents, the mixed-integer program (MIP) outputs an agent flow of each species instead of path plans for individual agents. We will discuss algorithms for post-processing the agent flows to get routes for individual agents in Sec. \ref{sec:flow_decompose}.
+
+
+\subsubsection{Variable Bounds}
+\begin{align}
+    \begin{split}
+    &x_{kij} \geq 0, \ y_{ki} \geq 0, \quad \forall i,j \in \node, \forall k \in V. \\
+    &r_{kij}, \ r_{ki}\in \{0,1\}, \quad \forall i,j \in \node, \forall k \in V. \\
+    &q_i \geq 0, \quad \forall i \in M \cup U. \quad q_i = 0, \quad \forall i \in S. \\
+    &g_{k i} \geq 0, \quad \forall i \in M \cup U. \quad g_{k i} = 0, \quad \forall i \in S, \forall k \in V.
+    \end{split}\label{eqn:bound_constraint}
+\end{align}
+
+The numbers of agents from species \(k \in V\) on an edge and at a task node are positive and real. Their helper variables are binary. The time and cumulative energy are nonnegative at all nodes and zero at the start nodes. \\
+
+
+\subsubsection{Helper-variable Constraints}
+\begin{align}
+    \begin{split}
+    &x_{kij} \geq r_{kij}, \quad x_{kij} \leq n_k \cdot r_{kij}, \quad \forall i,j \in \node, \forall k \in V. \\
+    &y_{ki} \geq r_{ki}, \quad y_{ki} \leq n_k \cdot r_{ki}, \quad \forall i \in \node, \forall k \in V.
+    \end{split}\label{eqn:x_r_constraint}
+\end{align}    
+
+Equation \eqref{eqn:x_r_constraint} encodes the relationship between \{\(x_{kij}\), \(y_{ki}\)\} and their helper variables \{\(r_{kij}\), \(r_{ki}\)\}. \\
+
+
+\subsubsection{Network Flow Constraints}
+\begin{align}
+    \underset{i \in S \cup M} {\sum} x_{k i m} &= \underset{j \in U \cup M} {\sum} x_{k m j}, \quad \forall m \in M, \ \forall k \in V. \label{eqn:flow_constraint1} \\
+    \underset{i \in M} {\sum} x_{k s i} &\leq n_k, \quad \quad \quad \forall k \in V. \label{eqn:flow_constraint2} \\
+    y_{k j} &\leq \underset{i \in M} {\sum} x_{k s i}, \quad \forall j \in M, \ \forall k \in V. \label{eqn:flow_constraint3} \\
+    y_{k j} &= \underset{i \in S \cup M} {\sum} x_{k i j}, \quad \forall j \in M, \ \forall k \in V. \label{eqn:node_vehicle_constraint}
+\end{align}
+
+Equation \eqref{eqn:flow_constraint1}-\eqref{eqn:flow_constraint3} are flow constraints that ensure the agent numbers are smaller than the upper bound, and that the incoming agent number at a node equals the outgoing number. Constraint \eqref{eqn:node_vehicle_constraint} reflects the relationship that the number of agents at a node equals the sum of the agent flows from all incoming edges. \\
+
+
+\subsubsection{Energy Constraints}
+
+\begin{align}
+    g_{k i} - g_{k j} + b_{k i j} &\leq B_{\text{large}} (1 - r_{k i j}),
+    \forall i , j \in \node, \forall k \in V. \label{eqn:energy_constraint1} \\
+    g_{k i} &\leq B_{k}, \quad \forall i \in \node, \ \forall k \in V. \label{eqn:energy_constraint}
+\end{align}
+
+Equation \eqref{eqn:energy_constraint1} ensures that \(g_{k i}\) is the cumulative energy of the agent species - if an edge is traveled, the energy \(b_{k i j}\) is added.
+And because \(g_{k i}\) is the maximum cumulative energy of agent species \(k\) at node \(i\), equation \eqref{eqn:energy_constraint} ensures the energy cost for an agent of species \(k\) does not exceed its energy capacity \(B_k\).
+
+
+These energy constraints form sufficient conditions as they assure the most costly path in the flow network of species \(k\) is within the capacity limit \(B_k\). However, it is possible that the most costly path is not picked during the flow decomposition procedure (Sec. \ref{sec:flow_decompose}). This is a compromise made by us along the process of improving the scalability of the model: we replace the variables for individual agents with variables for an entire agent species. With the original variables for individual agents, necessary and sufficient energy constraints were easily imposed. \\
+
+\subsubsection{Time Constraints}
+\begin{align}
+    q_{i} - q_{j} + t_{k i j} + t_{k i} &\leq C_{\text{large}} (1 - r_{k i j}),
+    \forall i , j \in \node, \forall k \in V. \label{eqn:time_constraint1}
+\end{align}
+
+Equation \eqref{eqn:time_constraint1} is a scheduling constraint: for an agent, the time duration between two consecutive tasks should be larger than the service time at the previous task plus the travel time.
+This constraint gives all the agents in the team enough time to arrive before the current task starts.
+
+With the task time variables \(q_{i}\), the optimization problem can be extended with other user-defined time constraints. For instance, precedence constraints between tasks or time window constraints within which a task should complete \cite{fu2021simultaneous}.
+\\
+
+\subsubsection{Task Requirement Constraints}
+\begin{align}
+    & 1 = \rho_i(\underset{k \in V}{\sum} E(c_{k 1}) y_{k i}, \underset{k \in V}{\sum} E(c_{k 2}) y_{k i}, \ \cdots), \ \forall i \in M.  \label{eqn:task_complete_constraint1} \\
+    & 1 = \rho_i(\underset{k \in V}{\min} E(c_{k 1}) r_{k i}, \underset{k \in V}{\min} E(c_{k 2}) r_{k i}, \ \cdots), \ \forall i \in M.  \label{eqn:task_complete_constraint2}
+\end{align}
+
+For cumulative capabilities we add constraint \eqref{eqn:task_complete_constraint1}, and for noncumulative capabilities we add constraint \eqref{eqn:task_complete_constraint2}. \(E(\cdot)\) is the expectation operator. 
+\(c_{ki}\) is the capability value defined in Sec. \ref{sec:problem_description}.
+Note that an example of \(\rho_i(\cdot)\) is in \eqref{eqn:task_requirement_function}, and \(\gamma_{i a}\) \((\forall i \in M, a \in A)\) should be replaced with \(E(\gamma_{i a})\) here.
+Though the task requirements and the agents' task capabilities are stochastic, we can add this deterministic constraint that requires the teams' expected capabilities to satisfy the task requirement by driving the requirement function to 1. \\
+
+\subsubsection{Objective Function}
+\begin{align}
+    \min &\ C_e \underset{k \in V}{\sum} \ \underset{i,j \in \node}{\sum} b_{k i j} \cdot x_{k i j} + C_{q} \underset{i \in U}{\sum} q_i 
+    + C_h \underset{i \in M}{\sum} h_i
+    \label{eqn:nonlin_penalty_objective} \\
+    h_{i} &= \sum_{a \in A \text{ s.t. } \gamma_{i a} \neq 0 } h_{i a}, \quad \quad \quad \quad \quad \quad \quad \quad \ \ \ \forall i \in M, \label{eqn:nonlin_cvar_objective_h} \\
+    h_{i a} &= \underset{k \in V \text{ s.t. }r_{k i} = 1}{\max} \eta_\beta \left({-c_{k a} + \gamma_{i a}} \right), \ \ a \in A, \forall i \in M,  \label{eqn:nonlin_cvar_objective_h_min} \\
+    h_{i a} &= \eta_\beta ( {-\underset{k \in V}{\sum} c_{k a} \cdot y_{k i} + \gamma_{i a}} ), \quad \quad \   a \in A, \forall i \in M. \label{eqn:nonlin_cvar_objective_h_sum}
+\end{align}
+
+In the objective function \eqref{eqn:nonlin_penalty_objective}, we want to minimize a weighted combination of the energy cost, task time, and the conditional value at risk of the task's non-completion, where \(C_e\), \(C_q\), and \(C_h\) are user-defined weights.
+For the risk of a task, \(h_i\) in \eqref{eqn:nonlin_cvar_objective_h}, take task 1 and its example requirement function in \eqref{eqn:task_requirement_function} as an instance. According to \eqref{eqn:task_requirement_function} and \eqref{eqn:nonlin_cvar_objective_h}, \(h_{1} = h_{1 1} + h_{1 2} + h_{1 3} + h_{1 4}\).
+To explain this, task \(1\) requires capabilities \(1\)-\(4\). Assuming the requirements on these capabilities are independently placed, the total risk is the sum of the risks from each requirement.
+
+Consider \(h_{i a}\), the risk on a single capability \(a \in A\).
+According to the example requirement function \eqref{eqn:task_requirement_function}, a task requests \(\alpha_{a} \geq \gamma_{i a}\). Both \(\alpha_{a}\) and \(\gamma_{i a}\) are stochastic. To maximize the probability \(P(\alpha_{a} \geq \gamma_{i a})\), we instead minimize the CVaR of \(\gamma_{i a} - \alpha_{a}\). Let the function \(\eta_\beta(\cdot)\) be the CVaR of a random variable with probability level \(\beta\). Then, \(h_{i a}\) can be computed according to \eqref{eqn:nonlin_cvar_objective_h_sum} or \eqref{eqn:nonlin_cvar_objective_h_min} depending on whether capability \(a \in A\) is cumulative or not.
+
+Given the uncertainty in the capabilities, the objective function \eqref{eqn:nonlin_penalty_objective}, together with the deterministic task requirement constraint \eqref{eqn:task_complete_constraint1}, tries to maximize the probability of task success at a low energy and time cost.
+
+\subsection{Sample Average Approximation (SAA)}
+Solving the optimization specified by \eqref{eqn:bound_constraint}-\eqref{eqn:nonlin_cvar_objective_h_sum} requires dealing with stochasticity and nonlinearity. In this section, we show how to convert this stochastic mixed-integer nonlinear program (MINLP) to a deterministic mixed-integer linear program (MILP).
+
+Notice that \(E(c_{k a})\) in \eqref{eqn:task_complete_constraint1} and \(\eta_\beta(-c_{k a} + \gamma_{i a})\) in \eqref{eqn:nonlin_cvar_objective_h_min} do not involve decision variables, these can be computed prior to the optimization, given the distribution of \(c_{k a}\) and \(\gamma_{i a}\) (\(k \in V, a \in A\)). The stochasticity is eliminated by the expectation and risk function. The deterministic task requirements in \eqref{eqn:task_complete_constraint1} can then be represented with a set of linear constraints according to \cite{fu2020heterogeneous}. Constraint \eqref{eqn:nonlin_cvar_objective_h_min} can also be represented as a linear constraint
+\begin{align}
+    h_{i a} \geq \eta_\beta \left({-c_{k a} + \gamma_{i a}} \right) \cdot r_{k i}, \quad \forall k \in V, a \in A, \forall i \in M. \label{eqn:lin_cvar_objective_h_min}
+\end{align}
+
+The only non-linearity is in \eqref{eqn:nonlin_cvar_objective_h_sum} due to the function \(\eta_\beta(\cdot)\) and the decision variable \(y_{k i}\). However, we can linearize \eqref{eqn:nonlin_cvar_objective_h_sum} using the sample average approximation algorithm. Suppose we can represent the random distribution \(c_{k a}\) and \(\gamma_{i a}\) by samples \(c_{k a}^{(\xi)}\) and \(\gamma_{i a}^{(\xi)}\) (\(\xi = 1, \cdots, n_\xi\)), respectively. Then we can approximate \eqref{eqn:nonlin_cvar_objective_h_sum} with a linear equation \eqref{eqn:cvar_objective_h_sum_linear} according to \cite{rockafellar2000optimization}.
+The approximation converges at the rate of \(\bigO{n_\xi^{-1/2}}\) \cite{asmussen2007stochastic}.
+In the following equation, \(\lambda_{i a}\) is a continuous helper variable for calculating \(h_{i a}\) 
+(task \(i \in M\) and capability type \(a \in A\)).
+\begin{align}
+    h_{i a} = & \lambda_{i a} + {1} / {n_\xi (1 - \beta)} \cdot \nonumber \\
+    & \stackrel{n_\xi}{\underset{\xi = 1}{\sum}}
+    \left[
+    -\underset{k \in V}{\sum} c_{k a}^{(\xi)} \cdot y_{k i} + \gamma_{i a}^{(\xi)} - \lambda_{i a}
+    \right]^{+}. \label{eqn:cvar_objective_h_sum_linear} \\
+    [x]^+ =& \begin{cases} x, \quad x > 0 \\
+    0, \quad x \leq 0
+    \end{cases}. \label{eqn:relu_function}
+\end{align}
+
+Finally, the piece-wise linear function in \eqref{eqn:cvar_objective_h_sum_linear} can be represented as linear constraints in \eqref{eqn:cvar_objective_h_sum_linear2}. Note that we add a series of continuous helper variables \(w_{i a}^{(\xi)}\) to represent the \([\cdot]^+\) function in \eqref{eqn:relu_function}.
+\begin{align}
+    h_{i a} &= \lambda_{i a} + \frac{1}{n_\xi (1 - \beta)} \stackrel{n_\xi}{\underset{\xi = 1}{\sum}} w_{i a}^{(\xi)}, \nonumber \\
+    w_{i a}^{(\xi)} &\geq -\underset{k \in V}{\sum} c_{k a}^{(\xi)} \cdot y_{k i} + \gamma_{i a}^{(\xi)} - \lambda_{i a}, \label{eqn:cvar_objective_h_sum_linear2} \\
+    w_{i a}^{(\xi)} &\geq 0. \nonumber
+\end{align}
+

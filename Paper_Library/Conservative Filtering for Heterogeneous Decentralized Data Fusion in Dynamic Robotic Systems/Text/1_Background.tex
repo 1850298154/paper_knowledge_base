@@ -1,0 +1,42 @@
+Consider a set $N_r$ of $n_r$ autonomous robots jointly tasked with monitoring a global set of random variables $V$. These random variables can be static, dynamic or even parameters of the distribution, and can describe, for example, the random position states of the $n_r$ robots and $n_t$ targets tracked by the robots. Since the size $V$ scales with the number of robots and targets and might become quite heavy to process locally by each robot, there is interest in distributing it and tasking each robot $i\in N_r$ with only a subset of random variables $\chi^i\subset V$. To allow for  collaboration between robots we take a Bayesian DDF approach. 
+
+In Bayesian DDF, each robot $i$ is an independent entity, collecting data over a set of random variables of interest $\chi^i$ from its local sensors and/or via communication with neighboring robots. The robots can then individually (locally) infer the posterior distribution over their random variables of interest via Bayes' rule $p(\chi^i|Z^i)=p(\chi^i)p(Z^i|\chi^i)$, where $Z^i$ is the locally available data at robot $i$ and $p(\chi^i)$ is the prior distribution. Note that if two robots $i$ and $j$ hold distributions over overlapping sets of variables, i.e., $\chi^i\cap \chi^j\neq\varnothing$ and $\chi^i\setminus \chi^j\neq\varnothing$, where `$\setminus$' is the set exclusion operation, \cite{dagan_exact_2021} defines the resulting fusion process as an instance of \emph{heterogeneous} fusion.
+
+\subsection{Heterogeneous Bayesian Decentralized Data Fusion}
+In heterogeneous DDF a robot's set of random variables of interest $\chi^i$ can be divided into: (i) a set of variables it has in common with at least one of its set of neighbors $N_r^i$, such that $\chi^i_C=\bigcup_{j\in N_r^i}^{}\chi^{ij}_C$, where $\chi^{ij}_C$ are the variables common to robots $i$ and $j$, and (ii) a set of local variables $\chi^i_L$ which are not monitored by any other robot in the network. Robot $i$'s set of variables is thus $\chi^i=\chi^i_L\bigcup \chi^i_C$.
+
+Assume that non-mutual variables to robots $i$ and $j$, defined by $\chi^{i\setminus j}=\chi^i_L\cup\{\chi^i_C\setminus \chi^{ij}_C \}$, are independent given the common variables, i.e., $\chi^{i\setminus j}\perp \chi^{j\setminus i}|\chi^{ij}_C$. Then using a distributed version of Bayes' rule, \cite{dagan_heterogeneous_2020} shows that the \emph{Heterogeneous State} (HS) fusion rule at robot $i$ is,
+\begin{equation}
+    \begin{split}
+        p_f(\chi^i|Z^{i,+}_k)\propto
+        \frac{p(\chi^{ij}_C|Z^{i,-}_k)p(\chi^{ij}_C|Z^{j,-}_k)}{p^{ij}_c(\chi^{ij}_C|Z^{i,-}_k \cap Z^{j,-}_k)}  
+         \cdot p(\chi^{i\backslash j}|\chi^{ij}_C,Z^{i,-}_k).
+    \end{split}
+    \label{eq:Heterogeneous_fusion}
+\end{equation}
+Here $Z^{i,-}_k$ and $Z^{i,+}_k$ are the data at time step $k$, available at robot $i$ before and after fusion, respectively, and it is assumed that all measurements acquired by each robot are conditionally independent given the random variable of interest.
+
+There are two key points concerning the above fusion rule. First, the validity of the equation is based on the assumption that non-mutual variables are conditionally independent given common variables between the communicating robots. However, when the variables of interest are dynamic and are marginalized out successively over time, dependencies between non-mutual variables arise and the fusion rule (\ref{eq:Heterogeneous_fusion}) is no longer valid. This problem is at the core of this paper and is demonstrated, analyzed and solved in the next sections. The second point is the importance of accounting for the posterior distribution over the common variables, given the data common to both robots, $p^{ij}_c(\chi^{ij}_C|Z^{i,-}_k \cap Z^{j,-}_k)$, in the denominator of (\ref{eq:Heterogeneous_fusion}). 
+
+There are several methods to approximate this distribution (e.g., CI \cite{julier_non-divergent_1997}, GMD \cite{bailey_conservative_2012}) when the dependencies in the data held by two robots are unknown. However, the focus of current work is understanding the nature and origin of these dependencies. Thus we choose to use a CF \cite{grime_data_1994} to try to explicitly track the data common and dependencies between the robots.   
+
+\subsection{The Channel Filter}
+\label{subsec:CF}
+The Channel filter (CF) was suggested in \cite{grime_data_1994} as a method to track dependencies in the data in a network of robots. The main idea is to add a filter on the communication channel between any two communicating robots. It was shown \cite{grime_data_1994}, that for homogeneous fusion, if: (i) data does not circle back to its sender, i.e., the communication graph is undirected and a-cyclic (e.g., tree or chain); (ii) there is full rate communication (i.e., communication at every time step, without delays); (iii) incoming data is processed sequentially and (iv) assuming linear dynamic and measurement models and additive white Gaussian noise (AWGN), then the CF allows for each robot to recover the optimal centralized state estimate.   
+
+For heterogeneous fusion, since robots only reason over parts of the global set of random variables, they cannot achieve the optimal estimate. Nevertheless, in \cite{dagan_heterogeneous_2020}, \cite{dagan_exact_2021} an extended version of the original homogeneous CF is developed - the \emph{Heterogeneous State CF} (HS-CF). In the HS-CF algorithm each CF maintains a distribution over only the common variables between any two communicating robots (as opposed to the full set of variables in the original CF), given the common data. Thus the distribution $p^{ij}_c(\chi^{ij}_C|Z^{i,-}_k \cap Z^{j,-}_k)$ is explicitly tracked and can be accounted for when fusing according to (\ref{eq:Heterogeneous_fusion}). 
+
+The HS-CF was shown (\cite{dagan_exact_2021}) to be conservative for static problems and for dynamic problems with a smoothing approach. However, for a filtering scenario, it resulted in a slightly overconfident state minimum mean squared error (MMSE) estimates. These results revealed a gap in both the understanding of the dependencies resulting from marginalizing out past variables (filtering) and in the tools available to analyze heterogeneous DDF, more specifically the conditional independence structure of such problems. 
+
+\subsection{Factor Graphs}
+In recent years factor graphs \cite{frey_factor_1997} have been used to study and solve a variety of robotic applications \cite{dellaert_factor_2021}. Factor graphs are arguably the most general framework to analyze and express conditional independence, as such they directly express the sparse structure of decentralized problems.
+
+A factor graph is an undirected bipartite graph $\mathcal{F}=(U,V,E)$ that represents a function, proportional to the joint pdf over all random variable nodes $v_m\in V$, and factorized into smaller functions given by the factor nodes $f_l\in U$. An edge $e_{lm}\in E$ in the graph only connects a factor node \emph{l} to a variable node \emph{m}.
+The joint distribution over the graph is then proportional to the global function $f(V)$:
+\begin{equation}
+    p(V)\propto f(V)=\prod_{l}f_l(V_l),
+    \label{eq:factorization}
+\end{equation}
+where $f_l(V_l)$ is a function of only those variables $v_m\in V_l$ connected to the factor \emph{l}.
+
+In \cite{dagan_factor_2021} a factor graph based DDF framework, \emph{FG-DDF}, was suggested and demonstrated on a static heterogeneous fusion problem. Here, we further use factor graphs to analyze conservative filtering in dynamic problems.

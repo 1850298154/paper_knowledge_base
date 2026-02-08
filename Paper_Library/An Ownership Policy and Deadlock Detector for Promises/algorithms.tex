@@ -1,0 +1,135 @@
+% Remove vspace after blocks in algorithms
+\makeatletter
+\patchcmd{\ALG@doentity}{\item[]\nointerlineskip}{}{}{}
+\makeatother
+
+% Fix line number references for multiple algorithms
+\makeatletter
+\newcounter{algorithmicH}
+\let\oldalgorithmic\algorithmic
+\renewcommand{\algorithmic}{%
+  \stepcounter{algorithmicH}%
+  \oldalgorithmic}
+\renewcommand{\theHALG@line}{ALG@line.\thealgorithmicH.\arabic{ALG@line}}
+\makeatother
+
+\algnewcommand{\LeftComment}[1]{\State \(\triangleright\) #1}
+
+\algdef{SnE}{Async}{EndAsync}{\textbf{do asynchronously}}
+\algdef{SnE}{Try}{EndTry}{\textbf{try}}
+\algdef{CnE}{Try}{Finally}{EndTry}{\textbf{finally}}
+
+\algnewcommand{\Ifx}[1]{\State\algorithmicif\ #1 \algorithmicthen}
+\newcommand{\Break}{\textbf{break}}
+\newcommand{\Exception}{\textbf{exception}}
+
+\def\algOwners{
+  \begin{algorithm}[t]
+    \caption{Promise Ownership Management}
+    \label{alg:owners}
+    %
+    \begin{algorithmic}[1]
+      \Procedure{New}{\null}
+      \State $t \gets \mathit{currentTask}()$
+      \State $p \gets \{ \fldowner:t \}$
+      \Comment{C: atomic, Java: volatile}
+      \label{ln:owners:new:A}
+      \State append $p$ to $t.\fldowned$
+      \label{ln:owners:new:B}
+      \State \Return{$p$}
+      \EndProcedure
+      \Statex
+
+      \Procedure{Async}{$P$, $f$}
+      \State $t \gets \mathit{currentTask}()$
+      \State \textbf{assert} $p.\fldowner = t$
+      \label{ln:owners:async:X}
+      \textbf{forall} $p \in P$
+      \State $t' \gets \{ \fldowned:P,\,$
+      \label{ln:owners:async:A}
+      \State \quad$\fldwaitingOn:\Null \}$
+      \Comment{C: atomic, Java: volatile}
+      \label{ln:owners:async:B}
+      \State remove all of $P$ from $t.\fldowned$
+      \label{ln:owners:async:Y}
+      \State $p.\fldowner \gets t'$ \textbf{forall} $p \in P$
+      \label{ln:owners:async:C}
+      \Async
+      \State $\mathit{setCurrentTask}(t')$
+      \label{ln:owners:async:D}
+      \State $f()$
+      \State \textbf{assert} $t'.\fldowned$ is empty
+      \label{ln:owners:async:E}
+      \EndAsync
+      \State \Return{$t'$}
+      \EndProcedure
+      \Statex
+
+      \Procedure{Init}{$\mathit{main}$}
+      \State $\mathit{setCurrentTask}(\Null)$
+      \State \Call{Async}{[], $\mathit{main}$}
+      \EndProcedure
+      \Statex
+
+      \Procedure{Set}{$p$, $v$}
+      \State $t \gets \mathit{currentTask}()$
+      \State \textbf{assert} $p.\fldowner = t$
+      \label{ln:owners:set:A}
+      \State $p.\fldowner \gets \Null$
+      \label{ln:owners:set:B}
+      \State remove $p$ from  $t.\fldowned$
+      \label{ln:owners:set:C}
+      \State $\mathit{set\_impl}(p, v)$
+      \label{ln:owners:set:D}
+      \EndProcedure
+    \end{algorithmic}
+  \end{algorithm}
+}
+
+\def\algDetector{
+  \begin{algorithm}[t]
+    \caption{Deadlock Cycle Detection}
+    \label{alg:detector}
+    %
+    \begin{algorithmic}[1]
+      \Procedure{Get}{$p_0$}
+      \State $t_0 \gets \mathit{currentTask}()$
+      \State $t_0.\fldwaitingOn \gets p_0$
+      \Comment{C: seq\_cst}
+      \label{ln:detector:enter}
+      \LeftComment{TSO: memory fence}
+      \label{ln:detector:fence}
+      \State $i \gets 0$
+      \State $t_{i+1} \gets p_i.\fldowner$
+      \label{ln:detector:owner1}
+      \While{$t_{i+1} \ne t_0$}
+      \label{ln:detector:loop}
+      \Ifx{$t_{i+1} = \Null$} \Break
+      \label{ln:detector:breakt}
+      \State $p_{i+1} \gets t_{i+1}.\fldwaitingOn$
+      \Comment{C: acquire}
+      \label{ln:detector:waitingOn}
+      \Ifx{$p_{i+1} = \Null$} \Break
+      \label{ln:detector:breakp}
+      \Ifx{$t_{i+1} \ne p_i.\fldowner$} \Break
+      \label{ln:detector:changed}
+      \State $i \gets i+1$
+      \label{ln:detector:inc}
+      \State $t_{i+1} \gets p_i.\fldowner$
+      \label{ln:detector:owner2}
+      \label{ln:detector:loopend}
+      \EndWhile
+      \Try
+      \State \textbf{assert} $t_{i+1} \ne t_0$
+      \label{ln:detector:fail}
+      \State \Return{$\mathit{get\_impl}(p_0)$}
+      \label{ln:detector:return}
+      \Finally
+      \State $t_0.\fldwaitingOn \gets \Null$
+      \Comment{C: release}
+      \label{ln:detector:final}
+      \EndTry
+      \EndProcedure
+    \end{algorithmic}
+  \end{algorithm}
+}

@@ -1,0 +1,281 @@
+\section{Methodology}
+
+\subsection{Problem Statement}
+Let there be a team of K MAVs (with quadcopter-type dynamics) tracking a person P. The pose of the $k^{th}$ MAV in the  world frame at time $t$ is given by $\xi_t^{k} = [(\mathbf{x}_t^{k})^\top ~ (\Theta_t^{k})^\top] \in \mathbb{R}^6$, where $(\mathbf{x}_t^{k})^\top$ denotes the 3D position of the MAV's center in Cartesian coordinates and $(\Theta_t^{k})^\top$ denotes its orientation in Euler angles. Each MAV has an on-board, monocular, perspective camera. It is important to note that the camera is rigidly attached to the MAV's body frame, pitched down at an angle of $\theta_\textrm{cam}$. The global pose of the person is given by $\xi_t^P = [(\mathbf{x}_t^P)^\top ~ (\Theta_t^P)^\top ~(\mathbf{x}_{j,t}^P~\forall~j; j=1 \cdots 14)^\top ] \in \mathbb{R}^{48}$. $(\mathbf{x}_t^P)^\top$ and $(\Theta_t^P)^\top$ are the body's 3D center and global orientations, respectively. $\mathbf{x}_{j,t}^P$ denotes the 3-D position of a joint $j$ from a total of fourteen joints considered for the MoCap of the subject. Ground truth joints considered are visualized as circles in Fig.~\ref{fig:mesh}. The MAVs operate in an environment with neighboring MAVs as dynamic obstacles. Their task is to autonomously fly and record images of the person using their on-board camera. The formation control goal of the MAV team is to cooperatively navigate in a way such that the error in 3D pose estimates of the subject is minimized. 
+%This error is obtained by running a state-of-the-art method like MultiViewHMR \cite{liang2019shape} on the images that the MAVs record. 
+
+
+\subsection{Formulation as a Sequential Decision Making Problem}
+
+Intuitively, the accuracy of aerial MoCap depends on the following two factors.
+\begin{itemize}
+ \item The subject should always remain completely in the FOV of every MAV's camera, occupying maximum possible area on the image plane.
+ \item The subject is visually encapsulated from all possible directions (viewpoints).
+\end{itemize}
+
+Based on these intuitions and experimentally derived models for single and multiple camera-based observations, in our previous work \cite{ActiveTallamraju19} we approached this problem using a model predictive control (MPC) based formation controller. The MPC objective was to keep a threshold distance to the subject while satisfying constraints that enable uniform distribution of viewpoints around the subject. Additionally, a yaw controller ensured that the subject was always centered on the image plane. As discussed in the introduction, this method is hard to generalize because to i) it is agnostic to how the 3D pose and shape was estimated by the back end, and ii) it needs carefully derived observation models.
+
+To address these issues in this work we take a deep reinforcement learning-based approach. We model this formation control problem as a sequential decision making problem for every MAV agent. Dropping the MAV superscript $k$, for each agent the problem is defined by the tuple $(S,O,A,T,R)$, where $S$ is the state-space, $O$ is the observation-space, $A$ is the action-space, $T$ is the environment transition model, and $R$ is the reward function. At each time instance $t$, an agent at state $s_t$ has access to an observation $o_t$ using its cameras and on-board sensors. The agent then chooses an action $a_t$, which is conditioned on $o_t$ using a stochastic policy $\pi_\theta(a_t|o_t)$, where $\theta$ represents parameters of a neural network. The agent experiences an instantaneous reward $r_t(s_t,a_t)$ from the environment indicating the goodness of the chosen action. We approach the problem without any underlying assumptions or knowledge about the environment transition model $T$. To this end, we leverage a model-free deep reinforcement learning method to train the agents. We will further describe the states, observations and actions in detail. Due to ease of notations and to keep the RL training computationally tractable, we will consider 2 MAV agents in this letter, i.e, $K=2$.  Rewards are described later when we discuss our proposed methodology in sub-section~\ref{subsec:proposed_method}.
+
+
+\begin{figure}
+	\centering
+	\includegraphics[scale=0.60]{ethan_overlaid.pdf}
+\caption{The ground truth body joints (left) and estimated pose and shape overlaid (right).}
+\label{fig:mesh}
+\end{figure}
+
+% \begin{subequations}
+%   \begin{tabularx}{\columnwidth}{Xp{5mm}X}
+%   \begin{equation}
+%     \label{eq-a}
+%       a = b
+%   \end{equation}
+%   & &
+%   \begin{equation}
+%     \label{eq-b}
+%     c = d
+%   \end{equation}
+%   \end{tabularx}
+% \end{subequations}
+
+
+
+\subsubsection{States and Observations}
+Each agent's environment state, $s_t$, includes the MAV pose $\xi_t$, its neighboring MAV's pose $\bar{\xi}_t$ and the MoCap subject's pose $\xi_t^P$.
+% \begin{equation}
+%  s_t = [\xi_t ~~ \bar{\xi}_t ~~ \xi_t^P]
+%  \label{eqn:state}
+% \end{equation}
+\begin{equation}
+ s_t = [\xi_t ~~ \bar{\xi}_t ~~ \xi_t^P];  ~~ o_t = [\mathbf{y}_t^{P} ~~ \mathbf{\dot{y}}_t^{P} ~~ \psi_t^{P} ~~ \mathbf{y}_t^{N} ~~ \psi_t^{P,N}]
+ \label{eqn:state_obs}
+\end{equation}
+
+The observation vector $o_t$ is given by (\ref{eqn:state_obs}). Its first two components are the measurements of the person $P$'s position and velocity made by the agent in its local Cartesian coordinates. This is given by $[\mathbf{y}_t^{P} ~~ \mathbf{\dot{y}}_t^{P}] \in\mathbb{R}^6$. The third component of the observation vector is the measurement of the relative yaw orientation of the person with respect to the robot's global yaw orientation, denoted by $\psi_t^{P}$.  Here we emphasize that we make no assumptions regarding the uncertainty model associated with these measurements. However, we assume that these measurements are available using a vision-based detector. In our synthetic training environment we directly use the available ground truth position and orientation of the person and the MAV to compute these measurement. In real robot scenarios we use Vicon readings to calculate it. The fourth component is the 3D position measurements to the neighboring MAV agent in the local Cartesian coordinates of the observing agent. This is given by $\mathbf{y}_t^{N} \in\mathbb{R}^3$. The fifth component is the measurement of the relative yaw angle orientation of the person with respect to the neighboring robot's global yaw orientation, denoted by $\psi_t^{P,N}$.
+
+
+% \begin{equation}
+%  o_t = [\mathbf{y}_t^{P} ~~ \mathbf{\dot{y}}_t^{P} ~~ \psi_t^{P} ~~ \mathbf{y}_t^{N} ~~ \psi_t^{P,N}]
+%  \label{eqn:observations}
+% \end{equation}
+
+
+\subsubsection{Actions}
+\label{subsec:actions}
+
+Action $a_t$ is sampled from the control policy $\pi_\theta(a_t|o_t)$ for an input observation $o_t$. In our formulation, actions consist of egocentric 3-D linear translational velocity of the agent, given by $\mathbf{v}_t = [{vx}_t ~~ vy_t ~~ vz_t]$ and a rotational velocity $\omega_t$ about its z-axis. The chosen action defines a way-point $\{\mathbf{x}^w_t,~\phi^w_t\}$, which is obtained as $~\mathbf{x}^w_t = \mathbf{x}_t + \mathbf{R}(\phi_t)\mathbf{v}_t\Delta, ~\phi^w_t=\phi_t+\omega_t\Delta$, for the agent in the world frame. $\{\mathbf{x}^w_t,~\phi^w_t\}$ is provided to low-level geometric tracking controller (Lee controller) \cite{lee2010geometric} of the agent. $\mathbf{x}_t$, as defined before, denotes the current 3D position of the agent. $\mathbf{R}(\phi_t)\in SO(3)$ is a rotation matrix. Thus,
+\begin{equation}
+ a_t= [\mathbf{v}_t ~~ \omega_t] \in\mathbb{R}^4
+ \label{eqn:actions}
+\end{equation}
+
+% In an end-to-end learning-based approach, where agents learn optimal actions, given only the image input and the self-pose using a self-localization system, the observations would be the on-board camera images and the self-pose obtained by a self-localization method.
+
+\subsection{Proposed Methodology}
+\label{subsec:proposed_method}
+
+% (MoCap and collision avoidance with neighboring agents) 
+
+Training multiple agents to achieve multiple objectives is a complex and computationally demanding task. In order to have a systematic comparison we first develop our approach for a single agent case and then for multi-agent scenario. Meaning, we train (and then evaluate and compare) two different kinds of agents, and hence, networks. These are i) a single agent with only MoCap objectives, and ii) multi-agents (2 in our case) with both MoCap and collision avoidance objectives.
+
+% 
+% \begin{itemize}
+%  \item A single agent with only MoCap objectives. 
+%  %The actions in this case consist of $a_t$ as described in sub-section~\ref{subsec:actions}
+%  \item Multiple agents (2 in our case) with both MoCap and collision avoidance objectives.
+%  %trained on a static subject. The actions in this case consist only of $[\mathbf{v}_t]$. 
+% \end{itemize}
+
+We hypothesize that, using the first kind of network, an agent will learn to follow the person and orient itself in the direction of the person in order to achieve accurate MoCap from the back-end estimator. On the other hand, using the second network, the agents will learn how to avoid each other and distribute themselves around the person to cover all possible viewpoints. We also hypothesize that the best navigation policies for the robot(s) for the MoCap task should significantly depend on the MoCap's accuracy-related rewards, while other rewards may or may not be required.
+
+% As the translational velocity commands are decoupled from the yaw rate commands for a quadcoptor-type MAV agent, we can combine the outputs of these networks during test time as follows. We use the rotational actions from the first network and the translational actions from the second network to obtain the best MoCap performance in a multi-agent scenario when the subject is in motion. For each kind of network we designed and experimented several variants, each with different MoCap objective-related rewards. Below we describe each network, its variants and the exact observations, actions and rewards used for them.
+
+
+\subsubsection{Network 1: Single Agent Network}
+All variants of single agent network use the following states and observations, where the superscript 1 denotes single agent network. 
+\begin{equation}
+ s_t^1 = [\xi_t ~~ \xi_t^P]; ~~ o_t^1 = [\mathbf{y}_t^{P} ~~ \mathbf{\dot{y}}_t^{P} ~~ \psi_t^{P}]
+\end{equation}
+% \begin{equation}
+%  o_t^1 = [\mathbf{y}_t^{P} ~~ \mathbf{\dot{y}}_t^{P} ~~ \psi_t^{P}]
+% \end{equation}
+The actions for all single agent network variants consist of $a_t$ as stated in (\ref{eqn:actions}). They are all trained on a moving subject. These variants differ only in their reward structure as described below. The rewards are computed at every timestep. However, for sake of clarity we drop the subscript $t$ from the reward variables.
+
+\paragraph{Network 1.1 -- Only Centering Reward} 
+In this variant we only reward the agent based on the intuitive reasoning of keeping the person as close as possible to the center of the image from the MAV agent's on-board camera. It is calculated as follows. 
+\begin{equation}
+ r_{\textrm{center}} = 1 - \tanh({c_1d_{\mathrm{px}}}),
+ \label{eqn:centrtingreward}
+\end{equation}where $d_{\mathrm{px}}$ is the distance between the center of the person's bounding box on the image to the image center, measured in pixels. $c_1=0.01$ is a weighting constant. Note that keeping the person centered in each frame is not the goal of this work. As per the above-stated hypothesis, centering reward may not be required at all. Thus, Network 1.1 will only serve as a comparison benchmark to highlight that a MoCap's accuracy-related reward is explicitly required.
+
+
+\paragraph{Network 1.2 -- SPIN Reward}
+In this variant of the network we reward the agent based on the output accuracy of the MoCap back end. For this, we use SPIN \cite{kolotouros2019spin}, a state-of-the-art method for human pose and shape estimation using monocular images. At every time-step of training, we use SPIN on the image acquired by the agent and compute an estimate of $\mathbf{\hat{x}}_{j,t}^P \forall j ; j=1\cdots14$ corresponding to all 14 joints. In the synthetic training environment we have access to the true values of these joints, denoted by, $\mathbf{\bar{x}}_{j,t}^P \forall j ; j=1\cdots14$. SPIN reward is then given by
+\begin{equation}
+ r_{\textrm{SPIN}} = 1 - \tanh({c_2d_{\mathrm{J}}}),
+\label{eqn:spinreward}
+\end{equation}where $d_{\mathrm{J}} = \frac{1}{14}\sum_{j=1}^{14}(||\mathbf{\hat{x}}_{j,t}^P  - \mathbf{\bar{x}}_{j,t}^P||_2)$ and $c_2 = 5$ is a weighting constant.
+
+% where
+% \begin{equation}
+%  d_{\mathrm{J}} = \frac{1}{14}\sum_{j=1}^{14}(||\mathbf{\hat{x}}_{j,t}^P  - \mathbf{\bar{x}}_{j,t}^P||_2)
+%  \label{eqn:mocaperror_single}
+% \end{equation} and $c_2 = 5$ is a weighting constant.
+
+%Note that we do not explicitly penalize the errors in the body shape estimation. As SPIN (and MultiViewHMR, introduced later in this section) jointly estimate the body joint positions and the body shape, penalizing only the errors in the joint positions implicitly considers errors in the shape also.   
+
+% \todoAamir{Explain how pose and shape are intertwined for this reward.}
+
+\paragraph{Network 1.3 -- Weighted SPIN Reward}
+Network 1.2 rewards the agent equally for the accuracy of each joint. However, the joints further away from the pelvis (also mentioned as the root joint), like hands or foot, have a greater tendency to be in an erratic motion than the ones closer to the root, like hips. To account for this, in the network variant 1.3 we penalized the outward joints more and hence define a Weighted SPIN reward as,
+\begin{equation}
+ r_{\textrm{WSPIN}} = 1 - \tanh({c_2d_{\mathrm{W}}}), 
+ \label{eqn:weightedspinreward}
+\end{equation}where
+% \begin{equation}
+$d_{\mathrm{W}} = \frac{1}{14}\sum_{j=1}^{14}(w_j||\mathbf{\hat{x}}_{j,t}^P  - \mathbf{\bar{x}}_{j,t}^P||_2)$
+% \end{equation}
+and $w_j$s are positive weights that sum to 1.
+
+\paragraph{Network 1.4 -- Centering and Weighted SPIN Reward}
+The last variant of the single agent uses a summed reward given as $r_{\textrm{sum}} = r_{\textrm{center}} + r_{\textrm{WSPIN}}$.
+% \begin{equation}
+%  r_{\textrm{sum}} = r_{\textrm{center}} + r_{\textrm{WSPIN}}.
+% \end{equation}
+
+
+\smallskip
+
+
+
+\subsubsection{Network 2: Multi-Agent Network}
+All three variants of the multi agent network, described below, use the state as defined in (\ref{eqn:state_obs}).
+The observations for Network variants 2.1 and 2.2 are equal to (\ref{eqn:state_obs}) without  $\mathbf{\dot{y}}_t^{P}$ as these variants are trained on a static subject. In these two variants the action space excludes yaw control. Hence, during their training, we use a separate yaw controller to always orient the agent towards the person. On the other hand, Network 2.3 is trained with the full observation space as stated in (\ref{eqn:state_obs}) on a moving subject, and it uses the full action space is as stated in (\ref{eqn:actions}). Meaning, Network 2.3 also includes yaw-rate control.
+
+
+The difference in the reward structure is described below.
+
+\paragraph{Network 2.1: Centering, collision avoidance and AlphaPose Triangulation Reward (Trained with Static Subject)} 
+In this variant we use a sum of three rewards $r_{\textrm{center}}$, $r_{\textrm{col}}$ and $r_{\textrm{triag}}$. Here, $r_{\textrm{center}}$ is same as defined in (\ref{eqn:centrtingreward}). $r_{\textrm{col}}$ rewards avoiding collisions by penalizing based on the distance from the neighboring robot. It is computed as
+\begin{equation}
+r_{\textrm{col}} = \begin{cases}
+-1 ,& \text{if } \|\mathbf{x}_t-\bar{\mathbf{x}}_t\|_2\geq \mathbf{x}_{thresh}\\
+0.2 ,              & \text{otherwise}
+\end{cases}
+\label{eqn:colreward}
+\end{equation}where $\mathbf{x}_{thresh} = 3$m in our implementation.
+
+$r_{\textrm{triag}}$ is a simplified MoCap-specific reward in a 2-agent scenario, which we obtain using a triangulation-based method. AlphaPose \cite{cao2017realtime} is a state-of-the-art human joint detector which provides body joint detections on monocular images. At every time step we use it on the images obtained by the agent and its neighbor to obtain $o_{j,t}\in\mathbb{R}^{14}$ and $\bar{o}_{j,t}\in\mathbb{R}^{14}$, respectively. Using known camera intrinsics and extrinsics (from self-pose estimates) for both agents, a point in the image plane and its corresponding view from another camera, we can estimate the 3-D position of the point using a least squares formulation (equation (14.42) in \cite{prince2012computer}). Therefore, by using $o_j$ and $\bar{o}_{j,t}$, we estimate the 3D positions of all 14 joints of the subject as $\mathbf{\tilde{x}}_{j,t}^P \forall j; j=1\cdots14$ and compare it to ground-truth joint positions $\mathbf{\bar{x}}_{j,t}^P \forall j; j=1\cdots14$. Thus, $r_{\textrm{triag}}$ is given by
+\begin{equation}
+ r_{\textrm{triag}} = 1 - \tanh({c_3d_{\mathrm{triag}}}),
+ \label{eqn:triagreward}
+\end{equation}where $d_{\mathrm{triag}} = \frac{1}{14}\sum_{j=1}^{14}(||\mathbf{\tilde{x}}_{j,t}^P  - \mathbf{\bar{x}}_{j,t}^P||_2)$.
+
+% \begin{equation}
+%  d_{\mathrm{triag}} = \frac{1}{14}\sum_{j=1}^{14}(||\mathbf{\tilde{x}}_{j,t}^P  - \mathbf{\bar{x}}_{j,t}^P||_2)
+% \end{equation}
+
+\begin{figure}[!t]
+ \includegraphics[width=0.9\columnwidth]{singleAgentRA_L.pdf}
+ \caption{Single Agent Network: Variants of this network are trained with different rewards as described in sub-subsection \ref{subsec:proposed_method}--1.}
+ \label{fig:singleagentnet}
+\end{figure}
+
+
+
+
+\paragraph{Network 2.2: Centering, collision avoidance and Multiview HMR Reward (Trained with Static Subject)}
+In this variant we use a sum of three rewards $r_{\textrm{center}}$, $r_{\textrm{col}}$ and $r_{\textrm{MHMR}}$. The first two are same as (\ref{eqn:centrtingreward}) and (\ref{eqn:colreward}), respectively. $r_{\textrm{MHMR}}$ rewards the agent based on the output accuracy of the MoCap back end using images from multiple agents. For this, we use MultiviewHMR \cite{liang2019shape}. It is a state-of-the-art method for human pose and shape estimation using images from multiple viewpoints. At every timestep of training, we use it on the image acquired by the agent and its neighbor to compute an estimate of $\mathbf{\check{x}}_{j,t}^P \forall j; j=1\cdots14$ corresponding to all 14 joints. The reward is then given by
+\begin{equation}
+ r_{\textrm{MHMR}} = 1 - \tanh({c_4d_{\mathrm{mhmr}}}),
+ \label{eqn:mviewhmr}
+\end{equation}where $d_{\mathrm{mhmr}} = \frac{1}{14}\sum_{j=1}^{14}(w_j||\mathbf{\check{x}}_{j,t}^P  - \mathbf{\bar{x}}_{j,t}^P||_2)$ 
+% \begin{equation}
+%  d_{\mathrm{mhmr}} = \frac{1}{14}\sum_{j=1}^{14}(w_j||\mathbf{\check{x}}_{j,t}^P  - \mathbf{\bar{x}}_{j,t}^P||_2),
+% \end{equation} 
+and the weights are as described in the previous section.
+
+
+\paragraph{Network 2.3: Centering, continuous collision avoidance and Multiview HMR Reward (Trained with Moving Subject)}
+In this variant we use a sum of three rewards $r_{\textrm{center}}$, $r_{\textrm{concol}}$ and $r_{\textrm{MHMR}}$. Here $r_{\textrm{center}}$ and $r_{\textrm{MHMR}}$ are same as (\ref{eqn:centrtingreward}) and (\ref{eqn:mviewhmr}). The continuous collision avoidance reward is given as follows.
+\begin{equation}
+r_{\textrm{concol}} = \begin{cases}
+-v_{\textrm{pot}} ,& \text{if } \|\mathbf{x}_t-\bar{\mathbf{x}}_t\|_2\leq \mathbf{d}_{lthresh}\\
+0.2 ,& \text{if } \mathbf{d}_{lthresh} \leq \|\mathbf{x}_t-\bar{\mathbf{x}}_t\|_2\leq \mathbf{d}_{hthresh}\\
+-1 ,              & \text{otherwise}
+\end{cases}
+\label{eqn:concolreward}
+\end{equation}where $\mathbf{d}_{lthresh} = 1.0$m and $\mathbf{d}_{hthresh} = 20$m. $v_{\textrm{pot}}$ is obtained using the potential field functions as described in our previous work \cite{rahul_CASE_2019} (equation 3). Furthermore, the value of $v_{\textrm{pot}}$ is clamped to $1$.
+
+
+\paragraph{Network 2.4 + Potential Field: Centering and Multiview HMR Reward (Trained with Moving Subject)}
+In this variant, we use a sum of two rewards, namely, $r_{\textrm{center}}$ (\ref{eqn:centrtingreward}) and $r_{\textrm{MHMR}}$ (\ref{eqn:mviewhmr}). The key difference in this case w.r.t. Network 2.3 is that here we use a potential field-based collision avoidance method \cite{rahul_CASE_2019} as a part of the environment during the training to keep the robots from colliding with each other at all times. It is not embedded in the reward structure and hence, the robots are not explicitly penalized for it. Testing of this network, during experiments, was also performed with potential field-based collision avoidance as a part of the environment.
+
+% Details of all the network architectures, training process, libraries, instructions on how to run the code, etc., are provided in the attached supplementary material.
+
+
+
+
+
+% \begin{equation}
+% \label{eq:cotforce} 	
+% v_{\textrm{pot}} = 	\begin{cases} 	
+% 1\ & \text{if} ~ v_{\textrm{pot}}\leq 1 \\ 	
+% \frac{\pi}{2} \big(\frac{cot(z)+z -\frac{\pi}{2}}{d_{max}-d_{min}}\big)& \text{if} ~ d_{min} \leq d \leq d_{max} \\ 	0, & \text{if} ~~ d > d_{max} 	
+% \end{cases}\;. 	
+% \end{equation} 
+
+
+
+
+% The repulsive potential field magnitude w.r.t the $i^{th}$ obstacle, is given as, 
+% {\small 
+% \begin{equation}
+% \label{eq:cotforce} 	
+% F^{i}(d) = 	\begin{cases} 	
+% F_{max}\ & \text{if} ~ d < d_{min} \\ 	
+% \frac{\pi}{2} \big(\frac{cot(z)+z -\frac{\pi}{2}}{d_{max}-d_{min}}\big)& \text{if} ~ d_{min} \leq d \leq d_{max} \\ 	0, & \text{if} ~~ d > d_{max} 	
+% \end{cases}\;. 	
+% \end{equation}
+% } 
+% Here, $z = \frac{\pi}{2} \big(\frac{d-d_{min}}{d_{max}-d_{min}}\big)$, argument $d$ is a distance metric between $\x_t^B$ and obstacle $i$. Note that, $	F^{i}(d)$ varies hyperbolically w.r.t $d$. $d_{max}$ and $d_{min}$ are distances defining the region of influence of the potential field and the distance at which the potential field value tends to infinity respectively. In practice, the potential field at $d_{min}$ is clamped to a positive value $F_{max}\geq max(\|\ao_t^{B}\|)$ to ensure obstacle avoidance. \\
+
+% 
+
+
+\begin{figure}[!t]
+ \includegraphics[width=0.9\columnwidth]{multiAgentRA_L.pdf}
+ \caption{Multi Agent Network: Variants of this network are trained with different rewards as described in sub-subsection \ref{subsec:proposed_method}--2.}
+ \label{fig:multiagentnet}
+\end{figure}
+
+% % %########################################### Moved to sup mat
+% \begin{algorithm}[h]
+% 	\caption{Pseudocode for centralized training} 
+% 		\label{alg:1}
+% 		\begin{algorithmic}
+% 			\begin{footnotesize}
+% 				\label{Alg:fc}
+% 				\STATE \textbf{Input}: initial policy parameters $\theta_0$, initial value function parameters $\mu_0$
+% 				\STATE \textbf{for} m in Total Episodes
+% 				\begin{itemize}
+% 				 \item Collect trajectories $D_m=\{s_t,o_t,r_t,a_t\}, t = \{1\dots T_{episode}\}$ 
+% 				 \item from parallel Gazebo runners, with 2 agents using policy $\pi_{m,\theta}$, estimate advantage $\hat{A}_{\pi_{m,\theta}}(s_t,a_t)$ \cite{schulman2015high} using the value function $V_{m-1,\mu}(s_t)$  and reward-to-go from $D_m$.
+% 				 \item Maximize PPO surrogate loss L \cite{schulman2017proximal} w.r.t $\theta$ via SGD with Adam.
+% 				 \item Fit value function $V_{m,\mu}(s_t)$ by regressing on current reward-to-go.
+% 				\end{itemize}				
+% 				\STATE end \textbf{for}
+% 			\end{footnotesize}
+% 		\end{algorithmic}
+% \end{algorithm} 
+% 
+% 
+% \subsection{Algorithmic Details}
+% We train the agents using a centralized training and decentralized execution paradigm. Specifically, a centralized fully observable critic and an actor with local observations are learned by collecting experiences of all the robots simultaneously. The robots then execute this common shared policy to collect new data. The fully observable centralized critic and shared actor policy aid in maintaining a stationary environment for our two-agent problem. This enables us to use conventional single-agent reinforcement learning algorithms to train the multi-agent policy network.
+% Algorithm \ref{alg:1} summarizes the training methodology used.
+% 
+% 
+% \subsection{Network Architecture}
+% Figures~\ref{fig:singleagentnet} and \ref{fig:multiagentnet} show our network training architectures. Both single and multi agent policies are two layer $256\times256$ neural networks with ReLu activations. For estimating the advantage $A_t$, the state-value network $V_\mu(s_t)$ is approximated with a neural network with parameters $\mu$. The value network architecture is a clone of the policy network at each stage. The current value function is fit by regressing over the reward-to-go estimate. We train the networks on Tensorflow with Adam optimizer and a stable baselines software implementation of PPO\footnote{https://stable-baselines.readthedocs.io/en/master/modules/ppo2.html}.
+% % %########################################### Moved to sup mat

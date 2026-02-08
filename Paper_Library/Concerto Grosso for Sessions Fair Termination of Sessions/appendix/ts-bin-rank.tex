@@ -1,0 +1,540 @@
+\renewcommand{\ple}{\sqsubseteq}
+
+\beginbass
+%
+In this section we develop a function to compute the \emph{minimum rank} of a process, 
+namely the least quantity that is necessary in order to find a typing derivation for $P$. 
+In the following we assume that bound names and casts are annotated with session types as well
+as with the \emph{weight} of the subtyping relation ($\Cast{\x , m} P$ means that the subtyping
+being applied has weight $m$).
+
+\begin{remark}
+	The weight of a fair subtyping application is the least solution of the equations
+	in \Cref{def:fsub_wg}. We did not carry out an analysis about the decidability, so we require
+	that such information is given by the programmer by annotating the process. 
+	If the solution of \Cref{def:fsub_wg} can be found in a finite amount of time, then
+	the weight can be inferred.
+	\eor
+\end{remark}
+
+Moreover, we assume that a non deterministic choice $P \pchoice_k Q$ is labeled with a number
+$m \in \set{1,2}$ which identifies the path leading to successful termination. 
+The function is defined below.
+
+\begin{definition}[Minimum Rank of a Process]
+	\label{def:process_rank}
+	The \emph{minimum rank} of a process $P$, written $\Rank[]{P}$, is the least
+	upper bound to the number of casts that $P$ may need to perform and of
+	sessions that $P$ may need to create in order to terminate. Formally, let
+	$\Rank{P}$ be the function inductively defined by the following equations,
+	where $\aset$ is a set of process names:
+	\[
+		\begin{array}{r@{~}c@{~}ll}
+			\Rank\Done = \Rank{\Close\x} & = & 0
+			\\
+			\Rank{\Wait\x P} & = & \Rank P
+			\\
+			\Rank{\Call{A}{\seqof\x}} & = & 0 & \text{if $A \in \aset$}
+			\\
+			\Rank{\Call{A}{\seqof\x}} & = & \Rank[\aset \cup \set{A}]{P}
+			& \text{if $A \not\in \aset$ and $\Definition A {\seqof\x} P$}
+			\\
+			\Rank{\PInput\x{(\y)}.P} = \Rank{\POutput\x\y.P} & = & \Rank{P}
+			\\
+			\Rank{\Cast{\x , m} P} & = & m + \Rank P
+			\\
+			\Rank{\NewPar\x P Q} & = & 1 + \Rank P + \Rank Q
+			\\
+			\Rank{x\p\set{\l_i : P_i}_{i \in I}} & = & \bigsqcup_{i\in I} \Rank{P_i}
+			\\
+			\ifextension
+			\Rank{P_1 \pchoice_k P_2} & = & \Rank{P_k}
+			& \text{if $k\in\set{1,2}$}
+			\fi
+		\end{array}
+	\]
+	We write $\Rank[] P$ for $\Rank[\emptyset] P$.
+\end{definition}
+
+Now we have to show that this function allows us to compute the minimum rank that is necessary in a typing derivation.
+%
+The first step is to provide a characterization of those processes that play a primary role in computing $\Rank[]\cdot$. 
+We do so introducing an order relation $\ple$ on processes.
+
+\begin{definition}[Termination Path]
+	\label{def:ple}
+	Let $\ple$ be the least preorder such that
+	\begin{mathpar}
+		\inferrule{\mathstrut}{
+			P_k \ple P_1 \choice_k P_2
+		} ~k \in \set{1,2}
+		\and
+		\inferrule{\mathstrut}{P \ple \POutput\x\y.P}
+		\and
+		\inferrule{\mathstrut}{P \ple \PInput\x{(\y)}.P}
+		\and
+		\inferrule{\mathstrut}{
+			P_k \ple x\Pol\set{\l_i:P_i}_{i\in I}
+		} ~k\in I
+		\and
+		\inferrule{
+			\Definition{A}{\seqof\x}{P}
+		}{
+			P \ple \Call{A}{\seqof\x}
+		}
+	\end{mathpar}
+	%
+	We say that $P$ is on a \emph{termination path} of $Q$ if $P \ple Q$.
+\end{definition}
+
+Intuitively, $P \ple Q$ means that the rank of $Q$ may be affected by the rank of $P$, 
+because $P$ occurs along a path that leads $Q$ to termination. 
+Hereafter, we often omit the arguments of a process invocation involved in a 
+process order relation and write, for example, $A \ple P$ and $P \ple A$ instead of 
+$\Call{A}{\seqof\x} \ple P$ and $P \ple \Call{A}{\seqof{x}}$.
+%
+The notation $A \ple P \ple A$, shortcut for $A \ple P$ and $P \ple A$, means that $P$ 
+is found in between two invocations of the same definition $A$. These ``loops'' in termination 
+paths are the dangerous places in which no casts (with strictly positive weight) 
+can be performed and no sessions can be created.
+
+\begin{definition}[Safe Program]
+	\label{def:safe_program}
+	We say that a program $\set{\Definition{A_i}{\seqof{x_i}}{P_i}}_{i\in I}$ is \emph{safe} 
+	if $A_i \ple P \ple A_i$ implies that $P$ is not a cast or a session for every $P$ and $i\in I$.
+\end{definition}
+
+Note that it is straightforward to define an algorithm that checks whether a program is safe, 
+since the number of processes is finite and so is the number of process names.
+
+Now we show that, in a safe program, the rank of a process invocation corresponds to that of its unfolding. 
+This requires some auxiliary results that allow us to express the relationship between the ranks of a process 
+depending on the set $\aset$ or process names used. First, we show that the larger the set of 
+process names, the smaller the rank. Intuitively, this is because in \Cref{def:process_rank} every invocation 
+of a process name that occurs in $\aset$ results in a null rank.
+
+\begin{lemma}
+	\label{lem:rank-contr}
+	If $\aset \subseteq \bset$, then $\Rank[\bset]{P} \leq \Rank[\aset]{P}$.
+\end{lemma}
+\begin{proof}
+	By induction on the definition of rank and by cases on the shape of $P$. We
+	only discuss the base case in which $P = \Call A {\seqof\x}$, distinguishing
+	three sub-cases: if $A \in \aset$, then we conclude $\Rank[\bset] P = 0 =
+	\Rank[\aset] P$; if $A \in \bset \setminus \aset$, then we conclude
+	$\Rank[\bset] P = 0 \leq \Rank[\aset] P$; if $A \not\in \bset$, then we
+	conclude $\Rank[\bset] P = \Rank[\bset \cup \set{A}] Q \leq \Rank[\aset \cup
+	\set{A}] Q = \Rank[\aset] P$ using the induction hypothesis and $\Definition
+	A {\seqof\x} Q$.
+\end{proof}
+
+Next we show that the rank of a process $P$ does not depend on the presence or
+absence of $A$ in the set $\aset$ if $A \not\ple P$ if there is no invocation to
+$A$ along any termination path of $P$.
+
+\begin{lemma}
+	\label{lem:rank_not_ple}
+	If $A \not\ple P$, then $\Rank{P} = \Rank[\aset \cup \set{A}]{P}$.
+\end{lemma}
+\begin{proof}
+	By induction on the definition of $\Rank P$ and by cases on the shape of
+	$P$.
+
+	\proofcase{Cases $P = \Done$ and $P = \Close\x$}
+	%
+	We conclude $\Rank{P} = \Rank[\aset \cup \set{A}]{P} = 0$.
+
+	\proofcase{Case $P = \Call{B}{\seqof\x}$ where $\Definition{B}{\seqof\x}Q$}
+	%
+	From the hypothesis $A \not \ple P$ we deduce $B \neq A$. We distinguish two
+	sub-cases.
+	%
+	If $B \in \aset$, then we conclude
+	\[
+		\begin{array}{rcll}
+			\Rank{P} & = & \Rank{\Call{B}{\seqof\x}} & \text{by definition of $P$}
+			\\
+			& = & 0 & \text{by definition of $\Rank[]\cdot$}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{\Call{B}{\seqof\x}} & \text{by definition of $\Rank[]\cdot$}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{P} & \text{by definition of $P$}
+		\end{array}
+	\]
+
+	If $B \not\in \aset$, then from the hypothesis $A \not\ple P$ we deduce $A \not\ple Q$ and we conclude
+	\[
+		\begin{array}{rcll}
+			\Rank{P} & = & \Rank{\Call{B}{\seqof\x}} & \text{by definition of $P$}
+			\\
+			& = & \Rank[\aset \cup \set{B}]{Q} & \text{by definition of $\Rank[]\cdot$}
+			\\
+			& = & \Rank[\aset \cup \set{A,B}]{Q}
+			& \text{using the induction hypothesis}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{\Call{B}{\seqof\x}}
+			& \text{by definition of $\Rank[]\cdot$}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{P} & \text{by definition of $P$}
+		\end{array}
+	\]
+
+	\proofcase{Case $P = P_1 \pchoice_k P_2$ where $k\in\set{1,2}$}
+	%
+	From the hypothesis $A \not\ple P$ we deduce $A \not\ple P_k$. We conclude
+	\[
+		\begin{array}{rcll}
+			\Rank{P} & = & \Rank{P_1 \pchoice_k P_2} & \text{by definition of $P$}
+			\\
+			& = & \Rank{P_k} & \text{by definition of $\Rank[]\cdot$}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{P_k} & \text{using the induction hypothesis}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{P_1 \pchoice_k P_2} & \text{by definition of $\Rank[]\cdot$}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{P} & \text{by definition of $P$}
+		\end{array}
+	\]
+
+	\proofcase{Case $P = \POutput\x\y.Q$}
+	%
+	From the hypothesis $A \not\ple P$ we deduce $A \not\ple Q$. We conclude
+	\[
+		\begin{array}{rcll}
+			\Rank{P} & = & \Rank{\POutput\x\y.Q} & \text{by definition of $P$}
+			\\
+			& = & \Rank{Q} & \text{by definition of $\Rank[]\cdot$}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{Q} & \text{using the induction hypothesis}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{\POutput\x\y.Q} & \text{by definition of $\Rank[]\cdot$}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{P} & \text{by definition of $P$}
+		\end{array}
+	\]
+	
+	\proofcase{Case $P = \PInput\x{(\y)}.Q$}
+	%
+	Analogous to the previous case.
+
+	\proofcase{Case $P = \Cast{\x,m} Q$}
+	%
+	From $A \not\ple P$ we deduce $A \not\ple Q$. We conclude
+	\[
+		\begin{array}{rcll}
+			\Rank{P} & = & \Rank{\Cast\x Q} & \text{by definition of $P$}
+			\\
+			& = & m + \Rank{Q} & \text{by definition of $\Rank[]\cdot$}
+			\\
+			& = & m + \Rank[\aset \cup \set{A}]{Q} & \text{using the induction hypothesis}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{\Cast\x Q} & \text{by definition of $\Rank[]\cdot$}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{P} & \text{by definition of $P$}
+		\end{array}
+	\]
+
+	\proofcase{Case $P = \NewPar\x{P_1}{P_2}$}
+	%
+	From $A \not\ple P$ we deduce $A \not\ple P_i$ for $i=1,2$. We conclude
+	\[
+		\begin{array}{rcll}
+			\Rank{P} & = & \Rank{\NewPar\x{P_1}{P_2}} & \text{by definition of $P$}
+			\\
+			& = & 1 + \Rank{P_1} + \Rank{P_2} & \text{by definition of $\Rank[]\cdot$}
+			\\
+			& = & 1 + \Rank[\aset \cup \set{A}]{P_1} + \Rank[\aset \cup \set{A}]{P_2} & \text{using the induction hypothesis}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{\NewPar\x{P_1}{P_2}} & \text{by definition of $\Rank[]\cdot$}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{P} & \text{by definition of $P$}
+		\end{array}
+	\]
+
+	\proofcase{Case $P = x\Pol\set{\l_i : P_i}_{i \in I}$}
+	%
+	From the hypothesis $A \not\ple P$ we deduce $A \not\ple P_i$ for every
+	$i\in I$. We conclude
+	\[
+		\begin{array}[b]{rcll}
+			\Rank{P} & = & \Rank{x\p\set{\l_i:P_i}_{i\in I}} & \text{by definition of $P$}
+			\\
+			& = & \bigsqcup_{i\in I} \Rank{P_i} & \text{by definition of $\Rank[]\cdot$}
+			\\
+			& = & \bigsqcup_{i\in I} \Rank[\aset \cup \set{A}]{P_i}
+			& \text{using the induction hypothesis}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{x\p\set{\l_i:P_i}_{i\in I}}
+			& \text{by definition of $\Rank[]\cdot$}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{P} & \text{by definition of $P$}
+		\end{array}
+	\]
+\end{proof}
+
+Finally, we can show that the rank of a process $P$ such that $A \ple P \ple A$
+cannot exceed the rank of $A$. Recall that $A \ple P$ means that there is an
+invocation to $A$ along a termination path of $P$ and that $P \ple A$ means that
+$P$ occurs along a termination path of $A$.
+
+\begin{lemma}
+	\label{lem:rank_ple}
+	In a safe program, if\/ $A \ple P \ple A$ and $\Definition{A}{\seqof\x}{Q}$,
+	then $\Rank{P} \leq \Rank[\aset \cup \set{A}]{P} \psup \Rank[]{\Call A
+	{\seqof\x}}$.
+\end{lemma}
+\begin{proof}
+	\newcommand{\RankA}{\Rank[]{\Call A {\seqof\x}}}
+	%
+	By induction on $\Rank P$ and by cases on the shape of $P$. Note that $P$
+	cannot be a cast or a session because of the hypothesis that the program is
+	safe.
+
+	\proofcase{Case $P = \Call{B}{\seqof\x}$ and $B \in \aset$}
+	%
+	We conclude
+	\[
+		\begin{array}{rcll}
+			\Rank{P} & = & \Rank{\Call{B}{\seqof\x}} & \text{by definition of $P$}
+			\\
+			& = & 0 & \text{by definition of $\Rank[]\cdot$}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{\Call{B}{\seqof\x}} & \text{by definition of $\Rank[]\cdot$}
+			\\
+			& \leq & \Rank[\aset \cup \set{A}]{\Call{B}{\seqof\x}} \psup \RankA
+			& \text{property of $\psup$}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{P} \psup \RankA
+			& \text{by definition of $P$}
+		\end{array}
+	\]
+
+	\proofcase{Case $P = \Call{A}{\seqof\y}$ and $A \not\in \aset$} We may assume, without loss of generality, 
+	that $\seqof\y = \seqof\x$ since the rank of a process invocation does \emph{not} depend on channel names.
+	%
+	We conclude
+	\[
+		\begin{array}{rcll}
+			\Rank{P} & = & \Rank{\Call{A}{\seqof\x}} & \text{by definition of $P$}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{Q} & \text{by definition of $\Rank[]\cdot$}
+			\\
+			& \leq & \Rank[\set{A}]{Q} & \text{by \Cref{lem:rank-contr}}
+			\\
+			& = & \RankA & \text{by definition of $\Rank[]\cdot$}
+			\\
+			& = & 0 \psup \RankA & \text{property of $\psup$}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{\Call{A}{\seqof\x}} \psup \RankA & \text{by definition of $\Rank[]\cdot$}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{P} \psup \RankA
+			& \text{by definition of $P$}
+		\end{array}
+	\]
+
+	\proofcase{Case $P = \Call{B}{\seqof\x}$ and $B \not\in \aset \cup \set{A}$ where $\Definition{B}{\seqof\x}R$}
+	%
+	From the hypotheses $A \ple P \ple A$ and $B \not\in \aset \cup \set{A}$ we deduce $A \ple R \ple A$.
+	\[
+		\begin{array}{rcll}
+			\Rank{P} & = & \Rank{\Call{B}{\seqof\x}} & \text{by definition of $P$}
+			\\
+			& = & \Rank[\aset \cup \set{B}]{R} & \text{by definition of $\Rank[]\cdot$}
+			\\
+			& \leq & \Rank[\aset \cup \set{A,B}]{R} \psup \RankA
+			& \text{using the induction hypothesis}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{\Call{B}{\seqof\x}} \psup \RankA
+			& \text{by definition of $\Rank[]\cdot$} \\
+			& & & \text{and the hypothesis $B \not\in \aset \cup \set{A}$}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{P} \psup \RankA
+			& \text{by definition of $P$}
+		\end{array}
+	\]
+
+	\proofcase{Case $P = P_1 \pchoice_k P_2$ where $k\in\set{1,2}$}
+	%
+	From the hypotheses $A \ple P \ple A$ we deduce $A \ple P_k \ple A$. We conclude
+	\[
+		\begin{array}{rcll}
+			\Rank{P} & = & \Rank{P_1 \choice_k P_2} & \text{by definition of $P$}
+			\\
+			& = & \Rank{P_k} & \text{by definition of $\Rank[]\cdot$}
+			\\
+			& \leq & \Rank[\aset \cup \set{A}]{P_k} \psup \RankA
+			& \text{using the induction hypothesis}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{P_1 \pchoice_k P_2} \psup \RankA
+			& \text{by definition of $\Rank[]\cdot$}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{P} \psup \RankA
+			& \text{by definition of $P$}
+		\end{array}
+	\]
+
+	\proofcase{Case $P = \POutput\x\y.Q$}
+	%
+	From the hypotheses $A \ple P \ple A$ we deduce $A \ple Q \ple A$. We conclude
+	\[
+		\begin{array}{rcll}
+			\Rank{P} & = & \Rank{\POutput\x\y.Q} & \text{by definition of $P$}
+			\\
+			& = & \Rank{Q} & \text{by definition of $\Rank[]\cdot$}
+			\\
+			& \leq & \Rank[\aset \cup \set{A}]{Q} \psup \RankA
+			& \text{using the induction hypothesis}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{\POutput\x\y.Q} \psup \RankA & \text{by definition of $\Rank[]\cdot$}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{P} \psup \RankA & \text{by definition of $P$}
+		\end{array}
+	\]
+
+	\proofcase{Case $P = \PInput\x{(\y)}.Q$}
+	%
+	Analogous to the previous case.
+	
+	\proofcase{Case $P = x\Pol\set{\l_i : P_i}_{i \in I}$}
+	%
+	For every $i\in I$ we distinguish two possibilities, depending on whether $A \not\ple P_i$ or $A \ple P_i$. 
+	In the first case we deduce $\Rank{P_i} = \Rank[\aset \cup \set{A}]{P_i}$ using \Cref{lem:rank_not_ple}. 
+	In the second case we deduce $\Rank{P_i} \leq \Rank[\aset \cup \set{A}]{P_i} \psup \RankA$ using the induction hypothesis. 
+	Either way, we have $\Rank{P_i} \leq \Rank[\aset \cup \set{A}]{P_i} \psup \RankA$ for every $i\in I$. We conclude
+	\[
+		\begin{array}[b]{@{}rcll@{}}
+			\Rank{P} & = & \Rank{x\p\set{\l_i:P_i}_{i\in I}} & \text{by definition of $P$}
+			\\
+			& = & \bigsqcup_{i\in I} \Rank{P_i} & \text{by definition of $\Rank[]\cdot$}
+			\\
+			& \leq & \bigsqcup_{i\in I} (\Rank[\aset \cup \set{A}]{P_i} \psup \RankA)
+			& \text{using \Cref{lem:rank_not_ple}} \\
+			& & & \text{or the induction hypothesis}
+			\\
+			& = & (\bigsqcup_{i\in I} \Rank[\aset \cup \set{A}]{P_i}) \psup \RankA
+			& \text{distributivity of $\psup$}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{x\p\set{\l_i:P_i}_{i\in I}} \psup \RankA
+			& \text{by definition of $\Rank[]\cdot$}
+			\\
+			& = & \Rank[\aset \cup \set{A}]{P} \psup \RankA & \text{by definition of $P$}
+		\end{array}
+	\]
+\end{proof}
+
+Next is the key lemma stating that the given notion of rank
+(\Cref{def:process_rank}) behaves well, in the sense that it is preserved by
+unfolding a process invocation.
+
+\begin{lemma}
+	\label{lem:rank-empty}
+	In a safe program such that $\Definition{A}{\seqof\x}P$ we have $\Rank[]P =
+	\Rank[]{\Call{A}{\seqof\x}}$.
+\end{lemma}
+\begin{proof}
+	Clearly $P \ple A$ since $P$ is the body of the definition of process $A$.
+	%
+	We distinguish two sub-cases that cover all possibilities.
+	%
+	If $A \not\ple P$, then using \Cref{lem:rank_not_ple} we deduce $\Rank[]P =
+	\Rank[\emptyset]P = \Rank[\set A]P = \Rank[]{\Call{A}{\seqof\x}}$.
+	%
+	If $A \ple P$, then using \Cref{lem:rank_not_ple} we deduce $\Rank[] P =
+	\Rank[\emptyset] P \leq \Rank[\set A] P \psup \Rank[]{\Call A {\seqof\x}} =
+	\Rank[]{\Call A {\seqof\x}} \psup \Rank[]{\Call A {\seqof\x}} =
+	\Rank[]{\Call A {\seqof\x}}$.
+	%
+	Using \Cref{lem:rank-contr} we conclude $\Rank[]{\Call{A}{\seqof\x}} = \Rank[\set{A}]{P} \leq \Rank[]P$.
+\end{proof}
+
+In order to show that $\Rank[]P$ is indeed the minimum rank of $P$ that allows us to find a typing derivation for $P$, 
+provided there is one, the first thing to do is to prove that a well-typed program is also safe. So from now on, 
+when we reason about well-typed processes, we may assume that they belong to a safe program.
+
+\begin{lemma}
+	\label{lem:well_typed_safe}
+	A well-typed program is safe.
+\end{lemma}
+\begin{proof}
+	First of all observe that $\wtp[m]\CtxC{P}$ and $\wtp[n]\CtxD{Q}$ and $P \ple Q$ imply $m \leq n$. 
+	This follows by considering the base cases of $P \ple Q$ and looking at the typing rules in which $Q$ 
+	is in the conclusion and $P$ is one of the premises.
+	%
+	Then, $A \ple P \ple A$ implies that $P$ occurs in a typing judgment having exactly the 
+	same rank annotation as that of $A$. It follows that $P$ cannot be a cast or a session, 
+	for these forms strictly increase the rank annotation.
+\end{proof}
+
+Next we show that $\Rank[]P$ is no greater than any rank that may appear is a
+typing derivation for $P$.
+
+\begin{lemma}
+	\label{lem:minimum_rank}
+	If $\wtp[n]\Ctx{P}$, then $\Rank[]P \leq n$.
+\end{lemma}
+\begin{proof}
+	We prove that $\wtp[n]\Ctx{P}$ implies $\Rank[\aset]P \leq n$ by a straightforward induction 
+	on the definition of $\Rank[\aset]P$. The conclusion $\Rank[]P \leq n$ 
+	is then just the particular case when $\aset = \emptyset$.
+\end{proof}
+
+Finally, we show that if a program is well typed under \emph{some} assignment then it 
+is also well typed under the assignment that uses the minimum ranks. 
+With \Cref{lem:minimum_rank}, this result justifies the definition of $\Rank[]P$ as \emph{minimum rank} of $P$.
+
+\begin{theorem}
+	\label{thm:rank_typing}
+	If $\set{\Definition{A_i}{\seqof{x_i}}{P_i}}_{i\in I}$ is well typed under
+	the global assignment $\set{\tass{A_i}{\seqof{S_i}}{n_i}}_{i\in I}$, then it
+	is well typed also under the global assignment
+	$\set{\tass{A_i}{\seqof{S_i}}{\Rank[]{P_i}}}_{i\in I}$.
+\end{theorem}
+\begin{proof}
+	\newcommand{\relr}{\mathcal{R}}
+	%
+	First we use the coinduction principle to show that every judgment in $\relr
+	\eqdef \set{\wtp[m]\Ctx{P} \mid \wtpc[n]\Ctx{P}, \Rank[]P \leq m}$
+	is the conclusion of a rule in \Cref{fig:ts_bin} whose premises are also in
+	$\relr$. This allows us to deduce that $\wtpc[n]\Ctx{P}$ implies $\wtpc[\RankE{P}]\Ctx{P}$.
+	%
+	Suppose $\wtp[m]\Ctx{P} \in \relr$. Then $\wtpc[n]\Ctx{P}$ and
+	$\Rank[]P \leq m$.
+	%
+	We reason by cases on the last rule used in the derivation of
+	$\wtpc[n]\Ctx{P}$. We only discuss two representative cases.
+	%
+
+	\proofrule{tb-call}
+	%
+	Then $P = \Call{A_k}{\seqof\x}$ and $\Definition{A_k}{\seqof\x}{Q}$ and
+	$\wtpc[n']\Ctx{Q}$ for some $n' \leq n$ and some $k\in I$.
+	%
+	From the definition of rank we deduce $\Rank[]P = \Rank[]Q = \Rank[]{Q_k}$
+	since the rank of a process does not depend on its free names.
+	%
+	From \Cref{lem:minimum_rank} we deduce $\Rank[]{Q_k} \leq n_k$.
+	%
+	We conclude by observing that $m \geq n_k$ and that $\wtp[m]\Ctx{Q}$ is
+	the conclusion of \refrule{tb-call}.
+
+	\proofrule{tb-tag}
+	%
+	Then $P = x\Pol\set{\l_i:Q_i}_{i\in I}$ and $\Ctx = \CtxD, x :
+	\Pol\set{\l_i:S_i}_{i\in K}$ and $\wtpc[n]{\CtxD, x : S_i}{Q_i}$ for every
+	$i\in I$.
+	%
+	From the definition of rank we have $\Rank[]P = \bigsqcup_{i\in I}
+	\Rank[]{Q_i}$.
+	%
+	From $m \geq \Rank[]P$ we deduce $m \geq \Rank[]{Q_i}$ for every $i\in I$.
+	%
+	Then $\wtp[m]{\CtxD, x : S_i}{Q_i} \in \relr$ for every $i\in I$ by
+	definition of $\relr$ and we conclude by observing that $\wtp[m]\Ctx{P}$
+	is the conclusion of \refrule{tb-label}.
+
+	To show that $\wtpi[n]\Ctx{P}$ implies $\wtpi[\RankE{P}]\Ctx{P}$ it
+	suffices a straightforward induction on the derivation of
+	$\wtpi[n]\Ctx{P}$.
+	%
+	By the bounded coinduction principle this is enough to conclude.
+\end{proof}

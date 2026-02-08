@@ -1,0 +1,72 @@
+\section{\textsc{Video-Skill-CoT}}
+\label{sec:method}
+
+
+\subsection{Problem Setup}
+
+Given a video $v$ and a question $q$, our objective is to produce both an answer ${a} $ and a reasoning trace $r$ that offers an interpretable, step-by-step justification. Prior work typically uses a single MLLM $f$ to generate these:
+$\{r;\,a\}{=}f(q, v)$.
+
+In contrast, \ours{} decomposes the reasoning process into two stages:
+First, given $q$, we select the most relevant expert $e\in\{1,\dots, N^{\mathrm{experts}}\}$ based on the set of pre-defined question groups and predicted required skills.
+Next, a \textit{skill-specific expert MLLM $f^{e}$} then generates a \textit{skill-guided reasoning trace $r^{s}$} along with the final answer:
+$\{r^{s};\, a\}{=}f^{e}(q, v)$.
+We illustrate \ours{} in \cref{fig:main1} (right).
+
+This design enables targeted expert learning and adaptation to diverse reasoning skills in a new video domain.
+In the following, we describe
+how we automatically construct the skill-based CoT (\cref{sec:data_collection})
+and how to train MLLMs with the collected skill-based CoT annotations (\cref{sec:multi-lora}).
+
+
+
+\subsection{Skill-based CoT Annotation}
+\label{sec:data_collection}
+We first construct skill-based CoT rationale annotations for any Video QA dataset, leveraging skill-aware reasoning to enable domain-adaptive video understanding. We perform the following two steps for each $(q,v)$ in the training set to obtain skill-conditioned reasoning traces.
+
+\paragraph{Step 1: Skill Description \& Clustering (\cref{fig:main1} Right-(a)).}
+We define a \textit{skill} as a shared, high-level reasoning capability (e.g., temporal ordering, visual counting, spatial understanding) that recurs across multiple video QA examples within a specific domain.
+For each question $q$, we prompt an MLLM to describe what kind of skill is necessary to answer it (e.g., \textit{“Estimate distance between two objects using visual cues”}).
+Then, we encode all skill descriptions into text embeddings and perform $k$-means clustering (with $k{=}N^{\text{skills}}{=}10$) to form a shared skill taxonomy. Each cluster centroid represents a prototypical skill.
+
+\paragraph{Step 2: Skill-based CoT Collection (\cref{fig:main1} Right-(b)).}
+For each $(q, v)$ pair, we generate a multi-step reasoning trace conditioned on the descriptions of the top 3
+assigned skills, a process we refer to as \textit{Skill Selection}.
+Next, we generate the skill-aware CoT $r^s$; We prompt an MLLM to produce intermediate sub-questions and corresponding answers, guided by selected skills from the previous stage. These sub-QA pairs are then merged into a coherent CoT paragraph that explicitly reflects the assigned reasoning skills.
+To ensure the quality of the skill-based CoT rationales, we further verify and filter out reasoning steps that are irrelevant to the correct answer using an LLM evaluator. 
+
+
+After these steps, each training example is now annotated with relevant expert labels $e$ and a verified, skill-grounded CoT trace $r^s$. These annotations form the basis for downstream training of skill-specific expert models.
+
+
+\subsection{Skill-specific Expert Learning}
+\label{sec:multi-lora}
+
+As illustrated in \cref{fig:main1} Right-(c),
+we perform modularized fine-tuning to learn task-specific knowledge for skill-based CoT training.
+Specifically, we first project all questions in training set $D^\text{train}$ into the text embedding space and perform $k$-means clustering (with $k{=}N^{\text{experts}}{=}5$).
+Unlike step 2 of \cref{sec:data_collection} where $N^{\text{skills}}$ clusters represent the groups of \textit{skill descriptions}, these $N^{\text{experts}}$ cluster centroids represent the groups of \textit{questions}.
+After assigning each training example to its closest $N^{\text{experts}}$, we conduct parameter-efficient training using the corresponding $N^{\text{experts}}$ expert LoRA~\cite{hu2022lora} modules, ensuring task-specific adaptation while minimizing interference across skills.
+During test time, we assign each test question by finding the closest question group by finding the closest question embedding centroids.
+
+\paragraph{Training Objective.}
+
+Following previous work \cite{vpd,aotd}, we train an MLLM by minimizing cross-entropy losses for predicting both the answer ($\mathcal{L}_{\text{answer}}$) and CoT tokens ($\mathcal{L}_{\text{CoT}}$), respectively:
+\begin{equation}
+\begin{split}
+\mathcal{L}&=\mathcal{L}_{\text{answer}}+\lambda\mathcal{L}_{\text{CoT}} \\
+&=\ell(f(q,v),a)+\lambda\ell(f(q,v),r^s),
+\end{split}
+\end{equation}
+where we find $\lambda$ = 0.5 balances the two losses well.
+
+\begin{figure*}[t]
+    \centering
+    {
+    \includegraphics[width=\textwidth]{figures/qual_example2.pdf}}
+    \vspace{-0.1in}
+    \caption{
+    \textbf{Comparison of CoT annotations: (a) regular CoT and (b) our skill-based CoT.} Additional examples are provided in Appendix~\cref{sec:add_qual_results}.
+    }
+    \label{fig:data_annotation_examples}
+\end{figure*}

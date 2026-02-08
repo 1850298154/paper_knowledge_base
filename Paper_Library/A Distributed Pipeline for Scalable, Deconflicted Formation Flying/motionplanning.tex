@@ -1,0 +1,228 @@
+
+\section{Distributed Formation Control} \label{sec:motionplanning}
+
+\edit{
+To achieve a given desired formation, we require a distributed strategy in which the UAVs execute their motions independently and are robust to misalignments of UAV frames.}
+To make the paper self-contained, we first review a candidate strategy and then present a solution to address the scalability issue that arises for large-scale formations.
+
+
+\subsection{Overview of Formation Control}
+
+The framework for achieving a formation using only relative and local position measurements is based on \cite{Lin2016, Lin2016a} and our previous work \cite{Fathian2019, Fathian2018b}. 
+For each UAV, the key steps in this strategy can be summarized as follows.
+\begin{enumerate}
+\item
+The UAV calculates the position vectors from itself to each of its neighbors in its own body frame.
+\item Each vector is scaled and rotated about the $z$-axis of the UAV's body frame. The amount of scaling and rotation is pre-specified and depends on the desired formation. 
+\item These scaled and rotated vectors are then summed to obtain a resultant velocity vector command.
+\end{enumerate}
+
+\edit{We emphasize that the above strategy does \textit{not} rely on a common reference frame  (Fig.~\ref{fig:frame-a}) and the scaling and rotation are performed in each respective UAV body frame.} To formulate and analyze this framework mathematically, however, we consider a common reference frame, in which we express the position of UAV $i$ by $q_i \in \br^3$ and the  vector connecting UAV $i$ to its neighbor $j \in \mathcal{N}_i$  by $q_j - q_i$. The scaling and rotation of this vector is expressed as $A_{ij} (q_j - q_i)$, where $A_{ij} \in \ba(3)$ is called a \textit{gain matrix} and belongs to the set of scaled rotation matrices along the $z$-axis denoted by 
+\begin{equation} \label{eq:Aset}
+\ba(3) \eqdef \left\{ \begin{bsmallmatrix}
+a & -b & \; 0 \\
+b & ~a & \; 0 \\
+0 & ~0 & \; c \\
+\end{bsmallmatrix} \,:\, a,b,c \in \br  \right\}.
+\end{equation}
+Consequently, the motion of UAV $i$ can be expressed as 
+\begin{equation} \label{eq:control}
+\dot{q}_i = \sum_{j \in \mathcal{N}_i}{A_{ij} \, (q_j - q_i)},
+\end{equation}
+where $\dot{q}_i$ is the velocity vector that encapsulates the desired speed and direction of motion for the vehicle.
+\edittwo{While we consider single-integrator dynamics for simplicity of motion planning, higher-order dynamics can be utilized~\cite{Fathian2018b}.}
+
+
+In \eqref{eq:control}, we assume that the $z$-axes of UAVs' body frames (and the reference frame used for the analysis) are aligned. In practice, the direction of gravity can be used to align these axes, and, as we will discuss in Section~\ref{sec:robustness}, small misalignments caused by measurement errors or acceleration effects do not affect the convergence. 
+\edit{
+Note that we do not require that the $x$-$y$ axes be aligned; the UAVs can have arbitrary yaw orientations (Fig.~\ref{fig:frame-c}). This point distinguishes \eqref{eq:control} from the consensus-based \cite{Ren2007}, bearing-based \cite{Zhao2019}, or similar distributed control \cite{Montijano2014}, in which convergence guarantees rely on orientation alignment or consensus of the UAV body frames (Fig.~\ref{fig:frame-b}). }
+
+To analyze the trajectory of the swarm, we define  
+\begin{equation} \label{eq:qA}
+q \eqdef \begin{bsmallmatrix}
+q_{1} \\
+q_{2} \\
+\vdots \\
+q_{n}   
+\end{bsmallmatrix}, \quad 
+A \eqdef \begin{bsmallmatrix}
+-\sum_{j} A_{1j} & A_{12} & \cdots & A_{1n} \\
+A_{21} & -\sum_{j} A_{2j} & \cdots & A_{2n} \\
+\vdots &                          & \ddots & \vdots \\
+A_{n1} &       A_{n2}             & \cdots &  -\sum_{j} A_{nj}   
+\end{bsmallmatrix},
+\end{equation}
+where $q$ is the aggregate vector of UAV positions and $A$ consists of gain matrices. Here, if UAVs $i$ and $j$ are not neighbors, the corresponding $A_{ij}$ is defined as a zero matrix.
+Based on \eqref{eq:control} and by using the notation in \eqref{eq:qA}, swarm motion can be expressed by $\dot{q} = A\, q$, which determines the trajectories that the UAVs traverse.
+
+
+Given a desired formation expressed via the set of points ${p_i = [x_i,\, y_i, \, z_i]^\top} \in \br^3$, we define
+\begin{equation} \label{eq:N}
+N \eqdef \begin{bsmallmatrix}
+p^x_1 & p^y_1 & p^z_1 &  e^x & e^y & e^z \\ 
+p^x_2 & p^y_2 & p^z_2 &  e^x & e^y & e^z \\
+\vdots &  \vdots & \vdots & \vdots & \vdots & \vdots \\ 
+p^x_n & p^y_n & p^z_n &  e^x & e^y & e_z 
+\end{bsmallmatrix} \in \mathbb{R}^{3n\times 6},
+\end{equation}
+where ${p^x_i \eqdef [x_i,\, y_i,\, 0]^\top}$, ${p^y_i \eqdef [-y_i,\, x_i,\, 0]^\top}$, ${p^z_i \eqdef [0,\, 0,\, z_i]^\top}$, ${e^x \eqdef [1,\,0,\,0]^\top}$, ${e^y \eqdef [0,\,1,\,0]^\top}$, and ${e^z \eqdef [0,\,0,\,1]^\top}$. 
+Convergence to the desired shape is guaranteed if $A\, N = 0$ (i.e., columns of $N$ are null vectors of $A$) and if all remaining eigenvalues of $A$ not associated with $N$ are strictly negative.
+For such an $A$ to exist, each UAV should have a sufficient number of neighbors. Specifically, if vertices and edges represent the UAVs and their neighboring relations in the formation graph $\sg$, $A$ exists if $\sg$ is universally rigid (see~\cite[Thm. 3.2]{Lin2016a}).
+
+\edit{Our approach consists of \textit{design} and \textit{execution} phases.
+In the \textit{design} phase, a gain matrix $A$ as in~\eqref{eq:qA} is computed offline based on the specification of a formation \edittwo{graph $\sg$} and serves as an input to the distributed algorithms that run onboard the UAVs.
+The \textit{execution} phase is entirely distributed, where the UAVs plan their trajectories independently using relative translation measurements to their neighboring UAVs.}
+
+
+
+
+
+
+
+\subsection{Scalable Gain Design}
+
+Given a desired formation, the gain matrix $A$ that meets the aforementioned constraints can be computed from
+\begin{equation} \label{eq:OptimCVX}
+\begin{aligned}
+& \underset{A \in \bs^{-}_{3n}}{\text{minimize}}
+& & \lambda_{\text{max}} \left( Q^\top A \, Q \right) & \\
+& \text{subject to}
+& & A\, N = 0 & \\
+&&& A_{ij} \in \mathbb{A}(3)  & \forall_{i,j} \\
+&&& A_{ij} = 0 \;   & \forall_{i} \ \forall_{j \notin \mathcal{N}_i} \\
+&&& \tr(A) = \text{constant}
+\end{aligned}
+\end{equation}
+where $\lambda_{\text{max}}$ denotes the largest eigenvalue of a matrix, $Q \in \mathbb{R}^{3n\times (3n-6)}$ is the orthogonal complement of $N$ (i.e., $N^\top Q = 0$), which is found from the singular value decomposition of $N$, and $\bs^-_{3n}$ is the space of symmetric negative semidefinite matrices of dimension $3n$.
+The objective of \eqref{eq:OptimCVX} is to make the nonzero eigenvalues of $A$ as negative as possible ($Q^\top A \, Q$ is the restriction of $A$ on the subspace $Q$ and eliminates the zero eigenvalues associated with $N$).
+By doing so, stability and robustness of the formation to noise, measurement errors, and disturbances is increased.  
+We note that the last constraint in \eqref{eq:OptimCVX} sets the trace of $A$ to a constant value to ensure that the problem is bounded (without this constraint, if $A\in\bs^-_{3n}$ is a solution, so is $c\, A$ for any $c>0$ with a better objective value).
+The universal rigidity assumption on the formation graph \cite[Thm. 3.2]{Lin2016a} is sufficient to ensure that \eqref{eq:OptimCVX} is feasible and that all remaining eigenvalues of $A$ not associated with $N$ are strictly negative.
+
+
+The formulation \eqref{eq:OptimCVX} was presented in our earlier work~\cite{Fathian2019} and can be solved relatively quickly using existing SDP solvers for small number of vehicles. However, for large-scale problems (e.g., more than $50$ UAVs) it becomes challenging, or even impossible, to solve. 
+We address this issue by exploiting the problem structure to derive a solution based on the alternating direction method of multipliers (ADMM).
+
+
+
+We observe from \eqref{eq:Aset} that $A_{ij}\in\ba(3)$ has a block diagonal structure, which can be expressed by ${A_{ij} = \mathrm{blkdiag}(D_{ij}, c_{ij})}$, where the $2\times 2$ matrix $D_{ij}$ consists of the first two rows and columns, and the scalar $c_{ij}$ is the entry in the last row and column of $A_{ij}$.
+Due to this structure, we conclude from \eqref{eq:control} that vehicle trajectories along the $x$-$y$  and $z$ components are decoupled and depend only on $D_{ij}$ and $c_{ij}$, respectively.
+This observation allows us to split \eqref{eq:OptimCVX} into two subproblems with lower dimensions, leading to reduced computational effort.
+By defining
+\begin{equation} \label{eq:} 
+B \eqdef \begin{bsmallmatrix}
+-\sum_{j} c_{1j} & c_{12} & \cdots & c_{1n} \\
+c_{21} & -\sum_{j} c_{2j} & \cdots & c_{2n} \\
+\vdots &                      & \ddots & \vdots \\
+c_{n1} &     c_{n2}       & \cdots &  -\sum_{j} c_{nj}   
+\end{bsmallmatrix}, ~~
+M \eqdef \begin{bsmallmatrix}
+z_1 & 1 \\ 
+z_2 & 1 \\
+\vdots &  \vdots \\ 
+z_n & 1
+\end{bsmallmatrix},
+\end{equation}
+which correspond to the $z$ components of $A$ in \eqref{eq:qA} and $N$ in \eqref{eq:N}, the problem of finding $c_{ij}$ is formulated as
+\begin{equation} \label{eq:OptimZ}
+\begin{aligned}
+& \underset{B \in \bs^{-}_{n} }{\text{minimize}}
+& & \lambda_{\text{max}} \left(  R^\top B \, R \right) & \\
+& \text{subject to}
+& & B \, M = 0 & \\
+&&& c_{ij} = 0 \;   & \forall_{i} \ \forall_{j \notin \mathcal{N}_i} \\
+&&& \tr(B) = \text{constant}
+\end{aligned}
+\end{equation}
+where $R \in \br^{n \times (n-2)}$ is the orthogonal complement of $M \in \br^{n\times 2}$. 
+The optimization problem for finding $D_{ij}$ is formulated similarly to \eqref{eq:OptimZ}, with an additional constraint that the diagonal entries of $D_{ij}$ must be equal and the off-diagonal entries must have the same absolute value with different signs. With this point in mind, we henceforth focus our attention on \eqref{eq:OptimZ}. 
+The following proposition brings \eqref{eq:OptimZ} into the standard form suitable for applying ADMM.
+
+
+\begin{prop} \label{prop:SDP}
+Problem \eqref{eq:OptimZ} can be formulated as
+\begin{equation} \label{eq:OptimX}
+\begin{aligned}
+& \underset{X \in \bs^+_{2n-4} }{\text{minimize}}
+& & \left< C,\, X \right> & \\
+& \text{subject to}
+& & \sa(X) = b  
+\end{aligned}
+\end{equation}
+where $\left< C,\, X \right> \eqdef \tr(C^\top X)$,  
+$C \eqdef \begin{bsmallmatrix}
+I & 0 \\
+0 & 0
+\end{bsmallmatrix}$ with $I$ as the identity matrix of size $n-2$, and $b \in \br^m$. The operator $\sa(X)$ represents a set of linear constraints on $X$ and enforces it to have the block diagonal structure $X \eqdef \begin{bsmallmatrix}
+\gamma\, I && I \\
+I && Z 
+\end{bsmallmatrix}$, where $\gamma \geq 0$ and $Z \in \bs^+_{n-2}$. The solution of \eqref{eq:OptimZ} is obtained from $X$ as $B = - M \, Z \, M^\top$.
+
+\end{prop}
+
+\edit{Proposition~\ref{prop:SDP} is proved in the appendix of~\cite{lusk2020distributed}.} 
+We now leverage the ADMM technique in \cite{Wen2010} to solve  \eqref{eq:OptimX}.
+From~\cite{Wen2010}, the augmented Lagrangian associated with \eqref{eq:OptimX} is 
+\begin{equation} \label{eq:Lagrangian}
+\mathcal{L} \eqdef - \langle y, b \rangle + \langle \sa^*(y) + S - C,\, X \rangle + \frac{1}{2\mu} \| \sa^*(y) + S - C \|,
+\end{equation}
+where $S \in \bs^+_{2n-4}$ and $y$ are dual variables associated with constraints $X \in \bs^+_{2n-4}$ and $\sa(X) = b$, respectively, $\sa^*$ is the adjoint of $\sa$, and $\mu > 0$ is a penalty parameter that balances the standard Lagrangian and the augmented term. 
+ADMM then proceeds by alternatively optimizing each primal and dual variable with others fixed, which results in a closed-form solution for each subproblem. Denoting by the superscript $k$ the iteration number, the ADMM iterative update procedure is given as
+\begin{equation} \label{eq:ADMM}
+\begin{aligned}
+y^{k+1} &= (\sa \sa^*)^{-1} \left( \sa (C - S^k - \mu X^k) + \mu\, b \right), \\
+W^{k+1} &=  C - \sa^* (y^{k+1}) - \mu \, X^k, \\
+S^{k+1} &= \mathcal{P}_{\mathrm{psd}} \left(W^{k+1} \right), \\
+X^{k+1} 
+&= \frac{1}{\mu} \left( S^{k+1} - W^{k+1} \right).
+\end{aligned}
+\end{equation}
+In~\eqref{eq:ADMM}, the operator $\mathcal{P}_{\mathrm{psd}}$ denotes the projection onto the positive semidefinite cone $\bs^+$, and is computed via  eigendecomposition (see \cite{Wen2010} for details).
+ADMM typically converges in a reasonable time to a solution with acceptable accuracy.
+The number of ADMM iterations required for convergence depends on the desired accuracy as well as the formation graph (e.g., when the formation graph is complete, it is straightforward to show that ADMM converges to the optimal solution in a single iteration).
+The time comparisons between an existing SDP solver for \eqref{eq:OptimCVX} and the presented ADMM method \eqref{eq:ADMM} are given in Section~\ref{sec:exper}. 
+
+\subsection{Robustness, Collision Avoidance, and Formation Size}\label{sec:robustness}
+
+
+
+Gain matrices are recomputed only when a new desired formation is specified.
+During execution, vehicles use the gains and the relative position of their neighbors to compute the velocity vector $u_i$ in \eqref{eq:control} at each time instance. Having $u_i$ computed, the vehicle's low-level controller is tasked with tracking the direction and speed specified by this vector.
+
+  
+
+
+
+One can show that 1) \textit{any} \textit{positive} scaling; and 2) \textit{any} rotation less than \textit{90 degrees} of the velocity vector $u_i$ does not void the convergence guarantees of the formation control strategy (see \cite[Thm. 2]{Fathian2019}). 
+These key properties indicate extreme robustness to errors and disturbances. For example, discrepancies between the actual and desired velocity of a vehicle caused by imperfect tracking, unmodeled dynamics, or small misalignments in $z$-axes of UAV body frames can be modeled as a positive scaling and small rotation of the nominal $u_i$, for which  convergence to the desired formation is unaffected.
+The aforementioned properties can be further used for collision avoidance, where velocity vectors that lead vehicles to close proximity are modified to prevent collisions. More specifically, \eqref{eq:control} can be modified as
+\begin{gather} \label{eq:RotationCtrl}
+u_i \eqdef c_i \, R_i \sum_{j \in \mathcal{N}_i}  A_{ij} \, (q_j - q_i),
+\end{gather}
+where the rotation matrix $R_i$, which is limited to $90$ degrees, is chosen to rotate any velocity vector that brings two vehicles closer than a specified distance. 
+If there is no feasible direction of motion within this range, the scalar $c_i$, which is normally set to one, is set to zero to stop the vehicle.
+
+
+
+The collision avoidance strategy \eqref{eq:RotationCtrl} runs onboard, but comes at the cost of losing convergence guarantees since vehicles can become gridlocked due to the unavailability of motion directions (allowing $c_i = 0$ in \eqref{eq:RotationCtrl} violates the aforementioned property in which $c_i > 0$ is required to ensure convergence). 
+Optimal assignment of vehicles to target formation points guarantees non-intersecting lines from their current positions to their assigned points (see \cite[Thm. 3.1]{Turpin2014}).
+\edit{Since the vehicle body frames can be nonaligned and the control is distributed, vehicles are not expected to move perfectly in a straight line under our control strategy. However, assignment can still help deconflict the swarm by increasing the availability of motion directions.
+The impact of assignment on resolving gridlocks is shown in Section~\ref{sec:exper}. }
+
+
+
+
+
+Finally, note that \eqref{eq:RotationCtrl} leads to achieving the desired formation \textit{shape}, but the formation \textit{size} is not regulated and depends on the initial position of the vehicles. To control the size, \eqref{eq:RotationCtrl} can be augmented to contract (or expand) the formation when the vehicles are farther (or closer) than the desired distance. 
+This augmented strategy, and its theoretical convergence guarantees, is discussed in our earlier work for 2D formations (see (74) in \cite{Fathian2018b}). Since the extension to 3D formations considered in this work is straightforward, we omit this discussion for brevity. 
+
+
+
+
+
+
+
+
+
+
+

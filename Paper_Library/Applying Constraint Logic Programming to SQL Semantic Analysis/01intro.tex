@@ -1,0 +1,168 @@
+\section{Introduction}
+\label{sect:introduction}
+
+Aiding programmers with both syntax and type checking  at compile-time % and other techniques 
+obviously improves productivity.
+In the realms of SQL, current systems (both proprietary and open-source) typically lack of more advanced techniques such as, in particular, the semantic analysis of statements.
+After the syntax checking stage, such an analysis should point out possible incorrect statements (e.g., missing or incorrect tuples in the actual outcome).
+%A wrong statement can be either incorrect, because it retrieves more rows than expected, or incomplete, because expected rows are not present in the result.
+%Once a statement has been syntactically checked, another higher-level semantic analysis can be performed to detect probably wrong statements \cite{Brass:2006:SES:1183058.1183064}.
+%
+However, in this paper, we avoid actual execution of statements as done in other approaches (assessment tools, test case generation, data provenance\ldots \cite{c3acdc529d00437980a60fe7f143b86a}), and we target at the compile-time stage instead.
+
+
+%The motivation of this goal is three-fold: First, learning SQL would be enhanced by presenting not only syntax errors, but also semantic warnings, pointing out to the students suspicious statements.
+%Second, acquainted developers would catch semantic errors faster, thus making them more productive.
+%And, third, identified errors in this early stage are not transmitted to latter semantic checking of tools as (unit) testing database code and post-mortem analysis, therefore improving the results of these tools.
+
+%This would be seen as a daunting task, but t
+There are some indicators of bad statement design which can be used to raise semantic warnings. % to the user of the system.
+In particular, we focus on SQL semantic errors as described in \cite{Brass:2006:SES:1183058.1183064} that can be caught independently of the database instance. %(therefore, without resorting to actually solve queries).
+There are many possible errors and, among them, the following are included: inconsistent, tautological and simplifiable conditions, uncorrelated relations in joins, unused tuple variables, 
+%unnecessary \mytt{DISTINCT} clause, 
+constant output columns, duplicate output columns, %comparison with null,
+unnecessary general comparison operators, and several others.
+
+%Among all these errors, an interesting case is determining the relevance of conditions.
+%Besides proposing how to deal with many of the outlined errors in an actual tool, we focus on the interesting case of determining the relevance of conditions by abstracting the original statements in a logic constraint programming setting with solver cooperation.
+
+Applying such a semantic analysis to SQL is cumbersome because its syntax and semantics do not facilitate expressing program properties \cite{Guagliardo:2017:FSS:3151113.3151116}.
+%\cite{DBLP:conf/iccp2/DollingerM11}. 
+%Though there are works as \cite{Guagliardo:2017:FSS:3151113.3151116} that formalizes 3-valued SLQ semantics, reasoning at this level is cumbersome.
+To ease this task we use Constraint Logic Programming (CLP) \cite{Jaffar:1987:CLP:41625.41635,Apt:2003:PCP:1237975} as a reasoning setting for SQL statements.
+This way, we translate an SQL statement into a constraint logic program that in particular models conditions and expressions.
+%Each logic variable in the translation represents the possible values its corresponding relation column can take. % for each tuple instance in the context of all the involved relations in the SQL statement.
+%Translating includes optimization and simplification techniques as folding/unfolding.
+This CLP program is then evaluated to obtain properties of interest for the semantic analysis.
+For example, obtaining a failed deduction indicates an inconsistent condition.
+%Also, if ground bindings are found, this means that some properties do hold irrespective of the database instance.
+%And tautologies can also be easily detected by testing that a complemented condition fails.
+
+CLP systems include different solvers for specific constraint domains such as Booleans, finite domains, reals, and rationals.
+Each one is an instance of the generic schema CLP($\mathscr{X}$),  %\cite{Jaffar:1987:CLP:41625.41635,Apt:2003:PCP:1237975}, 
+where $\mathscr{X}$ is a constraint domain which can be mapped to an SQL type.
+On the one hand, since a \mytt{WHERE} condition generally includes columns of different types, then different domains (and, therefore, constraint solvers) are expected to be involved in a single condition. % (that is, mapping types to domains).
+On the other hand, the deduction power of each solver is limited by its constraint propagators and the kind of constraints it can deal with. 
+For example, while a finite domain solver can handle non-linear constraints, a real solver cannot.
+Thus, we apply \textit{solver cooperation} \cite{HofstedtCP:2000} to enable solver cooperation for compatible domains and interchange deductions to improve accuracy.
+%So, we adapt this technique to our system to get improved deductions.
+
+We have implemented our proposal in a deductive database system that includes %(among others) 
+SQL as a query language.
+This system (Datalog Educational System -- DES \cite{saenzDESentcs11}) is an interactive tool mainly targeted at teaching, and it is appealing for SQL learning with the aid of both syntax and semantic checking (as presented here).
+It has experienced more than 76K downloads and has been used in more than 50 universities around the world (cf. {\myfontcodesize\url{des.sourceforge.net/html/facts.html}}).
+Solving a query %of the different query languages it supports 
+is via an optimized translation into a Datalog program, which is then solved by its deductive engine.
+Thus, we take advantage of this Datalog translation for the generation of a CLP program.
+To the best of our knowledge, this is the first work dealing with SQL semantic errors using CLP.
+
+We are currently using the system for our \textit{Databases} modules via a web interface ({\myfontcodesize\url{desweb.fdi.ucm.es}}), retrieving data to evaluate the usefulness of the semantic warnings.
+More than 200 student accounts have been created, and more than 3,000 logins have been registered, including 600 guest account logins.
+%
+%Our main contribution is, thus, to provide a comprehensive system including the outlined approach.
+%%The system not only includes semantic checking, but also detailed syntax checking (more than several commercial DBMS's as also shown in Section \ref{sect:the-system}).
+%The closest related work \cite{Brass:2006:SES:1183058.1183064} employs satisfiability tests and model construction to generate warnings that are not always accurate and deduce less information, as it will be shown in Section \ref{sect:related-work}.
+%A more detailed related work study is conducted in Section \ref{sect:related-work}.
+Next, the proposal is motivated by examples.
+
+%\subsection{Motivating Examples}
+%\label{sect:motivation}
+
+\paragraph{Motivating Examples}Following \cite{Brass:2006:SES:1183058.1183064}, a simple semantic error occurs in the following query:%\footnote{Keywords in SQL code shown in this paper are capitalized, though SQL is case insensitive in most systems.}
+
+{\myfontcodesize
+\begin{verbatim}
+SELECT * FROM employees WHERE dept='IT' AND dept='HR';
+\end{verbatim}
+}\vspace{-2mm}
+
+\noindent Here, the condition is trivially false due to (probably) using the wrong logical operator.
+Despite this, it is accepted and solved with no warning in current DBMSs.
+
+Conditions also appear in database constraints, %\footnote{Not to be confused with constraints in the CLP setting.} 
+and may be identified as either inconsistent or tautological.
+Consider the following definitions, in which the constraint on the salary has the minimum and maximum values interchanged (no definite tuple could ever be inserted): % in such a table with a non-null salary value):
+
+{\myfontcodesize
+\begin{verbatim}
+CREATE TABLE departments(dept VARCHAR(10) PRIMARY KEY, dname VARCHAR(20));
+CREATE TABLE employees(ename VARCHAR(20), dept VARCHAR(10) REFERENCES departments, 
+                       salary INT CHECK salary BETWEEN 5000 AND 2000);
+\end{verbatim}
+}\vspace{-3mm}
+
+
+Tautological conditions can occur as in the following statement (where the intention would probably be to use \mytt{AND} instead of \mytt{OR}):
+
+{\myfontcodesize
+\begin{verbatim}
+CREATE TABLE employees(ename VARCHAR(20), dept VARCHAR(10) REFERENCES departments, 
+                       salary INT CHECK salary > 2000 OR salary < 5000);
+\end{verbatim}
+}\vspace{-3mm}
+
+
+We can consider a more involved example including both database constraints in a table and an SQL query.
+On it, a table is defined for containing gas products and describing their composition as percentages, which must make a total of one hundred percent.
+%This amounts to a reasonable set of database constraints.
+The \mytt{SELECT} query below would be inconsistent because it is asking for a gas product with components summing more than 100\%.
+
+{\myfontcodesize
+\begin{verbatim}
+CREATE TABLE gas_products(name      VARCHAR(20) PRIMARY KEY, 
+                          butane    FLOAT CHECK butane    BETWEEN 0 AND 100, 
+                          propane   FLOAT CHECK propane   BETWEEN 0 AND 100, 
+                          olefins   FLOAT CHECK olefins   BETWEEN 0 AND 100, 
+                          diolefins FLOAT CHECK diolefins BETWEEN 0 AND 100, 
+                          CHECK     butane+propane+olefins+diolefins =  100);
+
+SELECT name FROM gas_products WHERE butane>60 AND propane>50;
+\end{verbatim}
+}
+
+Finally, another possibility is a condition that can be simplified, which may be a symptom of a wrong condition.
+For example:
+
+{\myfontcodesize
+\begin{verbatim}
+SELECT butane, propane FROM gas_products 
+WHERE butane-propane=10 AND butane+propane=80;
+\end{verbatim}
+}
+
+This is equivalent to the simple condition \mytt{butane=45 AND propane=35} because the condition represents a system of linear equations with a single solution. 
+Then, both output columns are constants, and therefore symptoms of a wrong query.
+%In this case, it may be the case that the pattern of the condition is correct (i.e, looking for a given difference between components and a given amount of two of them) but perhaps an incorrect column name has been used. % because of a copy and paste error.
+%
+Other errors that students typically make and are also covered by this tool %(such as detecting uncorrelated relations, unneeded relations\ldots
+are presented in Subsection \ref{sect:errors}.
+% but are out of the scope of this paper.
+%Another common error is to forget the correlation in joins, as in:
+%
+%{\myfontcodesize
+%\begin{verbatim}
+%SELECT ename, dname FROM employees, departments;
+%\end{verbatim}
+%}
+%
+%This error is easily caught at first sight, but in a complex query including many relations and conditions, it might not be so simple, so that an automated tool is an advantage.
+%
+%Similar to this example, in the following one there is no need to include the relation \mytt{departments} (recall the foreign key in the column \mytt{employees.dept}):
+%
+%{\myfontcodesize
+%\begin{verbatim}
+%SELECT ename, dept FROM employees NATURAL INNER JOIN departments;
+%\end{verbatim}
+%}
+
+
+%Such errors are typically faced not only by students learning SQL (\cite{Brass:2006:SES:1183058.1183064} and also in our personal experience along teaching databases during many years), but also by programmers with enough skills.
+
+%:: UPDATE examples.pdf in www.fdi.ucm.es
+
+Next sections detail our approach to identify such wrong uses of SQL conditions, and consists in translating an SQL statement into a CLP program, which is evaluated for identifying inconsistency, tautology, simplifiable conditions, and constant output columns.
+% and several other errors as summarized in Subsection \ref{sect:errors}. 
+Since we use DES, which translates SQL to Datalog, we start from this translation (Section \ref{sect:sql-to-datalog}) for generating the CLP program (Section \ref{sect:datalog-to-clp}).
+Section \ref{sect:the-system} presents the working system with the techniques used to identify a collection of semantic errors, together with performance data.
+Section \ref{sect:related-work} relates this work to other approaches and, finally, we present in Section \ref{sect:conclusions} our conclusions and points for future work.
+

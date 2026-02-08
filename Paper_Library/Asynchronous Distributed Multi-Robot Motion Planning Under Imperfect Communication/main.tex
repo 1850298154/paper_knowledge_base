@@ -1,0 +1,744 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%2345678901234567890123456789012345678901234567890123456789012345678901234567890
+%        1         2         3         4         5         6         7         8
+
+
+\documentclass[letterpaper, 10 pt, conference]{ieeeconf}  % Comment this line out
+%\documentclass[a4paper, 10pt, conference]{ieeeconf}      % Use this line for a4
+                                                          % paper
+
+\IEEEoverridecommandlockouts                              % This command is only
+                                                          % needed if you want to
+                                                          % use the \thanks command
+\overrideIEEEmargins
+% See the \addtolength command later in the file to balance the column lengths
+% on the last page of the document
+% The following packages can be found on http:\\www.ctan.org
+%\usepackage{graphics} % for pdf, bitmapped graphics files
+%\usepackage{epsfig} % for postscript graphics files
+%\usepackage{mathptmx} % assumes new font selection scheme installed
+%\usepackage{times} % assumes new font selection scheme installed
+%\usepackage{amsmath} % assumes amsmath package installed
+%\usepackage{amssymb}  % assumes amsmath package installed
+
+% \title{\LARGE \bf
+% State Estimation for Hybrid Systems with Guard and Reset Uncertainty}
+\title{\LARGE \bf
+Asynchronous Distributed Multi-Robot Motion Planning Under Imperfect Communication}
+
+\author{Ardalan Tajbakhsh$^{*1}$, Augustinos Saravanos$^{2}$, James Zhu$^{3}$, Evangelos A. Theodorou$^{2}$, Lorenz T. Biegler$^{1}$, \\ Aaron M. Johnson$^1$% <-this % stops a space
+    \thanks{$^1$ Department of Mechanical Engineering and $^2$ Department of Chemical Engineering, Carnegie Mellon University, Pittsburgh, PA, USA, \texttt{\{atajbakh, amj1\}@andrew.cmu.edu}}%
+    \thanks{$^2$ Daniel Guggenheim School of Aerospace Engineering, Georgia Institute of Technology, Atlanta, GA, USA, \texttt{\{asaravanos, evangelos.theodorou\}@gatech.edu}}
+    \thanks{$^3$ LAAS-CNRS, Universit\'{e} de Toulouse, CNRS, UPS, Toulouse, France}
+}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{amsmath}
+\usepackage{mathtools}
+\usepackage{amsthm}
+\usepackage{amssymb}
+%\usepackage{subfigure}
+\usepackage{accents}
+\usepackage{cite}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{romannum}
+\usepackage{amssymb} % for \checkmark
+\usepackage{pifont}
+\newcommand{\xmark}{\textcolor{red}{\ding{55}}}             % Red x-mark
+
+\usepackage{amssymb}    % For \checkmark
+% \usepackage[compatible=nooneline]{caption}
+\usepackage{pifont}     % For \ding{55}
+\usepackage{tabularx}   % For column-width-fitting tables
+\usepackage{booktabs}   % For better table formatting
+\usepackage[dvipsnames]{xcolor}     % For colored text
+\usepackage{multirow}
+\usepackage{cancel}
+
+% Define colored symbols
+\newcommand{\cmark}{\textcolor{green!70!black}{\checkmark}} % Green checkmark
+%\usepackage{subcaption}
+\DeclareMathOperator{\argmin}{argmin}
+%\usepackage{subcaption}
+\def\citepunct{,}
+\def\citedash{--}
+% \usepackage{algorithm}
+% \usepackage{algpseudocode}
+% \usepackage[linesnumbered]{algorithm2e}
+\usepackage{algorithmic}
+\usepackage[ruled, lined, linesnumbered, longend]{algorithm2e}
+% \usepackage[bookmarks=true]{hyperref}
+\newtheorem{theorem}{Theorem}
+\usepackage{hyperref}
+\hypersetup{colorlinks,allcolors=black}
+\SetKwInput{KwInput}{Input}                % Set the Input
+\SetKwInput{KwOutput}{Output}              % set the Output
+\hypersetup{%
+  breaklinks,
+  bookmarksnumbered=true,
+  bookmarksopen=true,
+  colorlinks=true,
+  linkcolor=black,
+  urlcolor=black,
+  citecolor=black
+}
+
+\newcommand{\ubar}[1]{\underaccent{\bar}{#1}}
+
+\setlength{\textfloatsep}{8pt plus 8.0pt minus 2.0pt}
+\setlength{\floatsep}{8pt plus 8.0pt minus 2.0pt}
+
+% Use these for theorems, lemmas, proofs, etc.
+\newcounter{mytheorem}
+\newtheorem{lemma}[mytheorem]{Lemma}
+\newtheorem{proposition}[mytheorem]{Proposition}
+\newtheorem{claim}[mytheorem]{Claim}
+\newtheorem{corollary}[mytheorem]{Corollary}
+\newtheorem{definition}[mytheorem]{Definition}
+
+\newcommand{\mathfill}{\hfill}
+
+\begin{document}
+% \includepdf[pages=1-last]{paper.pdf}
+\bstctlcite{IEEEexample:BSTcontrol} %This, along with the lines at the start of the .bib, make long author lists into 'et al'
+
+
+\maketitle
+\thispagestyle{empty}
+\pagestyle{empty}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{abstract}
+This paper addresses the challenge of coordinating multi-robot systems under realistic communication delays using distributed optimization. We focus on consensus ADMM as a scalable framework for generating collision-free, dynamically feasible motion plans in both trajectory optimization and receding-horizon control settings. In practice, however, these algorithms are sensitive to penalty tuning or adaptation schemes (e.g. residual balancing and adaptive parameter heuristics) that do not explicitly consider delays. To address this, we introduce a Delay-Aware ADMM (DA-ADMM) variant that adapts penalty parameters based on real-time delay statistics, allowing agents to down-weight stale information and prioritize recent updates during consensus and dual updates. Through extensive simulations in 2D and 3D environments with double-integrator, Dubins-car, and drone dynamics, we show that DA-ADMM significantly improves robustness, success rate, and solution quality compared to fixed-parameter, residual-balancing, and fixed-constraint baselines. Our results highlight that performance degradation is not solely determined by delay length or frequency, but by the optimizer’s ability to contextually reason over delayed information. The proposed DA-ADMM achieves consistently better coordination performance across a wide range of delay conditions, offering a principled and efficient mechanism for resilient multi-robot motion planning under imperfect communication. 
+\end{abstract}
+\begin{keywords}
+Multi-Robot Motion Planning, Model Predictive Control, Distributed Optimization
+\end{keywords}  
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Introduction}
+As robotic systems scale to large numbers in different dynamic environments such as warehouses, ports, sidewalks, etc., distributed inter-agent coordination under realistic deployment conditions becomes critical for the successful operation of these systems. In particular, there is a clear need for algorithms that reason over realistic dynamics of each agent, can handle many tight inter-agent conflicts, and are robust to imperfect communications in realistic wireless networks \cite{gielis2022critical}. 
+
+Much of the existing work in multi-robot path finding (MAPF) rely on restrictive simplifying assumptions on the agent dynamics and centralized, perfect communication \cite{sharon2015conflict,barer2014suboptimal,boyarski2015icbs}. These approaches have been shown to scale to thousands of agents \cite{liu2020prediction}. However, these results often do not transfer well to the real-world due to these assumptions. Other approaches extend MAPF techniques to plan scalable motions in continuous-time using model predictive control (MPC) \cite{tajbakhsh2024conflict}, or kino-dynamic RRT \cite{kottinger2022conflict} as the low-level planner. But, they still require centralized coordination and synchronous communication. 
+
+Distributed optimization offers an attractive alternative for coordinating multiple robots at scale in dynamic environments. Existing approaches like \cite{luis2020online, tordesillas2021mader, firoozi2020distributed} leverage parallel trajectory optimization for planning the motions of individual agents, and assume the predictions of other agents as fixed constraints in the neighbors optimization problems. While effective for sparse scenarios, these “fixed constraint” schemes can become infeasible or result in deadlocks in tightly constrained spaces, fail to reach fair compromise among interacting agents, and lack resilience to communication delays due to their single‑shot trajectory generation.
+
+Alternating direction method of multipliers (ADMM) \cite{boyd2011distributed} is a distributed optimization framework that decomposes a global problem into separable local subproblems, each solved in parallel, and enforces consensus via iterative multiplier updates over the coupling constraints. 
+% This framework offers several advantages. 
+% First, it can handle tight coupling constraints effectively and reach a fair consensus solution. Second, its iterative updates can fold in delayed messages on later iterations and still converge to a feasible solution, making it more robust to delays than one-shot methods.
+Recent approaches have successfully leveraged this framework to generate large-scale multi-robot motion plans in deterministic settings \cite{saravanos2023distributed_ddp, shorinwa2024distributed}, as well as under uncertainty in the dynamics \cite{park2019distributed, saravanos2023hierarchical, saravanos2024distributed}.
+
+Nevertheless, the previous works assume that the agents operate under ideal communication. In \cite{ferranti2022distributed}, an asynchronous ADMM variant is proposed that utilizes the shifted predictions of delayed agents combined with more conservative collision avoidance constraints to ensure safety under delayed communications. \cite{guo2017impact} handles asynchronous communication in by performing global updates with the subset of neighbors that have responded and ignoring those that have not until they become available. This results in slower convergence and degraded solution quality due to partial neighborhood information. In robotics motion planning, we typically have access to predictions of other agents; even when stale, they can be useful in maintaining coordination, thus discarding them during delays is unnecessary and overly conservative.
+
+To improve the convergence of ADMM, many parameter adaptation schemes such as residual balancing \cite{wohlberg2017admm}, and other adaptation heuristics \cite{xu2017adaptive, xu2017admm, mccann2024robust} have been introduced. These approaches perform well in synchronous regimes but are typically myopic to asynchronicity: by adjusting parameters solely from instantaneous primal/dual residuals, they ignore message age and delay statistics, thereby conflating disagreement from stale updates with true consensus error. Recently, data-driven distributed optimization schemes such as deep unfolded ADMM have enabled learning tunable parameters \cite{noah2024distributed} or even adaptation policies for these parameters \cite{saravanos2025deep} demonstrating substantial robustness and scalability. However, applying this approach to the multi-robot coordination domain requires significant amounts of contextually rich data, and training cascaded networks remains challenging.
+
+Despite many prior works noting the importance of reasoning about imperfect communication in distributed optimization \cite{gielis2022critical,shorinwa2024distributed}, its impact on multi-robot coordination remains largely underexplored. In particular, two fundamental questions remain unresolved:
+(1) How do different communication delay patterns impact distributed optimization frameworks like ADMM \textit{for multi-robot coordination}?
+(2) What algorithmic structures can improve coordination \textit{performance} and \textit{robustness} under imperfect communication?
+
+To address these questions, this paper makes the following contributions:
+\begin{itemize}
+\item We systematically quantify the effect of diverse communication delay patterns on the success rate, convergence, and solution quality of distributed optimization methods for multi-robot motion planning.
+\item We introduce a delay-aware penalty parameter adaptation scheme and global update rule for consensus ADMM that enhances robustness and coordination performance in the presence of variable communication delays.
+\item We validate our approach through extensive simulation experiments in distributed trajectory optimization and model predictive control (MPC) settings across 2D and 3D multi-robot scenarios.
+\end{itemize}
+
+\section{Problem Description}
+
+\subsection{Problem Setup}
+This section summarizes the problem formulation and notation, as summarized in Table \ref{tab:notation_summary}. Let us consider a team of $N$ agents indexed by $\mathcal{I} := \{1, \dots, N\}$. Each agent $i \in \mathcal{I}$ has a set of neighbors $\mathcal{N}_i$ including itself. In addition, each agent has a state $x_{i,k}$ and a control input $u_{i,k}$ defined at discrete time steps $k \in \mathcal{K} := \{0, \dots, K\}$, where $K$ is the final time step. We define the trajectories for each agent as:
+\begin{equation}
+    x_i := [x_{i,k}]_{k \in \mathcal{K}}, \quad u_i := [u_{i,k}]_{k \in \mathcal{K}}, \quad 
+\end{equation}
+
+We consider the following multi-agent optimization problem:
+\begin{subequations}\label{eq:initial_multi_agent_problem}
+\begin{align}
+\min_{\{x_i, u_i\}_{i \in \mathcal{I}}} \quad & \sum_{i \in \mathcal{I}} J_i(x_i, u_i) \\
+\text{s.t.} \quad 
+& b_{i,k}(u_{i,k}) \leq 0 && \text{(Actuation limits)} \label{eq:actuation_constraint} \\
+& h_{i,k}(x_{i,k}) \leq 0 && \text{(Obstacle avoidance)} \label{eq:state_constraint} \\
+& \begin{aligned}
+   g_{ij}(x_{i,k}, x_{j,k}) \leq 0 \\
+   \forall j \in \mathcal{N} \backslash \{i\}
+  \end{aligned}
+&& \text{(Inter-agent constraints)} \label{eq:coupling_constraint}
+\end{align}
+\end{subequations}
+
+Each agent's cost function is given by:
+\begin{equation}
+J_i(x_i,u_i) = \sum_{k = 0}^{K-1} \ell_i(x_{i,k}, u_{i,k}) + \phi_i(x_{i,K})
+\end{equation}
+where $\ell_i$ and $\phi_i$ denote the running cost and terminal cost of each agent respectively.
+
+A commonly used approach is to solve \eqref{eq:initial_multi_agent_problem} in parallel by treating neighbor states in constraint \eqref{eq:coupling_constraint} as fixed predictions \cite{luis2020online}. While effective in sparse scenarios, this method suffers from deadlocks and infeasibility in dense settings due to lack of coordination. Moreover, solution quality can significantly vary across agents, and there is no mechanism for mutual compromise. This approach is also sensitive to communication delays since it relies on one-shot trajectory generation. 
+
+\subsection{Distributed Consensus ADMM}
+
+A more coordinated strategy is to reformulate the problem using consensus ADMM. Each agent maintains local copies of its own and neighbors' trajectories. For agent $i$, the local copies at time $k$ are denoted:
+\begin{equation}
+    \tilde{x}_{i,k} := [x_{j,k}^{i}]_{j \in \mathcal{N}_i}, \qquad
+\tilde{u}_{i,k} := [u_{j,k}^{i}]_{j \in \mathcal{N}_i}
+\end{equation}
+
+where $x_{j,k}^{i}$ and $u_{j,k}^{i}$ represent the state and control variables of agent $j$ from the point of view of agent $i$. Global consensus variables $z_{j,k}$ and $w_{j,k}$ represent shared state and control variables for each agent $j$ at time $k$. Each agent $i$ also constructs:
+\begin{equation}
+    \tilde{z}_{i,k} := [z_{j,k}]_{j \in \mathcal{N}_i}, \qquad
+\tilde{w}_{i,k} := [w_{j,k}]_{j \in \mathcal{N}_i}
+\end{equation}
+
+The consensus-based reformulation of \eqref{eq:initial_multi_agent_problem} is:
+\begin{subequations}\label{eq:consensus_multi_agent_problem}
+\begin{align}
+\min_{\{x_i, u_i\}_{i \in \mathcal{I}}} \quad & \sum_{i \in \mathcal{I}} J_i(x_i, u_i) \\
+\text{s.t.} \quad 
+& \eqref{eq:actuation_constraint},~\eqref{eq:state_constraint},~g_i(\tilde{x}_{i,k}) \leq 0, \quad \forall i, k \in \mathcal{K} \\
+& \tilde{x}_{i,k} = \tilde{z}_{i,k}, \quad \forall i, k \in \mathcal{K} \\
+& \tilde{u}_{i,k} = \tilde{w}_{i,k}, \quad \forall i, k \in \mathcal{K}
+\end{align}
+\end{subequations}
+
+At each ADMM \cite{boyd2011distributed} iteration, the following steps are performed:
+
+\begin{enumerate}
+    \item \textbf{Local update:} Each agent $i$ solves:
+    \begin{subequations}\label{eq:local_augmented_lagrangian}
+    \begin{align}
+    \argmin_{\tilde{x}_i, \tilde{u}_i} \quad 
+    & J_i(x_i, u_i) 
+    + \frac{\rho}{2} \sum_{k \in \mathcal{K}} 
+    \left\| \tilde{x}_{i,k} - \tilde{z}_{i,k} 
+    + \frac{y_{i,k}}{\rho} \right\|^2 \nonumber \\
+    & + \frac{\mu}{2} \sum_{k \in \mathcal{K}} 
+    \left\| \tilde{u}_{i,k} - \tilde{w}_{i,k} 
+    + \frac{\lambda_{i,k}}{\mu} \right\|^2 \\
+    \text{s.t.} \quad 
+    & \eqref{eq:actuation_constraint},~\eqref{eq:state_constraint},~g_i(\tilde{x}_{i,k}) \leq 0
+    \end{align}
+    \end{subequations}
+    where $y_{i,k}$ and $\lambda_{i,k}$ are the dual variables and $g_i(\tilde{x}_{i,k})$ denotes the collision avoidance constraint on the augmented state of agent $i$, which includes its neighbors. 
+
+   \item \textbf{Global update:} For each agent $j$ and time step $k$, the global consensus variables are computed by averaging the local copies of the state and control variables maintained by neighboring agents:
+    \begin{equation}
+    z_{j,k} \leftarrow \frac{1}{|\mathcal{N}_j|} \sum_{i \in \mathcal{N}_j} x_{j,k}^{i}, \quad
+    w_{j,k} \leftarrow \frac{1}{|\mathcal{N}_j|} \sum_{i \in \mathcal{N}_j} u_{j,k}^{i}
+    \end{equation}
+    Here, $x_{j,k}^{i}$ and $u_{j,k}^{i}$ denote agent $i$'s local estimates of agent $j$’s state and control at time $k$.
+    
+    \item \textbf{Dual update:}
+    \begin{align}
+    y_{j,k}^{i,(t+1)} \leftarrow y_{j,k}^{i, (t)} + \rho \left( x_{j,k}^{i,(t+1)} - z_{j,k}^{(t+1)} \right) \\
+    \lambda_{j,k}^{i,(t+1)} \leftarrow \lambda_{j,k}^{i (t)} + \mu\left( u_{j,k}^{i,(t+1)} - w_{j,k}^{(t+1)} \right)
+    \end{align}
+\end{enumerate}
+
+The dual variables measure the consensus constraint violation levels, which regulates the subsequent local updates based on the magnitude of the penalty variables. Convergence is then monitored via the primal residual:
+\begin{equation}
+r_{i,k}^{(t)} := (\tilde{x}_{i,k}^{(t)} - \tilde{z}_{i,k}^{(t)}) + (\tilde{u}_{i,k}^{(t)} - \tilde{w}_{i,k}^{(t)}) \quad \forall i, k
+\end{equation}
+which is checked for convergence via $\|r^{(t)}\|_2 \leq \epsilon_{\text{pri}}$.
+
+\paragraph*{Imperfect Communication.}  
+In practical distributed systems, communication delays arise due to network latency, message loss, or asynchronous execution. In our ADMM-based coordination scheme, each iteration involves two communication rounds: (1) \textit{local-to-global}, where each agent transmits its updated local variables to neighbors for the global consensus update, and (2) \textit{global-to-local}, where the updated global variables are sent back to agents for the next dual update.  
+
+Let $d_{ij}^{\text{LG},(t)}$ denote the delay in agent $j$'s local variable being received by agent $i$ during the local-to-global round at iteration $t$, and $d_{ij}^{\text{GL},(t)}$ denote the delay in agent $j$'s global variable being received by agent $i$ during the global-to-local round. To consider the most general case, these delays are assumed to be independent and sampled from a uniform distribution based on delay probabilities, and are bounded by a maximum value $d_{\max} < K$, where $K$ is the planning horizon:
+\begin{equation}
+   d_{ij}^{\text{LG},(t)}, ~ d_{ij}^{\text{GL},(t)} \in \mathbb{Z}_{\geq 0}, \quad \max(d_{ij}^{\text{LG},(t)}, d_{ij}^{\text{GL},(t)}) \leq d_{\max} < K 
+\end{equation}
+
+At each iteration $t$, the consensus vector available to agent $i$ is constructed using the most recently received (possibly stale) global variables:
+\begin{equation}
+  \tilde{z}_{i,k}^{(t)} := \left[ z_{j,k}^{(t - d_{ij}^{\text{GL},(t)})} \right]_{j \in \mathcal{N}_i}, \quad
+\tilde{w}_{i,k}^{(t)} := \left[ w_{j,k}^{(t - d_{ij}^{\text{GL},(t)})} \right]_{j \in \mathcal{N}_i}  
+\end{equation}
+
+Likewise, the global consensus update performed by agent $j$ uses the (possibly delayed) local variables received from neighbors:
+\begin{equation}
+    z_{j,k}^{(t+1)} \leftarrow \frac{1}{|\mathcal{N}_j|} \sum_{i \in \mathcal{N}_j} x_{j,k}^{i, (t - d_{ij}^{\text{LG},(t)})}, 
+\end{equation}
+
+\begin{equation}
+    w_{j,k}^{(t+1)} \leftarrow \frac{1}{|\mathcal{N}_j|} \sum_{i \in \mathcal{N}_j} u_{j,k}^{i, (t - d_{ij}^{\text{LG},(t)})}
+\end{equation}
+
+
+These delays propagate through both update stages and can cause agents to operate on inconsistent information across iterations. This desynchronization may lead to degraded convergence performance, drift in consensus values, and reduced solution quality as shown in Fig. \ref{fig:experiment_1_delay_trend}. The assumption $d_{\max} < K$ ensures that even with delay, agents are operating on predictions within the planning horizon, maintaining the viability of coordination under imperfect communication.
+
+
+\begin{table}[t]
+\centering
+\caption{Notation Summary}
+\label{tab:notation_summary}
+\renewcommand{\arraystretch}{1.5} % <- increase row height
+\scriptsize
+\begin{tabular}{|c|p{6cm}|}
+\hline
+\textbf{Symbol} & \textbf{Description} \\
+\hline
+$N$ & Number of agents \\
+\hline
+$K$ & Time horizon \\
+\hline
+$\mathcal{N}_i$ & Neighbors of agent $i$ \\
+\hline
+$x_{i,k}$, $u_{i,k}$  & State and control of agent $i$ at time $k$ \\
+\hline
+$x_{j,k}^{i}$, $u_{j,k}^{i}$ & Agent $i$'s local copy of $j$'s state and control at $k$ \\
+\hline
+$\tilde{x}_{i,k}$, $\tilde{u}_{i,k}$ & Augmented state and control at $k$: $[x_{j,k}^{i}]_{j \in \mathcal{N}_i \cup \{i\}}$ \\
+\hline
+$z_{j,k}$, $w_{j,k}$ & Global consensus state and control for agent $j$ at $k$ \\
+\hline
+$\tilde{z}_{i,k}$, $\tilde{w}_{i,k}$ & Vectors $[z_{j,k}]_{j \in \mathcal{N}_i \cup \{i\}}$ and $[w_{j,k}]_{j \in \mathcal{N}_i \cup \{i\}}$ \\
+\hline
+$J_i(x_i, u_i)$ & Local cost for agent $i$ \\
+\hline
+$g_i(\tilde{x}_{i,k})$ & Constraints on augmented state at $k$ \\
+\hline
+$y_{i,k}$, $\lambda_{i,k}$ & Dual variables for $\tilde{x}_{i,k} = \tilde{z}_{i,k}$ and $\tilde{u}_{i,k} = \tilde{w}_{i,k}$ \\
+\hline
+$\rho$, $\mu$ & Penalty parameters \\
+\hline
+$r_{i,k}^{(t)}$ & Primal residual at ADMM iter.\ $t$ \\
+\hline
+$\epsilon_{\text{pri}}$ & Convergence threshold for residual \\
+\hline
+$d_{ij}^{LG,(t)}$, $d_{ij}^{GL,(t)}$ & Delay from agent $j$ to $i$ (and vice versa) at iter.\ $t$ \\
+\hline
+$d_{\max}$ & Maximum communication delay \\
+\hline
+\end{tabular}
+\end{table}
+
+
+\section{Delay-Aware Distributed ADMM (DA-ADMM)}
+To enhance robustness under communication delays, we propose a \textit{Delay-Aware} ADMM variant, where each agent dynamically adjusts its penalty parameters based on the freshness of received data. Specifically, the penalties $\rho_{j,k}^{i}$ and $\mu_{j,k}^{i}$, for how agent $i$'s optimization considers agent $j$'s information at time $t$, are scaled inversely with the number of delay steps since the last received update:
+\begin{align}
+\rho_{i,j}^{(t)} = \frac{\rho_{base}}{1 + d_{ij}^{\text{LG},(t)}}, \quad
+\mu_{i,j}^{(t)} = \frac{\mu_{base}}{1 + d_{ij}^{\text{LG},(t)}}
+\end{align}
+
+This ensures that stale local variables contribute less to the optimization, while more recent data is prioritized.
+
+\paragraph{Local Problem.} Each agent $i$ solves the following delay-weighted local subproblem at iteration $t$:
+\begin{align}
+\min_{\tilde{x}_i, \tilde{u}_i} \quad 
+& J_i(x_i, u_i) 
++
+\sum_{k \in \mathcal{K}} 
+\frac{\rho_{j,k}^{i}}{2} \left\| \tilde{x}_{j,k}^{i} - \tilde{z}_{j,k}^{(t - d_{ij}^{\text{GL},(t)})} + \frac {y_{i,k}}{\rho_{j,k}^{i}} \right\|^2 \nonumber \\
+& \qquad +
+\frac{\mu_{j,k}^{i}}{2} \left\| \tilde{u}_{j,k}^{i} - \tilde{w}_{j,k}^{(t - d_{ij}^{\text{GL},(t)})} + \frac{\lambda_{i,k}}{{\mu_{j,k}^{i}}}  \right\|^2  \\
+\text{s.t.} \quad 
+& \text{dynamics, state, input, and inter-agent constraints.} \nonumber
+\end{align}
+
+This formulation adjusts the trust placed on each consensus variable according to its freshness. Stale variables result in smaller penalty weights, thus relaxing the consensus enforcement.
+
+We derive the new update rule for the global consensus variable $z$ under time-varying penalty parameters; an identical derivation applies to the control variable $w$. As in the standard ADMM formulation, the global update is obtained by minimizing the augmented Lagrangian with respect to $z$ as defined below: 
+\begin{align}
+    \mathcal{L}(x, z, y) = \sum_{i = 1}^N f_i(x_i) +\sum_{j \in \mathcal{N}_i}  y_j^i{}^\top (x_j^i - z_j) + \sum_{j \in \mathcal{N}_i} \frac{\rho_j^i}{2} \| x_j^i - z_j \|_2^2
+\end{align}
+
+The above minimization can be decoupled for a specific $z_\ell$, where $\ell = 1,\dots,N$ and further simplify to the following: \\
+
+\begin{align}
+z_\ell = \argmin \sum_{i = 1}^N \sum_{j \in \mathcal{N}_i : j = \ell} - y_j^i{}^\top z_j + \frac{\rho_j^i}{2} z_j^\top z_j - \rho_j^i x_j^i{}^\top z_j
+\end{align}
+
+If we define the set $\mathcal{P}_i = {j : i \in \mathcal{N}_j}$ (the agents $j$ for which agent $i$ belongs to their neighborhoods), the above minimization reduces to: 
+%
+\begin{equation}
+z_\ell = \argmin \sum_{i \in \mathcal{P}_\ell} - y_\ell^i{}^\top z_\ell + \frac{\rho_\ell^i}{2} z_\ell^\top z_\ell - \rho_\ell^i x_\ell^i{}^\top z_\ell
+\end{equation}
+
+We can obtain the minimum of the above unconstrained convex optimization expression by setting the gradient to zero, which yields the following: 
+
+\begin{equation}
+z_\ell^{(k+1)} = \frac{\sum_{i \in \mathcal{P}_\ell} y_\ell^i{}^{(k)} + \rho_\ell^i x_\ell^i{}^{(k+1)}}{\sum_{i \in \mathcal{P}_\ell} \rho_\ell^i}
+\end{equation}
+The dual variable $y_\ell^i{}^{(k)}$ can be further simplified based on the defined dual update as the following:
+\begin{align}
+\sum_{i \in \mathcal{P}_\ell} y_\ell^i{}^{(k+1)} 
+&= \sum_{i \in \mathcal{P}_\ell} \left( y_\ell^i{}^{(k)} + \rho_\ell^i x_\ell^i{}^{(k+1)} \right) - \sum_{i \in \mathcal{P}_\ell} \rho_\ell^i z_\ell^{(k+1)} \nonumber 
+\\
+&= \sum_{i \in \mathcal{P}_\ell} y_\ell^i{}^{(k)} + \rho_\ell^i x_\ell^i{}^{(k+1)} \nonumber 
+\\ 
+& \quad \quad \quad - 
+\rho_\ell^i \frac{\sum_{m \in \mathcal{P}_\ell} \left( y_\ell^m{}^{(k)} + \rho_\ell^m x_\ell^m{}^{(k+1)} \right)}{\sum_{m \in \mathcal{P}_\ell} \rho_\ell^m} \nonumber \\
+&= \sum_{i \in \mathcal{P}_\ell} y_\ell^i{}^{(k)} + \sum_{i \in \mathcal{P}_\ell} \rho_\ell^i x_\ell^i{}^{(k+1)} \nonumber 
+\\
+&\quad - \sum_{i \in \mathcal{P}_\ell} \rho_\ell^i \cdot \frac{\sum_{m \in \mathcal{P}_\ell} \left( y_\ell^m{}^{(k)} + \rho_\ell^m x_\ell^m{}^{(k+1)} \right)}{\sum_{m \in \mathcal{P}_\ell} \rho_\ell^m} = 0
+\end{align}
+
+
+As a result, the new delayed-aware global updates are simplified to the following weighted averaging rules for both the state and control variables:
+\begin{equation}
+z_\ell^{(k+1)} = \frac{\sum_{i \in \mathcal{P}_\ell} \rho_\ell^i x_\ell^i{}^{(k+1)}}{\sum_{i \in \mathcal{P}_\ell} \rho_\ell^i}, 
+w_\ell^{(k+1)} = \frac{\sum_{i \in \mathcal{P}_\ell} \mu_\ell^i u_\ell^i{}^{(k+1)}}{\sum_{i \in \mathcal{P}_\ell} \mu_\ell^i}
+\end{equation}
+
+\paragraph{Dual Update.} Dual variables are updated using the adaptive penalties:
+\begin{align}
+y_{j,k}^{i,(t+1)} &= y_{j,k}^{i, (t)} + \rho_{j,k}^{i} \left( x_{j,k}^{i,(t+1)} - z_{j,k}^{(t+1)} \right) \\
+\lambda_{j,k}^{i,(t+1)} &= \lambda_{j,k}^{i (t)} + \mu_{j,k}^{i} \left( u_{j,k}^{i,(t+1)} - w_{j,k}^{(t+1)} \right)
+\end{align}
+
+This adaptive penalty serves as \textit{delay-aware regularization}: the optimizer upweights recent messages and softly downweights delayed data, often misaligned due to staleness, thereby limiting its influence on updates and improving convergence stability under unreliable communication.
+
+In contrast to prior asynchronous ADMM variants that rely on inflated safety constraints \cite{ferranti2022distributed}, partial neighborhood information \cite{guo2017impact}, delay-agnostic heuristics such as residual balancing \cite{wohlberg2017admm}, or parameter adaptation schemes based on local sharpness of the objective \cite{xu2017admm}, our method dynamically adjusts local subproblem penalty parameters and defines a new global consensus update based on real-time delay statistics. This enables agents to down-weight outdated information in a principled and distributed manner, without requiring offline retraining or predefined delay bounds.
+
+\section{Simulation Experiments}
+\subsection{Baselines}
+
+To evaluate the effectiveness of our proposed delay-aware parameter adaptation strategy, we conduct extensive simulation evaluations across multiple systems and environments comparing it against several established baselines (see Table~\ref{tab:baseline_comparison}) in challenging multi-robot coordination scenarios. The baselines include:
+
+\begin{enumerate}
+    \item \textbf{Lower-Bound (LB) ADMM:} Penalty parameters are initialized according to a delay-aware adaptation rule, where each penalty is set as $\rho = \rho_{\text{base}} / (1 + d_{\text{max}})$, with $d_{\text{max}}$ denoting the maximum number of consecutive delay steps. These parameters remain fixed throughout the trial, offering some robustness to worst-case delays but lacking online adaptability.
+
+    \item \textbf{Residual Balancing (RB) ADMM:} An adaptive scheme in which penalty parameters are updated dynamically based on the ratio between primal and dual residuals, as proposed in \cite{wohlberg2017admm}. However, this approach does not incorporate any delay statistics.
+
+    \item \textbf{Fixed Parameter (FP) ADMM:} A constant set of penalty parameters is used across all iterations, independent of delay-related information \cite{saravanos2024distributed}.
+
+    \item \textbf{Fixed-Constraint (FC) Optimization:} Each agent plans its trajectory independently by treating the predicted trajectories of its neighbors as fixed constraints, with no iterative consensus mechanism \cite{luis2020online}. Constraints are added selectively based on predicted interactions to reduce conservatism.
+\end{enumerate}
+
+ 
+\begin{table}[h]
+\centering
+\caption{Baseline Comparison}
+\label{tab:baseline_comparison}
+\renewcommand{\arraystretch}{1.1}
+\setlength{\tabcolsep}{4pt}  % tighter column spacing
+\small                      % reduce font size slightly to help fit
+\begin{tabular}{l|c|c|c|c}
+\textbf{Method} & \textbf{Coord.} & \textbf{Delay} & \textbf{Adaptive} & \textbf{Comm.} \\
+\hline
+DA-ADMM (Ours)            & \cmark & \cmark & \cmark & Med \\
+\hline
+LB-ADMM (Ours)         & \cmark & \cmark & \xmark & Med \\
+\hline
+RB-ADMM \cite{wohlberg2017admm}   & \cmark & \xmark & \cmark & Med \\
+\hline
+FP-ADMM \cite{saravanos2024distributed}  & \cmark & \xmark & \xmark & Med \\
+\hline
+FC-Optimization \cite{luis2020online}            & \xmark & \xmark & \xmark & Low \\
+\end{tabular}
+\end{table}
+
+ \begin{figure*}[t]
+    \centering
+    \includegraphics[width=\linewidth]{Exp_1_trajopt.png}
+    \caption{Comparison between different baselines for the 2D \textbf{Double Integrator Multi-Agent Trajectory Optimization Experiment}. Note that the proposed asynchronous DA-ADMM with delayed communication (b) converges to a similar solution compared to the synchronous ADMM baseline with perfect communication (a). Other fixed parameter ADMM baselines fail to converge under delayed communication (c and d).}
+    \label{fig:experiment_1_trajopt}
+\end{figure*}
+
+\subsection{Experimental Setup}
+All baselines are implemented in Python and executed on a MacBook Pro equipped with an M4 Pro CPU and 48~GB of memory. The optimization problems are formulated using \texttt{CVXPY}~\cite{diamond2016cvxpy} and solved with the \texttt{OSQP} solver~\cite{stellato2020osqp}, with warm-starting enabled to improve convergence. The solver's internal iterations is capped at 100{,}000, $dt$ is set to 0.075 and the prediction horizon $K = 40$. A trial is declared infeasible if no solution is found within the specified tolerance before reaching this limit. After optimization, each trajectory is verified for collisions to ensure feasibility and safety. When an agent is delayed, it's latest communicated solution will be used by other agents in the neighborhood until it becomes available again. Finally, agents are not allowed to have more than $d_{max}$ communication delay steps.
+
+ \subsection{2D Double Integrator Circle Formation (Traj-Opt)}
+
+This example evaluates the impact of varying delay patterns on coordination performance across different baselines in a controlled trajectory optimization setting. The scenario involves robots modeled as linear double integrators arranged in a circular formation, where each robot’s goal state corresponds to the initial state of the robot directly opposite it. The setup requires tight coordination to satisfy challenging collision avoidance constraints in a single-shot optimization. Delays are sampled from a uniform distribution with varying probabilities and maximum delay steps, ensuring the delay remains bounded. We perform 20 trials with base penalty parameters set to $\rho_x = 0.1$ and $\rho_u = 0.001$ respectively. The optimization is performed using ADMM over 30 outer iterations, with each iteration containing 5 inner SQP steps to linearize the collision avoidance constraints. A trial is deemed successful if all robots reach their respective goals collision-free and within a tolerance of 0.1.
+
+Due to the stringent coordination demands of this scenario, the fixed-constraint distributed optimization baseline consistently fails to make progress and results in deadlock across all tested delay conditions. As a result, it is excluded from the comparisons in this experiment.
+
+\textit{Qualitative Results: }Figure~\ref{fig:experiment_1_trajopt} illustrates representative trajectories for different methods. Under a 40\% communication delay probability, DA-ADMM (Fig.~\ref{fig:experiment_1_trajopt}b) successfully converges to a solution that closely matches that of FP-ADMM under perfect communication (Fig.~\ref{fig:experiment_1_trajopt}a). In contrast, both FP-ADMM and LB-ADMM fail to converge under the same delay conditions and iteration budget. This means that DA-ADMM is capable of approximately recovering the ideal solution despite significant disruption in communications. 
+
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=\linewidth]{Figure_1.png}
+    \caption{Effect of different delay patterns on distributed optimization baselines. Top and bottom rows correspond to maximum consecutive delay steps of 1 and 2. Each group of box plots represents the comparison between different ADMM variations for a given communication delay probability. The columns correspond to success rate (higher is better), total solution cost (lower is better), final consensus residual (lower is better), and final dual residual (lower is better). The asterisks ($*$) represent statistical significance between the adaptive approach and other baselines with a $p < 0.05$. Note that the DA-ADMM (red) approach provides higher success rate and significantly better solution quality compared to other baselines across a wide range of delay patterns. This improvement is largely due to significantly lower final primal and dual residuals.}
+    \label{fig:experiment_1_delay_trend}
+\end{figure*}
+\textit{Quantitative Results:} 
+Fig.~\ref{fig:experiment_1_delay_trend}(a) shows that as delay probability and maximum delay steps increase, solution quality deteriorates. This degradation occurs because agents must reach consensus using stale information, which disrupts the global update and cascades into suboptimal local updates that depend on outdated neighborhood solutions. Among the methods, DA-ADMM maintains consistently higher success rates across all delay levels, followed by LB-ADMM. In contrast, FP-ADMM and RB-ADMM experience sharp declines in success rate as delay increases, regardless of the delay bound. These failures stem from growing inconsistencies between local and global variables, as reflected in the elevated primal and dual residuals in Figs.~\ref{fig:experiment_1_trajopt}(c) and (d).
+
+Interestingly, although RB-ADMM achieves the second lowest residuals among all methods, its solution quality is significantly worse. This is because its penalty adaptation is driven solely by the ratio of primal to dual residuals, without considering the quality or freshness of incoming information. While this approach can prevent divergence from poorly chosen penalty parameters, it remains blind to the disruptions caused by delayed communication. In contrast, DA-ADMM explicitly incorporates delay-aware penalty adaptation and a weighted averaging update rule, enabling it to compensate for stale updates while preserving consensus with timely agents.
+
+\textit{Value of Communication:} A key insight from this experiment is that the value of inter-agent communication lies not just in its frequency or recency, but in its contextual and temporal relevance to the optimization process. With a properly designed adaptation scheme, as in DA-ADMM, high-quality solutions can still be achieved even when most iterations rely on stale information. Specifically, the method maintains a 100\% success rate under 60\% delay probability, suggesting that timely or contextually critical information may play a greater role than uniform, frequent updates in achieving successful coordination.
+
+In contrast, RB-ADMM and FP-ADMM fail more frequently due to infeasible solves or violations of collision avoidance constraints. These failures are typically driven by large consensus errors, where delayed agents return updates that are significantly misaligned with the evolving consensus among their neighbors. When such disruptions are not properly accounted for, they can destabilize local updates, hinder convergence, and ultimately degrade overall solution quality.
+
+As shown in Fig.~\ref{fig:experiment_1_delay_trend}(b), DA-ADMM also achieves superior solution quality across successful trials in most delay conditions. While LB-ADMM performs more robustly than FP-ADMM, it lacks the intra-iteration penalty adaptation that allows DA-ADMM to handle variable and unpredictable delays more effectively. This capability enables consistently better performance across a wide range of delay conditions.
+
+Overall, this experiment demonstrates that DA-ADMM offers a significant robustness advantage in tightly coupled coordination tasks under delayed communication. By dynamically adapting to delay patterns and weighting stale information appropriately, it maintains both feasibility and solution quality where other methods fail. These results highlight the importance of delay-aware adaptation mechanisms, setting the stage for evaluation in dynamic, online MPC settings.
+
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=\linewidth]{mpc_circle_exp_2.png}
+    \caption{Visual demonstration of the circle formation MPC experiment in PyBullet. Note that DA-ADMM (a) achieves significantly better solution quality relative to FP-ADMM (b) and FC-Opt (c). FP-ADMM suffers from solution drift under delay as shown in the green, blue, and purple agent trajectories in (b).}
+    \label{fig:mpc_circle}
+\end{figure*}
+
+ \subsection{2D Dubins Car Circle Formation (MPC)}
+In this experiment, we evaluate the proposed DA-ADMM algorithm in a receding-horizon framework by deploying it as a Model Predictive Controller (MPC) that incorporates online feedback from observations. At each planning cycle, the MPC runs 10 ADMM iterations, each comprising a single SQP inner iteration. Inter-agent communication is subject to delays, consistent with the previous experiment.
+
+To reduce the computational burden, each robot’s neighborhood is dynamically defined at every planning step as the set of its $N_{\text{neigh}} = 3$ nearest neighbors. This allows each agent to reason about the most relevant interactions while keeping the local problem size tractable. The robots are modeled using Dubins car dynamics, which are linearized around the solution obtained at the previous time step. In rare instances where the optimization becomes infeasible, the robot executes a fallback safety maneuver involving maximum linear deceleration and zero angular velocity. This emergency policy remains in effect until a feasible plan is recovered, after which normal control resumes.
+
+As summarized in Table~\ref{tab:mpc_circle_results}, our DA-ADMM consistently outperforms other baselines in terms of success rate and task completion time. While incorporating online observation feedback improves the performance of FP-ADMM and FC-Opt, it does not eliminate the performance gap relative to the proposed approach. As shown in Fig. \ref{fig:mpc_circle}, the solution of FP-ADMM drifts during the execution relative to the proposed approach. This is primarily due to poor ADMM residual convergence at each MPC planning step, which leads to compounding deviations, or failures due to collision constraint violation. Another notable observation is the poorer performance of RB-ADMM under longer delays compared with other ADMM baselines. Because RB-ADMM overreacts to residuals contaminated by stale information, it induces oscillatory updates in $\rho$ and yields worse convergence than a well-chosen fixed-$\rho$ scheme \cite{xu2017adaptive}.
+
+\textit{Robustness Under Delays in ADMM vs FC-Opt: }Another important insight from this experiment is the comparison between the commonly used Fixed Constraint Optimization (FC-Opt) approach and the ADMM-based baselines. Notably, the success rate of FC-Opt deteriorates significantly as communication delay increases, whereas the ADMM variants maintain stronger performance. In the FC-Opt approach, each agent computes its solution in a single shot based on the current information available from its neighbors. When delays occur, outdated neighbor information is used until the next planning cycle, leading to degraded coordination over time. In contrast, ADMM iteratively refines consensus among agents, allowing delayed information to still influence subsequent iterations. This iterative structure provides greater robustness to delays, but comes at the cost of increased communication overhead.
+
+% put these in your preamble (you already load xcolor)
+% in preamble
+\newcommand{\pgain}[1]{\textcolor{green!60!black}{(#1)}}
+\newcommand{\ploss}[1]{\textcolor{red!70!black}{(#1)}}
+\newcommand{\pzero}{\textcolor{gray!60!black}{(0\%)}}
+
+
+\begin{table*}[t]
+\centering
+\caption{Performance under different delay probabilities in the \textbf{Dubins Car Circle Formation Experiment}.
+Quantities in parentheses denote \% change vs the same method with perfect communication ($P_{\text{delay}}{=}0$). *Note that in the zero delay case, all ADMM baselines except for RB-ADMM become identical.}
+\label{tab:mpc_circle_results}
+\setlength{\tabcolsep}{3pt}
+\scriptsize
+\begin{tabular}{@{}lcccc|cccc|cccc@{}}
+\toprule
+& \multicolumn{4}{c|}{$P_{\text{delay}}{=}0^*$} & \multicolumn{4}{c|}{$P_{\text{delay}}{=}0.2$} & \multicolumn{4}{c}{$P_{\text{delay}}{=}0.6$} \\
+\cmidrule(lr){2-5}\cmidrule(lr){6-9}\cmidrule(lr){10-13}
+\textbf{Algorithm}
+& \shortstack{Success\\rate}
+& \shortstack{Makespan\\(sec)}
+& \shortstack{Primal\\residual}
+& \shortstack{Dual\\residual}
+& \shortstack{Success\\rate}
+& \shortstack{Makespan\\(sec)}
+& \shortstack{Primal\\residual}
+& \shortstack{Dual\\residual}
+& \shortstack{Success\\rate}
+& \shortstack{Makespan\\(sec)}
+& \shortstack{Primal\\residual}
+& \shortstack{Dual\\residual} \\
+\midrule
+\textbf{DA-ADMM}
+& \textbf{10/10}
+& \textbf{6.32}
+& \textbf{$1.89\!\times\!10^{-14}$}
+& \textbf{1.33}
+& \textbf{10/10}
+& \textbf{6.14} \pgain{$-2.89\%$}
+& \textbf{6.23}
+& 1.68
+& \textbf{9/10}
+& \textbf{6.46} \ploss{$+2.19\%$}
+& \textbf{24.00}
+& 2.34 \\
+
+\textbf{LB-ADMM}
+& \textbf{10/10}
+& \textbf{6.32}
+& $1.25\!\times\!10^{-14}$
+& \textbf{1.33}
+& \textbf{10/10}
+& 6.58 \ploss{$+4.03\%$}
+& 8.67
+& \textbf{0.55}
+& 6/10
+& 6.49 \ploss{$+2.65\%$}
+& 33.80
+& \textbf{0.81} \\
+
+\textbf{FP-ADMM}
+& \textbf{10/10}
+& \textbf{6.32}
+& $1.89\!\times\!10^{-14}$
+& \textbf{1.33}
+& 9/10
+& 6.86 \ploss{$+11.07\%$}
+& 10.20
+& 1.71
+& 4/10
+& 6.97 \ploss{$+9.78\%$}
+& 45.40
+& 3.04 \\
+
+\textbf{RB-ADMM}
+& \textbf{10/10}
+& 7.28
+& $1.25\!\times\!10^{-14}$
+& 1.34
+& 8/10
+& 6.50 \pgain{$-11.03\%$}
+& 7.58
+& 2.64
+& 0/10
+& -
+& -
+& - \\
+
+\textbf{FC-Opt}
+& \textbf{10/10}
+& 8.76
+& -
+& -
+& 6/10
+& 10.38 \ploss{$+16.9\%$}
+& -
+& -
+& 0/10
+& -
+& -
+& - \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\subsection{2D Dubins Car Warehouse Operation (MPC)}
+\begin{figure}
+    \centering
+    \includegraphics[width=\linewidth]{warehouse_scenario.png}
+    \caption{DA-ADMM results for the warehouse environment with continuous task assignment.}
+    \label{fig:warehouse}
+\end{figure}
+This experiment simulates a more realistic warehouse environment, where robots are tasked with continuously transporting boxes between two opposing conveyor belts (see Fig.~\ref{fig:warehouse}). A key distinguishing feature of this setup is the use of asynchronous and continuous task assignment, in contrast to many prior works that focus solely on single point-to-point navigation. This dynamic tasking mechanism better reflects real-world deployment scenarios, where the number of active robot-robot interactions can vary over time. As soon as a robot reaches its assigned goal state, it is immediately given a new target location at the opposite conveyor, creating an ongoing cycle of interactions and planning updates. 
+
+ As summarized in Table \ref{tab:mpc_warehouse_results}, DA-ADMM retains its advantage relative to other baselines under this realistic setting, where interactions vary over time.  
+
+\begin{table}
+\centering
+\caption[Performance under different delays in the Dubins Car Warehouse Experiment]{Performance under different delay probabilities in the \textbf{Dubins Car Warehouse Experiment}.
+Quantities in parentheses denote \% change vs the same method with perfect communication ($P_{\text{delay}}{=}0$).}
+\label{tab:mpc_warehouse_results}
+\setlength{\tabcolsep}{3pt}
+\scriptsize
+\begin{tabular}{@{}lcccc|cccc|cccc@{}}
+\toprule
+& \multicolumn{4}{c|}{$P_{\text{delay}}{=}0.3$} & \multicolumn{4}{c|}{$P_{\text{delay}}{=}0.6$}  \\
+\cmidrule(lr){2-5}\cmidrule(lr){6-9}\cmidrule(lr){10-13}
+\textbf{Algorithm}
+& \shortstack{Succ.\\rate}
+& \shortstack{Makespan\\(sec)}
+& \shortstack{Primal\\res.}
+& \shortstack{Dual\\res.}
+& \shortstack{Succ.\\rate}
+& \shortstack{Makespan\\(sec)}
+& \shortstack{Prim.\\res.}
+& \shortstack{Dual\\res.} \\
+\midrule
+\textbf{DA-ADMM}
+& \textbf{5/5}
+& \textbf{26.95}
+&  \textbf{1.48}
+&  \textbf{0.08}
+& \textbf{4/5}
+& \textbf{26.74}
+& \textbf{4.14}
+& \textbf{0.23}
+ \\
+\textbf{FP-ADMM}
+& \textbf{5/5}
+& 25.96
+& 9.59
+& 1.81
+& 3/5
+& 27.65
+& 25.7
+& 4.85
+ \\
+\textbf{FC-Opt}
+& -/5
+& -
+& -
+& -
+& -/5
+& -
+& -
+& -
+ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{3D Drone Model Demo (MPC)}
+\begin{table*}[t]
+\centering
+\caption{Performance under different delay probabilities in the \textbf{3D Drone Experiment}.
+Quantities in parentheses denote \% change vs the same method with perfect communication ($P_{\text{delay}}{=}0$).}
+\label{tab:mpc_drone_results}
+\setlength{\tabcolsep}{3pt}
+\scriptsize
+\begin{tabular}{@{}lccc|ccc|ccc@{}}
+\toprule
+& \multicolumn{3}{c|}{$P_{\text{delay}}{=}0^*$} & \multicolumn{3}{c|}{$P_{\text{delay}}{=}0.3$} & \multicolumn{3}{c@{}}{$P_{\text{delay}}{=}0.6$} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(lr){8-10}
+\textbf{Algorithm}
+& \shortstack{Success\\rate}
+& \shortstack{Makespan\\(sec)}
+& \shortstack{Comp. time\\(sec)}
+& \shortstack{Success\\rate}
+& \shortstack{Makespan\\(sec)}
+& \shortstack{Comp. time\\(sec)}
+& \shortstack{Success\\rate}
+& \shortstack{Makespan\\(sec)}
+& \shortstack{Comp. time\\(sec)} \\
+\midrule
+\textbf{DA-ADMM}
+& \textbf{5/5}
+& \textbf{6.68}
+& \textbf{6.04}
+& \textbf{5/5}
+& \textbf{6.68}
+& \textbf{6.50}
+& \textbf{3/5}
+& \textbf{8.03} \ploss{$+18.3\%$}
+& \textbf{6.82} \ploss{$+12.13\%$} \\
+\textbf{LB-ADMM}
+& \textbf{5/5}
+& \textbf{6.68}
+& 6.53
+& 4/5
+& \textbf{6.68}
+& 6.53
+& 2/5
+& 12.56 \ploss{$+61.2\%$}
+& 7.30 \ploss{$+13.9\%$} \\
+\textbf{FP-ADMM}
+& \textbf{5/5}
+& \textbf{6.68}
+& 6.11
+& 2/5
+& \textbf{6.68}
+& 6.53
+& 0/5
+& -
+& - \\
+\textbf{FC-Opt}
+& 0/5
+& -
+& -
+& 0/5
+& -
+& -
+& 0/5
+& -
+& - \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\begin{figure}
+    \centering
+    \includegraphics[width=\linewidth]{admm_drone_3d.png}
+    \caption[Qualitative results of the 3D drone experiment]{Qualitative results for the 3D drone experiment. DA-ADMM is the only baseline that can complete the task with similar performance to the synchronized ADMM with perfect communication. Green denotes successful task completion, and red represents failure within max allowable time.}
+    \label{fig:drone_3d}
+\end{figure}
+We evaluate our method on a challenging 3D MPC task with $N = 10$ agents, each communicating with $N_{neigh} = 3$ neighbors, and performing 10 ADMM iterations per MPC solve. Each agent uses a linear drone model with 9 states and 6 controls \cite{zhang2025gcbf+}. Under the consensus formulation, the per-agent augmented decision vectors have dimension 36 for states and 24 for controls. As shown in Fig.~\ref{fig:drone_3d}, DA-ADMM successfully completes the large-scale coordination in 8.8 seconds, about 2 seconds slower than synchronized ADMM under ideal communication. In contrast, LB-ADMM takes 13.9 seconds and FP-ADMM fails to converge within the 19.9 seconds time limit, due to compounding consensus error that accumulates across MPC receding-horizon steps under delayed communication. As summarized in Table~\ref{tab:mpc_drone_results}, DA-ADMM is the most robust to communication delays, while FC-Opt failed in all trials due to infeasibility under tight inter-robot coupling at scale. These results highlight that our delay-aware formulation scales effectively to complex 3D scenarios, extending the benefits observed in 2D navigation to settings where robots are not space-constrained.
+
+\textit{Computational Efficiency:} In our current (unoptimized) prototype, one MPC solve with 10 ADMM iterations takes \(\approx 6.5\,\mathrm{s}\) wall-clock. With straightforward engineering, parallelizing primal/dual updates across agents, using a low-overhead direct solver interface with warm starts, and running the ADMM consensus loop at a lower rate than the inner MPC controller, we expect the method to run online~\cite{saravanos2024distributed}.
+
+ \section{Conclusions}
+This work presents a systematic investigation into the impact of communication delays on distributed multi-robot motion planning and proposes a principled delay-aware adaptation scheme within the consensus ADMM framework. We show that, unlike existing methods that either ignore delay or treat it conservatively, our adaptive delay-aware approach dynamically adjusts penalty weights based on delay statistics to selectively trust information during optimization. 
+
+Our experiments across distributed trajectory optimization and MPC tasks in 2D and 3D scenarios confirm that the delay-aware strategy enables consistently higher success rates, improved convergence, and better solution quality under a wide range of communication delay patterns. The proposed method maintains feasibility and avoids deadlocks even in tightly coupled scenarios where traditional fixed constraint distributed optimization approaches fail. 
+
+We demonstrate that stale information can still be leveraged effectively when weighted appropriately, challenging the notion that frequent updates are always necessary for robust tight coordination. This insight paves the way for more resilient and communication-efficient distributed optimization in real-world multi-robot systems. Future work will explore RL frameworks for learning penalty parameters from simulation experience.  
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\newpage
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+\end{document}

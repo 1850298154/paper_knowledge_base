@@ -1,0 +1,187 @@
+\beginbass
+%
+We assume a set $\Message$ of \emph{message tags} that can be exchanged in
+communications. This set may include booleans, natural numbers, strings, and so
+forth. Hereafter, we assume that $\Message$ contains at least \emph{two}
+elements, otherwise branching protocols cannot be described and the theoretical
+development that follows becomes trivial. We use $x$, $y$, $z$ to range over the
+elements of $\Message$.
+%
+We define the set $\SessionType$ of \emph{session types} over $\Message$ using
+coinduction, to account for the possibility that session types (and the
+protocols they describe) may be infinite.
+
+\begin{definition}[Session Types]
+	\label{def:agda_st}
+  Session types $T$, $S$ are the possibly infinite trees coinductively generated
+  by the productions
+  \[
+    \begin{array}{rrcl}
+      \textbf{Polarity}       & \Pol & \in & \set{{\In}, {\Out}} \\
+      \textbf{Session type} & T, S & ::= & \TNil \mid \Pol\set{x:T_x}_{x\in\Message} \\
+    \end{array}
+  \]
+\end{definition}
+
+Hereafter, we write $\co{\Pol}$ for the opposite or dual polarity of $\Pol$, 
+that is $\co\In = \Out$ and $\co\Out =
+\In$.
+%
+Note that input and output session types specify continuations for \emph{all}
+possible values in the set $\Message$. The session type $\TNil$, which describes
+an \emph{unusable} session channel, can be used as continuation for those values
+that \emph{cannot} be received or sent. As we will see shortly, the presence of
+$\TNil$ breaks the symmetry between inputs and outputs.
+
+It is convenient to introduce some notation for presenting session types in a
+more readable and familiar form.
+%
+Given a polarity $\Pol$, a set $X \subseteq \Message$ of values and a family
+$T_{x\in X}$ of session types, we let
+\[
+  \Pol\set{x:T_x}_{x\in X} \eqdef \Pol\left(\set{x:T_x}_{x\in X} \cup \set{x:\TNil}_{x\in\Message\setminus X}\right)
+\]
+so that we can omit explicit $\TNil$ continuations. As a special case when all
+the continuations are $\TNil$, we write $\End[\Pol]$ instead of $\Pol\emptyset$.
+Both $\End[\In]$ and $\Win$ describe session channels on which no further
+communications may occur, although they differ slightly with respect to the
+session types they can be safely combined with.  Describing terminated protocols
+as degenerate cases of input/output session types reduces the amount of
+constructors needed for their Agda representation (see \Cref{ssec:agda_st_formalization_types}).
+%
+Another common case for which we introduce a convenient notation is when the
+continuations are the same, regardless of the value being exchanged: in these
+cases, we write $\Pol X.T$ instead of $\Pol\set{x:T}_{x\in X}$. For example,
+$\Out\Bool.\T$ describes a channel used for sending a boolean and then according
+to $T$ and $\In\Nat.\S$ describes a channel used for receiving a natural number
+and then according to $S$. We abbreviate $\set\x$ with $\x$ when no confusion
+may arise. So we write $\Out\vtrue.\T$ instead of $\Out\set\vtrue.\T$.
+
+Finally, we define a partial operation $+$ on session types such that
+\[
+  \Pol\set{\x:T_x}_{\x \in X} + \Pol\set{\x:T_x}_{\x \in Y}
+  \eqdef
+  \Pol\set{\x:T_x}_{\x \in X \union Y}
+\]
+when $X \cap Y = \emptyset$. For example, $\Out\vtrue.S_1 + \Out\vfalse.S_2$
+describes a channel used first for sending a boolean value and then according to
+$S_1$ or $S_2$ depending on the boolean value.
+%
+It it easy to see that $+$ is commutative and associative and that $\End[\Pol]$
+is the unit of $+$ when used for combining session types with polarity $\Pol$. Note
+that $T + S$ is undefined if the topmost polarities of $T$ and $S$ differ.
+%
+We assume that $+$ binds less tightly than the `$.$' in continuations.
+
+We do not introduce any concrete syntax for specifying infinite session types.
+Rather, we specify possibly infinite session types as solutions of equations of
+the form $S = \cdots$ where the metavariable $S$ may also occur (guarded) on the
+right-hand side of `$=$'. Guardedness guarantees that the session type $S$
+satisfying such equation does exist and is unique \citep{Courcelle83}.
+
+\begin{example}
+  \label{ex:agda_st_ex}
+  The session types $T_1$ and $S_1$ that satisfy the equations
+  \[
+    T_1 = \Out\vtrue.\Out\Nat.\T_1 + \Out\vfalse.\End[\In]
+    \qquad
+    S_1 = \Out\vtrue.\Out\NatPlus.\S_1 + \Out\vfalse.\End[\In]
+  \]
+  both describe a channel used for sending a boolean. If the boolean
+  is $\vfalse$, the communication stops immediately ($\End[\In]$). If it
+  is $\vtrue$, the channel is used for sending a natural number (a
+  strictly positive one in $S_1$) and then according to $T_1$ or
+  $S_1$ again. Notice how the structure of the protocol after the
+  output of the boolean depends on the \emph{value} of the boolean.
+
+  The session types $T_2$ and $S_2$ that satisfy the equations
+  \[
+    T_2 = \In\vtrue.\Out\Nat.\T_2 \branch \In\vfalse.\End[\In]
+    \qquad
+    S_2 = \In\vtrue.\Out\NatPlus.\S_2 \branch \In\vfalse.\End[\In]
+  \]
+  differ from $T_1$ and $S_1$ in that the channel they describe is
+  used initially for \emph{receiving} a boolean.
+  %
+  \eoe
+\end{example}
+
+\begin{figure}[t]
+	\framebox[\textwidth]{
+	\begin{mathpar}
+  	\inferrule[input]{\mathstrut}{
+    	\In\x.S + T \lred{\In\x} S
+  	}\defrule[input]{}
+  	\and
+  	\inferrule[output]{\mathstrut}{
+    	\Out\x.S + T \lred{\Out\x} S
+  	}
+  	~ S \ne \TNil \defrule[output]{}
+  \end{mathpar}
+  }
+  \caption{Labeled transition system}
+  \label{fig:agda_st_lts}
+\end{figure}
+
+We define the operational semantics of session types by means of a
+\emph{labeled transition system}. \emph{Labels}, ranged over by
+$\actionA$, $\actionB$, $\actionC$, have either the form $\In\x$
+(input of message $x$) or the form $\Out\x$ (output of message $x$).
+%
+Transitions $T \lred\action S$ are defined in \Cref{fig:agda_st_lts}
+
+There is a fundamental asymmetry between send and receive operations: the act of
+sending a message is \emph{active} -- the sender may choose the message to send
+-- while the act of receiving a message is \emph{passive} -- the receiver cannot
+cherry-pick the message being received.
+%
+We model this asymmetry with the side condition $S \ne \TNil$ in
+\refrule{output} and the lack thereof in \refrule{input}:
+%
+a process that uses a session channel according to
+$\Out\set{x:T_x}_{x\in\Message}$ refrains from sending a message $x$ if $T_x =
+\TNil$, namely if the channel becomes unusable by sending that particular
+message, whereas a process that uses a session channel according to
+$\In\set{x:T_x}_{x\in\Message}$ cannot decide which message $x$ it will receive,
+but the session channel becomes unusable if an unexpected message arrives. The
+technical reason for modeling this asymmetry is that it allows us to capture a
+realistic communication semantics. For the time being, these transition rules allow us
+to appreciate a little more the difference between $\Win$ and $\End[\In]$. While both
+describe a session endpoint on which no further communications may occur, $\Win$
+is ``more robust'' than $\End[\In]$ since it has no transitions, whereas $\End[\In]$ is
+``more fragile'' than $\Win$ since it performs transitions, all of which lead to
+$\TNil$. For this reason, we use $\Win$ to flag successful session termination, 
+whereas $\End[\In]$ only means that the protocol has ended.
+
+To describe \emph{sequences} of consecutive transitions performed by
+a session type we use another relation $\wlred\actions$ where
+$\actions$ and $\actionsB$ range over strings of labels. As usual,
+$\es$ denotes the empty string and juxtaposition denotes string
+concatenation. The relation $\wlred\actions$ is the least one such
+that $T \wlred\es T$ and if $T \lred\action S$ and
+$S \wlred\actions R$, then $T \wlred{\action\actions} R$.
+
+\begin{figure}[t]
+  \framebox[\textwidth]{
+  \begin{mathpar}
+  	\inferrule[sync]{\mathstrut}{
+    	\session\S\T \red \session{S'}{T'}
+  	}
+  	~
+  	S \lred{\co\action} S', T \lred\action T'
+  	\defrule[sync]{}
+  \end{mathpar}
+  }
+  \caption{Reduction of session}
+  \label{fig:agda_st_session_red}
+\end{figure}
+
+At last, we need to model the evolution of a session as client
+and server interact. To this aim, we represent a session as a pair
+$\session\R\T$ where $\R$ describes the behavior of the client and $T$ that of
+the server.  Sessions reduce according to the rule in \Cref{fig:agda_st_session_red}
+where $\co\action$ is the \emph{complementary action} of $\action$ defined by
+$\co{\Pol\x} = \co{\Pol}\x$.  We extend $\co{\,\cdot\,}$ to traces in the obvious way
+and we write $\wred$ for the reflexive, transitive closure of $\red$. We write
+$\session\R\T \red {}$ if $\session\R\T \red \session{R'}{T'}$ for some $R'$ and
+$T'$ and $\session\R\T \nred$ if not $\session\R\T\red$.

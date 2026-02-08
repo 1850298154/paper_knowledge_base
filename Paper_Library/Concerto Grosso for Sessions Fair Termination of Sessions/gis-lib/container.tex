@@ -1,0 +1,118 @@
+\beginalto
+%
+We conclude this section by investigating the analogies and the differences of
+generalized inference systems with respect to \emph{index containers}.
+\emph{Indexed containers} \citep{AltenkirchGHMM15} are a rather general notion, 
+meant to capture families of datatypes with some form of indexing.
+They are part of the Agda standard library. 
+We report below the definition, simplified and adapted a little for presentation purpose. 
+Notably, we use ad-hoc field names, chosen to reflect the explanation provided below.
+
+\begin{lstlisting}
+record Container {$\ell$i $\ell$o} 
+ (I : Set $\ell$i) (O : Set $\ell$o) ($\ell$c $\ell$p : Level) : Set _ where
+  constructor _ $\lhd$ _/_
+  field
+    Cons  : (o : O) $\rightarrow$ Set $\ell$c
+    Pos : $\forall$ {o} $\rightarrow$ Cons o $\rightarrow$ Set $\ell$p
+    input : $\forall$ {o} (c : Cons o) $\rightarrow$ Pos c $\rightarrow$ I
+
+$\llbracket$_$\rrbracket$: $\forall$ {$\ell$i $\ell$o $\ell$c $\ell$p $\ell$} {I : Set $\ell$i} {O : Set $\ell$o} $\rightarrow$ 
+      Container I O $\ell$c $\ell$p $\rightarrow$
+      (I $\rightarrow$ Set $\ell$) $\rightarrow$ (O $\rightarrow$ Set _)
+$\llbracket$ Cons $\lhd$ Pos / input $\rrbracket$ X o = 
+      $\Sigma$[ c $\in$ C o ] ((p : P c) $\rightarrow$ X (inp c p))
+\end{lstlisting}
+
+To explain the view of an inference system as an indexed container, 
+we can think of the latter as describing a family of datatype constructors 
+where \lstinline{I} and \lstinline{O} are  input and output sorts,  respectively. 
+Then, \lstinline{Cons} specifies, for each output sort \lstinline{o}, 
+the set of its constructors; for each constructor for \lstinline{o}, 
+\lstinline{Pos} specifies a set of positions to store inputs to the constructor; finally, 
+\lstinline{input} specifies the input sort for each position in a constructor.  
+%
+The function \lstinline{$\llbracket$_$\rrbracket$} models the ``semantics'' of an indexed container, 
+that is, given a family of inputs \lstinline{X} indexed by \lstinline{I}, it returns the family 
+of outputs indexed by \lstinline{O} which can be constructed by providing to 
+some constructor inputs from \lstinline{P} of correct sorts. 
+
+Then, inference systems can be defined as indexed containers 
+where input and output sorts coincide, and are the elements of the universe, as follows. 
+ 
+\begin{lstlisting}
+  ISCont : {$\ell$c $\ell$p : Level} $\rightarrow$ (U : Set $\ell$u) $\rightarrow$ Set _
+  ISCont {$\ell$c} {$\ell$p} U = Container U U $\ell$c $\ell$p
+\end{lstlisting}
+
+In this way, for each \lstinline{u : U}: 
+\begin{itemize}
+\item \lstinline{Cons u} is the set of (indexes for) all the rules which have consequence \lstinline{u}
+\item \lstinline{Pos c} is the set of (indexes for) the premises of the \lstinline{c}-th rule 
+%(which has consequence \lstinline{u}, since \lstinline{c : Cons u})
+\item \lstinline{input c p} is the \lstinline{p}-th premise of the \lstinline{c}-th rule
+\end{itemize}
+
+This view comes out quite naturally observing that an inference system is an element 
+of $\wp(\wp(\universe)\times\universe)$; equivalently, a function which, for each $\judg\in\universe$,
+returns the set of the sets of premises of all the rules with consequence $\judg$.  
+In a constructive setting such as Agda, the powerset construction is not available, hence we have to use functions. 
+So, for each element \lstinline{u}, we need a type to index all rules with consequence \lstinline{u}, 
+and, for each  rule, a type to index its premises, which are exactly the data of an indexed container.  
+%
+In other words, this view of inference systems as indexed containers explicitly interprets rules as constructors for proofs. 
+Moreover, definitions in \Cref{sec:gis} can be easily obtained as instances of analogous definitions 
+for indexed containers, building on the fact that the inference operator associated with an inference 
+system turns out to be the semantics \lstinline{$\llbracket$_$\rrbracket$} of the corresponding container.
+
+Whereas this encoding allows reuse of notions and code, a drawback is that information is structured in a 
+rather different way from that ``on paper''; notably, we group together rules with the same consequence, 
+rather than those obtained as instances of the same ``schema'', that is, meta-rule. 
+For this reason we developed the Agda library mimicking meta-rules.
+For instance, the inference system for $\allpos$ would be as follows: 
+
+\begin{lstlisting}
+allPosCont : ISCont (Colist $\N$ $\infty$) 
+allPosCont .Cons [] = $\top$ 
+allPosCont .Cons (x :: xs) = x > 0 
+allPosCont .Pos {[]} c = $\bot$ 
+allPosCont .Pos {x :: xs} c = Fin 1
+allPosCont .input {x :: xs} c zero = xs .force 
+\end{lstlisting}
+
+However, we can prove that the two notions are equivalent, as shown below. 
+To this end, we define a translation \lstinline{C[_]} from inference systems to indexed containers
+and a converse translation \lstinline{IS[_]}. 
+Note that in the translation \lstinline{C[_]} each meta-rule is transformed in all its instantiations; 
+more precisely, for each \lstinline{u:C}, \lstinline{Cons u} gives all the instantiations 
+of meta-rules having \lstinline{u} as consequence.
+Conversely, in the translation \lstinline{IS[_]}, each rule is transformed in a meta-rule with trivial context.
+
+\begin{lstlisting}
+C[_] : $\forall${$\ell$c $\ell$p $\ell$n} $\rightarrow$ IS {$\ell$c} {$\ell$p} {$\ell$n} U $\rightarrow$ Container U U _ $\ell$p
+C[ is ] .Cons u = $\Sigma$[ rn $\in$ is .Names ] $\Sigma$[ c $\in$ is .rules rn .Ctx ]  
+    u $\equiv$ is .rules rn .conclu c
+C[ is ] .Pos (rn , _ , refl) = is .rules rn .Pos
+C[ is ] .input (rn , c , refl) p = is .rules rn .prems c p
+
+IS[_] : $\forall${$\ell$c $\ell$p} $\rightarrow$ 
+      	Container U U $\ell$c $\ell$p $\rightarrow$ IS {zero} {$\ell$p} {l $\sqcup$ $\ell$c} U 
+IS[ C ] .Names = $\Sigma$[ u $\in$ U ] C .Cons u
+IS[ C ] .rules (u , c) = 
+  record { 
+    Ctx = $\top$ ; 
+    Pos = C .Pos c ; 
+    prems = $\lambda$ _ r $\rightarrow$ C .input c r ; 
+    conclu = $\lambda$ _ $\rightarrow$ u }
+
+isf-to-c : $\forall${$\ell$c $\ell$p $\ell$n $\ell$p} {is : IS {$\ell$c} {$\ell$p} {$\ell$n} U}
+    {P : U $\rightarrow$ Set $\ell$p} $\rightarrow$ ISF[ is ] P $\subseteq$ $\llbracket$ C[ is ] $\rrbracket$ P
+isf-to-c (rn , c , refl , pr) = (rn , c , refl) , pr
+
+c-to-isf : $\forall${l' $\ell$p $\ell$p} {C : Container U U l' $\ell$p}
+    {P : U $\rightarrow$ Set $\ell$p} $\rightarrow$ $\llbracket$ C $\rrbracket$ P $\subseteq$ ISF[ IS[ C ] ] P
+c-to-isf (c , pr) = (_ , c) , tt , refl , pr
+\end{lstlisting}
+
+
+ 

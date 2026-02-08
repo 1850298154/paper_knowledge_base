@@ -1,0 +1,219 @@
+\subsection{Datasets}
+
+We used two publicly available datasets;
+both of them contain 3D multi-coil raw \kspace data. 
+SKM-TEA \cite{desai2022skm}
+is a 3D quantitative double-echo steady-state (qDESS\cite{welsch:2009:qdess}) knee dataset.
+It was acquired by 3T GE MR750 scanners
+and 15/16-channel receiver coils.
+SKM-TEA includes 155 subjects.
+We used 132 for training, 10 for validation,
+and 13 for the test.
+Calgary brain dataset \cite{souza2018open}
+is a 3D brain T1w MP-RAGE \cite{brant-zawadzki:1992:MPRAGE} \kspace dataset.
+It includes 67 available subjects,
+acquired by an MR750 scanner
+and 12-channel head coils.
+We used 50 for training, 6 for validation, and 7 for testing.
+All receiver coil sensitivity maps were calculated by
+ESPIRiT \cite{espirit}.
+
+\input{t,quan}
+
+\subsection{Simulation experiments}
+ 
+We experimented with multiple scenarios to show the broad
+applicability of the proposed method. All the experiments used a server node equipped with an Nvidia Tesla A40 GPU for training.
+
+\begin{figure*}
+\centerline{\includegraphics[width=0.9\textwidth]{figure/fig,sos.png}}
+\caption{~Prospective results of \ref{exp:sos}, optimizing the rotation angles of the stack-of-stars (6$\times$ acceleration).
+`Best empirical' uses the design from previous study \cite{zhou:2017:GoldenratioRotatedStackofstars}.
+The upper subfigure shows two slices from prospective in-vivo experiments.
+The reconstruction algorithm was PLS.
+\textbf{Avg. PSNR} is the average PSNR of the 4 subjects
+compared to the fully sampled reference.
+The lower subfigure shows the log-scaled PSF (single-coil) of two trajectories. 
+\label{fig:sos}}
+\end{figure*}
+
+\begin{figure*}
+\centerline{\includegraphics[width=\textwidth]{figure/fig,ossi.png}}
+\caption{~Prospective results of \ref{exp:pns}. We showed three different trajectories: the unoptimized REPI, SNOPY-optimized with the PNS threshold of 80\%, and SNOPY-optimized with the PNS threshold of 70\%. The left subfigure shows one slice of reconstructed images. The reconstruction used PLS and 120 shots (volume TR = 2s). The right subfigure shows the subjective score of the PNS effect.\label{fig:ossi}}
+\end{figure*}
+
+
+
+
+
+
+\subsubsection{Optimizing 3D gradient waveform}
+\label{exp:freeform}
+We optimized the sampling trajectory with a 3D radial
+(``kooshball'') initialization
+\cite{barger:2002:TimeresolvedContrastenhancedImaging,herrmann:2016:TimeEfficient3D}.
+As described in \ref{subsec:param},
+we directly optimized the readout waveform of each shot.
+The trajectory was parameterized by B-spline kernels
+to reduce the number of degrees of freedom
+and enable multi-scale optimization.
+The initial 3D radial trajectory 
+had a 5.1 2ms readout (raster time = 4 $\mu$s)
+and 1024 spokes/shots (8$\times$ acceleration),
+using the rotation angle described in \citestd{chaithya:2022:OptimizingFull3D}.
+The training used the SKM-TEA dataset.
+The FOV was 15.8$\times$15.8$\times$5.1cm
+with 1mm$^3$ resolution.
+The receiver bandwidth was $\pm$125kHz.
+The training loss was
+$$
+\Loss = \Lrecon + 0.1 \Lg + 0.1 \Ls +  \Lpns.
+$$
+The gradient strength (\gmax),
+slew rate (\smax),
+and PNS threshold (\pmax)
+were 50 mT/m, 150 T/m/s, 80\%,
+respectively.
+The learning rate
+$\etao$ % macro...
+decayed from 1e-4 to 0 linearly.
+For the multi-level optimization,
+we used 3 levels (with B-spline kernel widths = 32, 16, and 8 time samples),
+and each level used 200 epochs.
+The total training time was $\sim$180 hrs.
+We also optimized the trajectory
+for several image reconstruction algorithms.
+We used a regularizer weight of 1e-3
+and 30 CG iterations for CG-SENSE and PLS. 
+For learning-based reconstruction,
+we used the MoDL \cite{modl} approach
+that alternates between a neural network-based denoiser
+and data consistency updates.
+We used a 3D version of the denoising network \cite{DIDN},
+20 CG iterations for the data consistency update,
+and 6 outer iterations.
+Similar to previous investigations
+\cite{aggarwal:2020:JointOptimizationSampling, wang:22:bjork-tmi},
+SNOPY jointly optimized
+the neural network's parameters
+and the sampling trajectories
+using \eqref{e:sgld}.
+
+
+\subsubsection{Optimizing rotation angles of stack-of-stars trajectory}
+\label{exp:sos}
+
+This experiment optimized the rotation angles
+of stack-of-stars,
+which is a widely used volumetric imaging sequence.
+The training used Calgary brain dataset.
+We used PLS as the reconstruction method for simplicity,
+with $\lambda=10^{-3}$ and 30 iterations.
+We used 200 epochs and a learning rate
+linearly decaying from 1e-4 to 0.
+The FOV is 25.6$\times$21.8$\times$3.2 cm
+and the resolution is 1mm$^3$.
+We used 40 spokes per $kz$ location (6$\times$ acceleration),
+and 1280 spokes in total.
+The readout length is 3.5 ms.
+The receiver bandwidth is $\pm$125kHz.
+The trajectory was a stack of
+32 stars,
+so we optimized
+1280
+rotation angles \cc.
+ 
+Since optimizing rotation angles
+does not
+impact the gradient strength, slew rate, PNS, and image contrast, 
+we used only
+the reconstruction loss
+$\Loss = \Lrecon.$
+We regard the method (RSOS-GR) proposed in previous work
+\cite{zhou:2017:GoldenratioRotatedStackofstars} as the
+best currently available scheme.
+We applied 200 epochs with a linearly decaying learning rate 
+from 1e-3 to 0.
+The training cost  $\sim$20 hrs.
+
+\subsubsection{PNS suppression of 
+3D rotational EPI trajectory
+for functional imaging}
+\label{exp:pns}
+
+The third application
+optimizes the rotation EPI
+(REPI) trajectory \cite{rettenmeier:2022:REPI},
+which provides an efficient sampling strategy for fMRI.
+For higher resolution (i.e., $\leq$1mm),
+we found that subjects may experience
+strong PNS effects introduced by REPI.
+This experiment aimed to reduce the PNS effect of REPI
+while preserving the original image contrast.
+We optimized one shot/readout waveform of REPI
+with a B-spline kernel with a width of 16 to parameterize the trajectory,
+and rotated the optimized readout shot
+using the angle scheme
+similar to \cite{rettenmeier:2022:REPI}.
+
+We designed the REPI readout
+for an oscillating stead steady imaging (OSSI) sequence,
+a novel fMRI signal model that can
+improve the SNR \cite{guo:2020:OSSI,guo:2020:HOSSI}.
+The FOV is 20$\times$20$\times$1.2 cm,
+with 1 mm$^3$ isotropic resolution,
+TR = 16 ms, and TE = 7.4 ms.
+The readout length is 10.6 ms.
+The receiver bandwidth is $\pm$250kHz.
+
+To accelerate training,
+the loss term here
+excluded
+the reconstruction loss $\Lrecon$:
+$$
+\Loss = 0.01 \Loss_{g} + 0.01 \Loss_{s} + \Loss_{pns} + \Loss_{c}.
+$$
+The training used 40,000 steps,
+with a learning rate decaying linearly from 1e-4 to 0.
+The training cost $\sim$1 hrs.
+
+\subsection{In-vivo experiments}
+
+We implemented the optimized trajectory prospectively
+on a GE UHP 3.0T scanner
+equipped with a Nova Medical 32-channel head coil.
+Participants gave informed consent under local IRB approval. 
+Because the cache in the MR system cannot load  
+hundreds of distinct gradient waveforms,
+the experiment \ref{exp:freeform}
+was not implemented prospectively.
+Readers may refer to the corresponding 2D prospective studies
+\cite{wang:22:bjork-tmi}
+for image quality improvement
+and correction of eddy current effects.
+For experiment \ref{exp:sos},
+we programmed the sampling trajectory with
+a 3D T1w fat-saturated GRE sequence \cite{nielsen:2018:TOPPEFrameworkRapid},
+with TR/TE = 14/3.2ms and FA = 20\textdegree.
+The experiment included 4 healthy subjects.
+For experiment \ref{exp:pns},
+to rate the PNS effect,
+we asked 3 participants to score the nerve stimulation 
+with a 5-point Likert scale
+from `mild tingling' to `strong muscular twitch.'
+
+
+\subsection{Reproducible research}
+
+The code for 2D trajectory optimization is publicly available%
+\footnote{\url{https://github.com/guanhuaw/Bjork}}.
+As an accompanying project,
+MIRTorch\footnote{\url{https://github.com/guanhuaw/MIRTorch}}
+facilitates the differentiable programming
+for MRI sampling and reconstruction.
+When this paper is accepted, we will also provide the 3D version as a toolbox
+on open-source platforms.
+For the prospective in-vivo experiments,
+we will provide open-source and vendor-agnostic 
+sequences based on TOPPE \cite{nielsen:2018:TOPPEFrameworkRapid}.
+

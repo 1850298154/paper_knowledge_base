@@ -1,0 +1,103 @@
+\section{Approach}
+\label{sec:approach}
+
+We first describe how we extended the \shop planner to emit dependency information to support provenance.
+We then describe our approach with respect to relevant questions from the planning literature \cite{MariaFoxExplainablePlanning2017} and information analysis literature \cite{icd_203,icd_206,zelik2010measuring} that have been proposed as primary targets for integrity and explainability.
+We describe relevant representations and algorithms in our approach as they apply to these questions.
+
+\subsection{\shop and Provenance Tracking}
+\label{sec:planner-extensions}
+
+In related work on plan repair~\cite{Goldman:StablePlanRepair:2020}, we have augmented \shop so that, when planning, it builds a plan tree that has dependency information (causal links).  These links allow the plan repair system to identify the minimally compromised subtree of the plan, as a way to provide \emph{stable}, minimal-perturbation plan repairs.  This extension provides much of the provenance information that we need for explainability, because it allows us to trace the choice of methods and primitive actions back to other choices that enabled them.
+The present approach extends the scope and semantics of these links to
+\begin{enumerate*}[label=(\arabic*)]
+\item trace decisions back to the model components that justify them and
+\item trace preconditions back to actions that establish them and information sources that provided them.
+\end{enumerate*}
+
+\textbf{Tracing decisions back to model components} is straightforward: the \shop planner takes as input \texttt{domain} and \texttt{problem} data structures, and the \texttt{domain} data structures contain the model components, specifically the primitive operator and method definitions.  For the moment, we do not track the provenance of components of the planner's model.
+However, since the domain descriptions are typically maintained in a revision control system, such as subversion or git, it would be relatively simple to extend our provenance tracing back to the person or persons who wrote these model components.  For a more sophisticated development environment, one could imagine a traceback that reaches into an integrated development environment or a machine learning system.
+
+\textbf{Tracing decisions back to information sources} is somewhat more difficult. In the base case, a proposition is established in the \texttt{problem} data structure -- that is, in the initial state.  In a larger system that incorporates \shop, there is generally a component that builds these \texttt{problem} data structures.  For example, in a robot planning system, we generally have a component that builds problems programmatically from user input (tasks to achieve) and some source of external information (\eg{}, a map database, telemetry from robotic platforms, \etc).  These components can annotate the initial state (and potentially the tasks \shop is asked to plan) with provenance information, using PROV-DM in a way that is appropriate to the application domain.  This provenance information can then be propagated through the causal links in the plan tree.
+
+There is one remaining complication: in the interests of modeling efficiency and expressivity, \shop incorporates a theorem-prover -- a backward-chaining engine inspired by Prolog.
+This is necessary because \shop{}'s expressive power is not limited to propositional logic, the way most planners are: it permits state axioms, and non-finite domains of quantification.\footnote{Note that though critical to \shop{} applications, these features must be used with care, because they can compromise soundness and completeness.} Thus some preconditions may be established not just causally, but inferentially, through Horn clause (``axiom'') deduction.  Accordingly, we must extend our theorem-prover so that it also provides traceability. Provenance annotations that traced provenance through axioms back to actions that established antecedents for the axioms were already in place for plan repair. These will now automatically incorporate information source provenance, as well as causal provenance.  At the moment, we do not trace the axioms themselves, but this would be a trivial extension.
+
+\subsection{Mapping \shop plans to PROV}
+
+Our system converts the extended \shop plans into the PROV data model, using the PROV-O ontology to represent the elements and relationships between them.
+\figref{prov-to-plan} illustrates the SHOP-to-PROV mapping in a screenshot of our system displaying \shop planner output (some elements removed for simplicity).
+The plan content in \figref{prov-to-plan} displays a single goal (at right) to transmit image data of \textbf{objective1} in high-resolution, and this goal is supported by two paths of tasks, performed by two separate agents (the aerial unit \textbf{flier1} and the land unit \textbf{rover0}), with foundational beliefs derived from a \textbf{Terrain Map} and an \textbf{Elevation Map}.
+We use the following mapping:
+\begin{itemize}
+  \item \textbf{Planned Tasks} are specializations of \textbf{prov:Activity}.  Unlike traditional uses of provenance for tracking \textit{past} events, the PROV Activities from the plan may not yet have--or may never actually--occur.
+  \item \textbf{Plan Actors} are specializations of \textbf{prov:Agent}.
+  They are the performers of the PROV Activities, related via \textbf{prov:wasAssociatedWith} (see \figref{prov}).
+  \item \textbf{Plan Beliefs} are specializations of \textbf{prov:Entity}.  They support tasks with \textbf{prov:used} and they are realized by tasks with \textbf{prov:wasGeneratedBy}.
+  \item \textbf{Information Sources} are specializations of \textbf{prov:Entity}.  They represent sensors and repositories that emit information to derive beliefs and measurements used in the plan, and support beliefs via \textbf{prov:wasDerivedFrom}.
+\end{itemize}
+
+As shown in the \figref{prov-to-plan} screenshot, the resulting provenance graph incorporates the information sources (at left) with the goals of the plan (at right), and the dependency network between them.
+We use this \shop plan to acquire \textbf{objective1} imagery--with one or more possible planned courses of action--to articulate our approach below.
+
+\begin{figure}
+  \begin{center}
+  \frame{
+  \includegraphics[width=\linewidth]{figures/ss-index.png}}
+  \caption{The index of agents, sources, source classes, and operation classes used in a plan.}
+  \label{fig:ss-index}
+  \end{center}
+\end{figure}
+
+\subsection{Indexing the Dimensions of a Plan}
+
+Given a plan to assess, our provenance system automatically identifies and catalogs the following dimensions of the plan.  These are displayed for user assessment and dynamic interaction, as shown in \figref{ss-index}.
+\begin{enumerate}
+  \item \textbf{Contributing Agents}: Actors in the plan.
+  \item \textbf{Source Entities}: Individual devices or informational resources from which plan-relevant beliefs are derived, such as geolocation, visibility, inventory, and more.
+  \item \textbf{Source Classes}: General categories of information across beliefs and information sources.
+  These may include information sources % (\eg{}, GEOINT, IMINT, etc.)
+  or belief predicates, as shown in \figref{ss-index}.
+  % I dropped the IC jargon that the reader might not understand, and that we don't need to explain.
+  \item \textbf{Operation Classes}: General categories of activities, spanning potentially many planned activities.
+  In \figref{ss-index}, we catalog classes of actions.
+\end{enumerate}
+\noindent
+Cataloging plan nodes along these dimensions allows our approach to instantaneously identify, emphasize, or refute nodes along these dimensions to support explanation.
+These elements are identified by mining the predicates and sources of the plan, but could also be informed by the planner's model, in future work.
+
+We use an algorithm similar to assumption-based truth-maintenance and explanation-maintenance systems \cite{forbus1993building,friedman2018csj} to compute the \emph{environment} of all nodes (\ie{}, planned action or belief) in the provenance graph.
+The algorithm traverses backward exactly once from all sink nodes, so it reaches each node $m$ in the provenance graph and computes its environment $E(m) = \{S_1, ..., S_n\}$, a disjunction of sets ($S_i$) of \emph{assumptions}, where any $S_i \in E(m)$ is sufficient to derive (\ie{}, believe, achieve, or enact) $m$, and where the assumptions correspond to root nodes in the provenance graph.
+The algorithm attends to the AND- and OR-like links listed in \figref{prov-to-plan} to properly encode disjunctive derivation trees.
+This compact index answers questions of necessity and sufficiency in constant time.
+
+The joint indexing of plan nodes by the four above dimensions and by their environments allows the provenance analysis system to identify abstract classes of sources and operations that contribute to it, and that it contributes to.
+We leverage these indices to help explain the plan in context, as we describe below.
+
+\begin{figure*}[t]
+  \begin{center}
+  \frame{
+  \includegraphics[width=\textwidth]{figures/ss-nocross.png}}
+  \caption{The \figref{prov-to-plan} plan to acquire imagery of \textbf{objective1}, with moderately low (0.20) confidence ascribed to the \textbf{Terrain Map} and moderately high (0.80) confidence ascribed to the \textbf{Elevation Map}.}
+  \label{fig:ss-compare}
+  \frame{
+  \includegraphics[width=\textwidth]{figures/ss-impact-take-image.pdf}}
+  \caption{Viewing the relevance and reachability of the \textbf{take-image} action, including the sources it relies on, and the impact on downstream actions.}
+  \label{fig:ss-impact-take-image}
+  \end{center}
+\end{figure*}
+
+\subsection{Visualization Environment}
+\label{sec:viz}
+
+Our visualization environment is a graphical display within a larger web-based platform for human-machine collaborative intelligence analysis.
+At any time, the user may select one or more elements from diagrams or listings and peruse its full provenance.
+
+A web service traverses the knowledge graph to retrieve the full provenance for the desired belief(s) and all relevant appraisals, and then sends it to the client.
+The client's provenance visualizer uses D3.js, as shown in the \figref{prov-to-plan} and \figref{ss-index} screenshots, to implement the rendering, refutation, emphasis, and propagation effects described below, operating over the PROV and DIVE representations.
+
+
+%%% Local Variables:
+%%% mode: latex
+%%% TeX-master: "main"
+%%% End:

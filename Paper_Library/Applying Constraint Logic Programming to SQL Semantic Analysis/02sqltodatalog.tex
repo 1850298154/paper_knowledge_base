@@ -1,0 +1,297 @@
+\section{From SQL to Datalog}
+\label{sect:sql-to-datalog}
+
+In a first stage, we take advantage of the translation from an SQL query to a semantically equivalent Datalog program.
+It builds upon the basic presentation in \cite{Ullman88}, and extended in \cite{Sae17a} (where formal results for semantic equivalence are given).
+%So, we assume the function \mytt{{\em SQL\_to\_DL}}($r$, \mytt{$Q$}) (and, for the sake of space, we refer the reader to its partial description in \cite{Sae17a}), which takes a relation name $r$ and an SQL query $Q$ defining a relation as input, and returns a multiset of Datalog rules providing the same meaning as the SQL relation for a corresponding predicate with the same name as the relation. 
+First, we specify the syntax of the language fragments we consider for both SQL and Datalog, then we describe the translation, and finally some examples are presented.
+
+\subsection{SQL Syntax}
+In this section, we consider a fragment of standard SQL \cite{sql:2016}.
+% as found in many textbooks as \cite{Silberschatz6th}.
+Despite our approach supports a wider coverage of SQL than the considered here, we stick to the grammar in Figure \ref{fig:sql-syntax} for the sake of simplicity.
+There, {\tt true-typed} words stand for terminal symbols, `c' for constants, `r' for relations (either tables or views), and `a' for relation attributes. 
+In this grammar (and the one in the next subsection), we use the symbol \mytt{::=} for defining parts of the language, square brackets (\mytt{[ ]}) to delimit optional parts, and vertical bars (\mytt{|}) to separate alternative parts.
+%Set operators remove duplicates and the keyword \mytt{ALL} is omitted for simplicity.
+We assume a type inference system for syntactically valid queries.
+Also, we assume that syntax comprehensions such as \mytt{E BETWEEN E1 AND E2} are re-written in their equivalent basic forms supported by the grammar. %; in this case it would have been rewritten as \mytt{E>=E1 AND E<=E2}.
+%\footnote{For only the core language, the current SQL standard spans hundreds of pages in two volumes.} including no correlations.
+Each relation alias \mytt{Relation AS Alias} in a \mytt{FROM} clause is re-written as a reference to the alias, by adding a new relation \mytt{Alias} $\leftarrow$ \mytt{Relation} to the database, where the symbol $\leftarrow$ stands for relation definition.
+
+\begin{figure}[tb]
+%\noindent\rule{\linewidth}{0.4pt}
+		\begin{tabbing}%\vspace*{-4mm}
+%\noindent\rule{\linewidth}{0.4pt}\\
+			$query$  \= ::= \= \mytt{SELECT [ALL|DISTINCT] [TOP} c \mytt{]} $exp$,...,$exp$ \mytt{FROM} $rel$,...,$rel$ [ \mytt{WHERE} $cond$ ] $\mid$ \\
+			\>\> $query$ $s\_op$ \mytt{[ALL|DISTINCT]} $query$ \\
+%			&     & \mytt{WITH} R \mytt{AS} $query$ $query$ \\
+			$exp$  \> ::= \> c $\mid$ r.a $\mid$ $exp$ $m\_op$ $exp$ $\mid$ $-exp$ $\mid$ $query$ \\
+			$rel$  \> ::= \> r $\mid$ $query$ \\ 
+			$cond$  \> ::= \> $exp$ $c\_op$ $exp$ $\mid$ \mytt{NOT} $cond$ $\mid$ $cond$ $l\_op$ $cond$ $\mid$  \mytt{TRUE} $\mid$ \mytt{FALSE} $\mid$ 
+
+			 $exp$ \mytt{IN} $query$ $\mid$ \mytt{EXISTS} $query$\\
+			$c\_op$ \> ::= \> \mytt{>} $\mid$ \mytt{<} $\mid$ \mytt{=} $\mid$ \mytt{<>} $\mid$ \mytt{>=} $\mid$ \mytt{<=} \\
+			$m\_op$ \> ::= \> \mytt{+} $\mid$ \mytt{-} $\mid$ \mytt{*} $\mid$ \mytt{/} \\
+			$s\_op$ \> ::= \> \mytt{UNION} $\mid$ \mytt{EXCEPT} $\mid$ \mytt{INTERSECT}\\
+			$l\_op$ \> ::= \> \mytt{AND} $\mid$ \mytt{OR}
+		\end{tabbing}
+	\vspace{-5mm}
+\noindent\rule{\linewidth}{0.4pt}
+	\caption{A grammar for a subset of standard SQL}
+	\label{fig:sql-syntax}
+\end{figure}
+
+A query can appear directly as a row-returning SQL statement, as well as in other statements of the DML (Data Manipulation Language) such as \mytt{INSERT} and \mytt{DELETE} statements.
+For example, in: \mytt{INSERT INTO} r $query$ (where the results of $query$ are inserted into the relation `r').
+DDL (Data Definition Language) statements such as \mytt{CREATE TABLE} can include predicates (following the syntax of $cond$ in Figure \ref{fig:sql-syntax}) in \mytt{CHECK} constraints. 
+Note that both conditions and expressions can include queries as it can be seen in the definition of $cond$ and $exp$, respectively.
+The DDL statement \mytt{CREATE VIEW AS} $query$ also includes a query (following the syntax of $query$ in the same figure).
+Thus, queries and conditions occurring in any part of an SQL statement are targets for the proposed semantic analysis.
+
+\vspace{-3mm}
+\subsection{Datalog Syntax}
+With respect to Datalog, we consider an extended Datalog language with duplicates and metapredicates as shown in Figure \ref{fig:datalog-syntax},  where $rule$ stands for rules, $goal$ for goals, $exp$ for expressions, `atom' for an atom  (possibly containing variables and constants), the comma (`,') for a conjunction, and the semi-colon (`;') for a disjunction.
+$c\_op$ and $m\_op$ are the same as in Figure \ref{fig:sql-syntax} excepting \mytt{<=}, which is written as \mytt{=<}. % to avoid operator clash with the implication to the left.
+The syntax of the logic includes a universe of constant symbols, a set of variables, a set of user-defined predicates, and a set of built-in metapredicate symbols (where the prefix operator \mytt{not} stands for negation, the predicate \mytt{distinct}/1 for duplicate elimination, and \mytt{top}/2 for the first $n$ solutions of a goal).
+%($\mathscr{P}$).
+Following Prolog syntax, variables are written starting with either an upper-case letter or an underscore, and the rest of symbols either starting with lower-case or delimited by single quotes.
+%Removing function symbols from the logic is a condition for finiteness of answers, a natural requirement of relational database users.
+%As in Horn-logic, a rule has the form $A \mytt{:-} \phi$, where $A$ is an atom and $\phi$ is a conjunction of goals.
+%Since we consider a hypothetical system,
+%a goal can also take the form $R_1 \land \ldots \land R_n \Rightarrow G$, a construction known as an {\em embedded implication}.
+%As an embedded implication behaves different from a regular implication \cite{bonner90adding}, it receives a different syntax symbol: $\Rightarrow$.
+%The following definition captures the syntax of the language, where $vars(T)$ is the set of variables occurring in $T$:
+%
+%
+The first form of $rule$ in the figure is also known as a fact. % and it represents a true knowledge of the atom, whereas a rule of the second form represents that the atom is considered to be true if the goals to the right of `\mytt{:-}' (implication to the left) can be deduced to be true.
+\setlength{\tabcolsep}{1pt}
+\begin{figure}[b]
+%	  \begin{center}
+\noindent\rule{\linewidth}{0.4pt}
+%	\begin{minipage}[b]{\linewidth}
+%	  \begin{center}
+%       \fbox{
+		\begin{tabular}{lcl}
+			
+			$rule$ & ::= & atom $\mid$ 
+			 atom \mytt{:-} $goal$ \mytt{,} \ldots \mytt{,} $goal$ \\
+			$goal$ & ::= & atom $\mid$ \mytt{not} atom $\mid$ \mytt{distinct}(atom) $\mid$ \mytt{top}(c, atom) $\mid$ 
+            $goal$ \mytt{;} \ldots \mytt{;} $goal$ $\mid$ 
+            $exp$ $c\_op$ $exp$ \\
+			$exp$ & ::= & \mytt{X} $\mid$ $exp$ $m\_op$ $exp$ $\mid$ $-exp$ \\
+			
+		\end{tabular}
+%		}
+%	  \end{center}
+%	\end{minipage}
+\noindent\rule{\linewidth}{0.4pt}
+%\end{center}
+  \caption{A grammar for an extended Datalog language}
+  \label{fig:datalog-syntax}
+\end{figure}
+A Datalog database (also referred to as a program) contains facts and rules instead of relation definitions as in SQL (tables and views, respectively).
+We consider also a type system for Datalog for restricting valid rules with respect to type specifications.
+%Each rule $A \mytt{:-} G_1 \lor G_2$ in a database is rewritten as two rules $A \mytt{:-} G_1$ and $A \mytt{:-} G_2$.
+
+
+
+
+%For dealing with negation, predicates are collected into strata, which are built using a predicate dependency graph (PDG) \cite{Zaniolo97}, showing both the positive and negative dependencies between predicates in the database.
+%Each node in this graph is a predicate (relation) symbol and there are as many nodes as such symbols in the database.
+%Arcs come from each predicate in a rule body (antecedent) to its rule predicate.
+%Arcs are labelled as either negative ($\stackrel{\mytt{not}}{\mytt{:-}}$), if the antecedent node occurs negated, or positive otherwise ($\mytt{:-}$).
+%%This dependency graph is used to looking for a stratification for the program \cite{Zaniolo97}.
+%A stratification collects predicates into numbered strata %($1 \ldots N$) 
+%so that, given the function $str(\Delta,\texttt{p})$ which assigns a stratum number to predicate \texttt{p} in the database $\Delta$, then for a positive arc \verb+p+$\mytt{:-}$\verb+q+, $str(\Delta,\texttt{p}) \leq str(\Delta,\texttt{q})$, and for a negative arc \verb+p+$\stackrel{\mytt{not}}{\mytt{:-}}$\verb+q+, $str(\Delta,\texttt{p}) < str(\Delta,\texttt{q})$.
+%%A cycle in this graph containing a negative arc amounts to a non-stratifiable program.
+%Predicates in lower strata are solved before those in upper strata to avoid non-monotonicity in fixpoint iterations \cite{Ullman88}.
+
+%Semantics is built with the stratified inference system defined in \cite{sae13c-ictai13}.
+%This system is adapted next for dealing with SQL duplicates (identifiers for axioms are constructed as identifier compositions), and extended with duplicate elimination (strong constraints are omitted as they are out of the scope of this paper). 
+%As in \cite{sae13c-ictai13}, $\Delta \vdash \psi$ is an {\em inference expression}, where $\Delta$ is a database, $\psi$ can be either an identified ground atom $id:A$, or $\bot$.
+
+\subsection{Translation}
+\label{sect:sql-to-dl-translation}
+
+This section describes some examples of the translation of the considered SQL and Datalog languages, extending the description in \cite{Sae17a} with the clause \mytt{DISTINCT} and the operators \mytt{IN} and \mytt{EXISTS}.
+%In order to process SQL statements, the deductive system DES resorts to compile such statements to Datalog rules and queries \cite{DBLP:conf/aplas/Saenz-PerezCG11}.
+Here, we refer to the function \mytt{{\em SQL\_to\_DL}} as defined there (which we do not reproduce it here).
+It takes a relation name and an SQL query defining a relation as input, and returns a multiset of Datalog rules providing the same meaning as the SQL relation for the corresponding predicate with the same name as the relation.
+For a query in the top-level, we assign a relation name (\mytt{answer}) to build the outcome. %, similarly to other database systems.
+%The following definition for this function includes only a couple of the basic cases, where others can be easily developed from \cite{Ullman88}.
+From here on, set-related operators and symbols refer to multisets because SQL relations can contain duplicates. %(Note that Hypothetical Datalog as defined in \cite{sae13c-ictai13} deals with duplicates as well.)
+
+%\begin{definition}
+%	\noindent \\
+
+An SQL query is preprocessed before passing it to the translation function:
+
+\begin{itemize}
+	\item 		
+	If the keyword \mytt{DISTINCT} is specified in a query $Q$ defining a relation $r$, this query is re-written as follows, where a fresh relation $r'$ is introduced, and the notation $Q[X/Y]$ means a syntactic replacement of $X$ by $Y$ in $Q$:
+	
+	\medskip
+	
+	\noindent $r \leftarrow$ \mytt{SELECT DISTINCT * FROM} $r'$ \qquad
+	 $r' \leftarrow$ $Q[$\mytt{DISTINCT}$/$\mytt{ALL}$]$ 
+	
+	\medskip
+	
+	\noindent 
+	Note that a \mytt{SELECT} statement without a \mytt{WHERE} clause means an implicit \mytt{true} condition.
+	
+	\item 		
+	If a set operator includes (either implicitly or explicitly) the keyword \mytt{DISTINCT} in a query $Q \equiv Q_1 ~ s\_op ~ Q_2$ defining a relation $r$, then it is re-written as:
+	
+	\medskip
+	
+	\noindent $r \leftarrow$ \mytt{SELECT DISTINCT * FROM} $r'$  \qquad
+	$r' \leftarrow$ $Q_1 ~ s\_op$ \mytt{ALL} $Q_2$ 
+	
+\end{itemize}
+
+In addition, we define a function to deal with a set of SQL relation definitions which can appear as the result of SQL preprocessing:
+
+\begin{definition} \label{def:SQLstoDL} The function \mytt{{\em SQLs\_to\_DL}} takes a set of SQL relation definitions as input and returns the equivalent Datalog program:
+%
+\mytt{{\em SQLs\_to\_DL}}($\{ r_1 \leftarrow SQL_1, \ldots , r_n \leftarrow SQL_n\}$) =  $\bigcup\limits_{i=1}^{n}$\mytt{{\em SQL\_to\_DL}}($r_i, SQL_i)$\hfill $\square$
+
+\end{definition}
+
+\begin{example}
+\label{ex:ex1}
+	Given the following table schemas:
+    
+%    \medskip
+    
+\noindent
+\mytt{CREATE TABLE dept(id CHAR(10) PRIMARY KEY, name CHAR(20), location CHAR(20))};\\
+\mytt{CREATE TABLE emp(name CHAR(20) PRIMARY KEY,}\\
+\hspace*{2.82cm}\mytt{dept CHAR(10) REFERENCES dept(id), salary INT);}
+
+    
+%    \medskip
+    
+    And a query in the top level that lists the employee names and their department names:
+    
+%    \medskip
+
+	\mytt{answer} $\leftarrow Q$\\ \indent 
+    $Q \equiv$ \mytt{SELECT emp.name, dept.name FROM emp, dept WHERE emp.dept=dept.id}
+    
+%    \medskip
+
+    Since it is a single query definition, we apply the function \mytt{{\em SQL\_to\_DL}} to obtain:
+
+%    \medskip
+
+    \begin{tabbing}
+    \mytt{{\em SQL\_to\_DL}}(\mytt{answer}, $Q$) = \= 
+    $\{$(\mytt{answer(X$_1$,X$_5$)} \mytt{:-} \mytt{r$_1$(X$_1$,X$_2$,X$_3$,X$_4$,X$_5$,X$_6$)}\mytt{,} \mytt{true}\mytt{,} \mytt{true}\mytt{,} \mytt{X$_2$=X$_4$})$\} \bigcup$ \\
+    \> $\{$(\mytt{r$_1$(X$_1$,X$_2$,X$_3$,X$_4$,X$_5$,X$_6$)} \mytt{:-} \mytt{emp(X$_1$,X$_2$,X$_3$}), \mytt{dept(X$_4$,X$_5$,X$_6$)})$\}$
+    \end{tabbing}\vspace{-0.55cm}\hfill $\square$
+
+%	\indent where:\\
+%	\mytt{{\em SQLREL\_to\_DL}}((\mytt{emp, dept})) = (\mytt{r$_1$(X$_1$,X$_2$,X$_3$,X$_4$,X$_5$,X$_6$)}, $\{$(\mytt{r$_1$(X$_1$,X$_2$,X$_3$,X$_4$,X$_5$,X$_6$)} \mytt{:-} \mytt{emp(X$_1$,X$_2$,X$_3$}), \mytt{dept(X$_4$,X$_5$,X$_6$)})$\}$), \\
+%    \mytt{{\em SQLCOND\_to\_DL}}(\mytt{emp.dept=dept.id}) = ((\mytt{X$_2$=X$_4$}), $\emptyset$), \\
+%	\mytt{{\em SQLEXP\_to\_DL}}(\mytt{emp.name}) = (\mytt{X$_1$}, \mytt{true}, $\emptyset$), and \\
+%	\mytt{{\em SQLEXP\_to\_DL}}(\mytt{dept.name}) = (\mytt{X$_5$}, \mytt{true}, $\emptyset$). \\
+    
+\end{example}	
+
+
+\begin{example}
+	Given the same table schemas as in the previous example, a query in the top-level that lists the department names with assigned employees is
+	\mytt{answer} $\leftarrow Q$, where:
+	 
+	\indent 
+	$Q \equiv$ \mytt{SELECT dept.name FROM dept WHERE dept.id  IN} \\
+	\indent \indent \indent \mytt{ (SELECT DISTINCT dept.name FROM emp, dept WHERE emp.dept=dept.id)}
+	
+	\medskip
+	
+	This is re-written as \mytt{answer} $\leftarrow Q_1$ and \mytt{r$_2$} $\leftarrow Q_2$, where:
+	
+	\indent
+	$Q_1 \equiv$ \mytt{SELECT dept.name FROM dept WHERE dept.id IN SELECT DISTINCT * FROM r$_2$} \\ \indent
+	$Q_2 \equiv$ \mytt{SELECT dept.name FROM emp, dept WHERE emp.dept=dept.id}
+
+	\medskip
+
+%	$Q \equiv$ \mytt{SELECT dept.name FROM dept WHERE dept.id NOT IN} $Q'$\\ \indent
+%	$Q' \equiv$ \mytt{SELECT DISTINCT * FROM p}\\ \indent
+%%	\mytt{p'} $\leftarrow$ $Q'$ \\ \indent
+%	\mytt{p} $\leftarrow$ \mytt{SELECT dept.name FROM emp, dept WHERE emp.dept=dept.id}
+%	
+%	\medskip
+	
+	Since there are two relation definitions, we use Definition \ref{def:SQLstoDL}:
+
+	\medskip
+
+	\mytt{{\em SQLs\_to\_DL}}($\{$\mytt{answer} $\leftarrow Q_1$, \mytt{r$_2$} $\leftarrow Q_2 \}$) = \mytt{{\em SQL\_to\_DL}}(\mytt{answer}, $Q_1$) $\bigcup$
+	\mytt{{\em SQL\_to\_DL}}(\mytt{r$_2$}, $Q_2$) 
+	
+	\medskip
+
+	
+	$Q_2$ is almost identical to $Q$ in Example \ref{ex:ex1}; the  differences are an absent argument in the projection, and different names for relations and variables.
+%	So, we omit its translation steps.
+	The translation of \mytt{answer} $\leftarrow Q_1$
+    %and denoting with $Q'$ the subquery after \mytt{NOT IN} in $Q_1$, 
+    is:
+	
+%	\medskip
+
+\begin{tabbing}
+	\mytt{{\em SQL\_to\_DL}}(\mytt{answer}, $Q_1$) \= = \= 
+	$\{$(\mytt{answer(X$_2$)} \mytt{:-}  \mytt{dept(X$_1$,X$_2$,X$_3$)}\mytt{,} \mytt{true, X$_4$=X$_1$, r$_1$(X$_4$)})$\} \bigcup \emptyset \bigcup$ \\
+	\> \> $\{$(\mytt{r$_1$(X$_4$) :- distinct(r$_2$(X$_4$))})$\}$, and then:
+\end{tabbing}
+	
+%	$\bigcup $
+%	(\mytt{r(X$_8$)} \mytt{:-} \mytt{emp(X$_4$,X$_5$,X$_6$})\mytt{,} \mytt{dept(X$_7$,X$_8$,X$_9$)}\mytt{,} \mytt{X$_5$=X$_7$}\mytt{,} \mytt{true}\mytt{,} \mytt{true})
+	
+	%\medskip
+	
+%	\indent where:
+%	
+%	\medskip
+%	
+%    \noindent
+%	\mytt{{\em SQLREL\_to\_DL}}(\mytt{dept}) = (\mytt{dept(X$_1$,X$_2$,X$_3$)}, $\emptyset$), \\
+%	\mytt{{\em SQLCOND\_to\_DL}}(\mytt{dept.id NOT IN} $Q'$) = ((\mytt{true, X$_4$=X$_1$, not r$_1$(X$_4$)}), $\{$(\mytt{r$_1$(X$_4$) :- distinct(r$_2$(X$_4$))})$\}$), \\
+%	\mytt{{\em SQLEXP\_to\_DL}}(\mytt{dept.id}) = (\mytt{X$_1$}, \mytt{true}, $\emptyset$), \\
+%	\mytt{{\em SQLREL\_to\_DL}}($Q'$) = $($ \mytt{r$_1$(X$_4$)}, $\{($\mytt{r$_1$(X$_4$) :- distinct(r$_2$(X$_4$))})$\}  )$, \\  
+%	\mytt{{\em SQL\_to\_DL}}(\mytt{r$_1$}, $Q'$) = 
+%	$\{$(\mytt{r$_1$(X$_4$)} \mytt{:-}  \mytt{distinct(r$_2$(X$_4$))})$\}$
+%
+%	\medskip
+
+%	Then:
+%	
+%	\medskip
+
+\begin{tabbing}
+	\mytt{{\em SQLs\_to\_DL}}\=($\{$\mytt{answer} $\leftarrow Q_1$, \mytt{r$_2$} $\leftarrow Q_2 \}$) = \\%(($\{$\mytt{answer} $\leftarrow Q_1$, \mytt{r$_1$} $\leftarrow Q_2 \}$) = \\
+    \> $\{$\=(\mytt{answer(X$_2$)} \mytt{:-}  \mytt{dept(X$_1$,X$_2$,X$_3$)}\mytt{,} \mytt{true, X$_4$=X$_1$, r$_1$(X$_4$)}), \\
+	\> \> (\mytt{r$_1$(X$_4$) :- distinct(r$_2$(X$_4$))}), \\	
+	\> \> (\mytt{r$_2$(X$_8$)} \mytt{:-} \mytt{r$_3$(X$_5$,X$_6$,X$_7$,X$_8$,X$_{9}$,X$_{10}$)}\mytt{,} \mytt{true}\mytt{,} \mytt{true}\mytt{,} \mytt{X$_6$=X$_8$}), \\
+    \> \> (\mytt{r$_3$(X$_5$,X$_6$,X$_7$,X$_8$,X$_{9}$,X$_{10}$)} \mytt{:-} \mytt{emp(X$_5$,X$_6$,X$_7$)}, \mytt{dept(X$_8$,X$_{9}$,X$_{10}$)})$\}$
+\end{tabbing}\vspace{-0.8cm}\hfill $\square$
+\end{example}
+
+In these simple examples, the generated Datalog program can be simplified by removing \mytt{true} goals and explicit variable bindings (e.g., \mytt{X$_4$=X$_1$}), and by applying substitutions (a goal \mytt{X=X} is a trivially \mytt{true} goal and thus it can also be removed).
+In addition, folding/unfolding techniques %\cite{Sterling:1994:APA:175753} 
+\cite{Burstall:1977:TSD:321992.321996,ts84}
+are applied to further simplify the Datalog program generated.
+Here, unfolding can be applied to user predicate calls for which the predicate consists of only one clause, thus removing the predicate itself.
+Following Example \ref{ex:ex1}, the translated program is simplified into the following single rule (with a substitution [\mytt{X$_4$}/\mytt{X$_2$}]):\\
+$\{$(\mytt{answer(X$_1$,X$_5$)} \mytt{:-} \mytt{emp(X$_1$,X$_2$,X$_3$}), \mytt{dept(X$_2$,X$_5$,X$_6$)})$\}$.
+
+
+%Sometimes, we stumble into contrived SQL formulations.
+%An equivalent, but cumbersome, query for Example \ref{ex:ex1} is: 
+%
+%\mytt{SELECT e.name, d.name} \\ \indent 
+%\mytt{FROM (SELECT * FROM emp) AS e, (SELECT * FROM dept) AS d WHERE e.dept=d.id}

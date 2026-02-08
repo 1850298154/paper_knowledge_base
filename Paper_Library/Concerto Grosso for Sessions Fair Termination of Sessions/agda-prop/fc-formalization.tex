@@ -1,0 +1,131 @@
+\beginbass
+%
+We now use the Agda library for \GIS (see \Cref{ch:gis_lib}) to 
+formally define the inference system for fair compliance shown in \Cref{fig:compliance}. 
+As we did in \Cref{sec:agda_ft}, the first thing to do is to define 
+the universe \lstinline{U} of judgments that we want to 
+derive with the inference system. We can equivalently think of  fair compliance as of a binary 
+relation on session types or as a predicate over sessions. We take the second point of view, 
+as it allows us to write more compact code later on.
+
+\begin{lstlisting}
+U : Set
+U = Session
+\end{lstlisting}
+
+Next, we define two data types to represent the \emph{unique names} with which we 
+identify the rules and corules of the \GIS. We use the same labels of \Cref{fig:compliance}
+except for the corule \refrule{c-sync} which we split into \emph{two} 
+symmetric corules to avoid reasoning on opposite polarities.
+
+\begin{lstlisting}
+data RuleNames : Set where
+  success inp-out out-inp : RuleNames
+  
+data CoRuleNames : Set where
+  inp-out out-inp : CoRuleNames
+\end{lstlisting}
+
+Again, we recall that there are two different ways of defining rules and corules, depending on whether 
+these have a finite or a possibly infinite number of premises. 
+Clearly, (co)rules with finitely many premises are just a special case of 
+those with possibly infinite ones, but the \GIS library provides some syntactic 
+sugar to specify (co)rules of the former kind in a slightly easier way (see \Cref{ch:gis_lib}). 
+We use a finite rule to specify \refrule{c-success}.
+
+\begin{lstlisting}
+success-rule : FinMetaRule U
+success-rule .Ctx = $\Sigma$[ Se $\in$ Session ] Success Se
+success-rule .comp (Se , _) = [] , Se
+\end{lstlisting}
+
+Concerning \refrule{c-out-inp} and \refrule{c-inp-out}, these rules have a possibly 
+infinite set of premises if $\Message$ is infinite. Therefore, we specify the rules 
+using the most general form allowed by the \GIS Agda library. 
+
+\begin{lstlisting}
+out-inp-rule : MetaRule U
+out-inp-rule .Ctx = 
+	$\Sigma$[ (f , _) $\in$ Continuation $\times$ Continuation ] Witness f
+out-inp-rule .Pos ((f , _) , _) = $\Sigma$[ x $\in$ $\Message$ ] x $\in$ dom f
+out-inp-rule .prems ((f , g) , _) = 
+	$\lambda$ (x , _) $\rightarrow$ f x .force , g x .force
+out-inp-rule .conclu ((f , g) , _) = out f , inp g
+
+inp-out-rule : MetaRule U
+inp-out-rule .Ctx = 
+	$\Sigma$[ (_ , g) $\in$ Continuation $\times$ Continuation ] Witness g
+inp-out-rule .Pos ((_ , g) , _) = $\Sigma$[ x $\in$ $\Message$ ] x $\in$ dom g
+inp-out-rule .prems ((f , g) , _) = 
+	$\lambda$ (x , _) $\rightarrow$ f x .force , g x .force
+inp-out-rule .conclu ((f , g) , _) = inp f , out g
+\end{lstlisting}
+
+In the above rules, the \lstinline{Pos} field, which is the
+\emph{domain} of the function that \emph{generates} the premises,
+coincides with that of the continuation
+function corresponding to the output session type, since we want to specify a
+fair compliance premise for every message that can be sent.
+%
+The specification of corules is no different from that of plain rules. 
+As we have anticipated, we split \refrule{c-sync} into two corules, each having exactly one premise.
+
+\begin{lstlisting}
+out-inp-corule : FinMetaRule U
+out-inp-corule .Ctx = 
+	$\Sigma$[ (f , _) $\in$ Continuation $\times$ Continuation ] Witness f
+out-inp-corule .comp ((f , g) , x , _) = 
+	(f x .force , g x .force) :: [] , (out f , inp g)
+
+inp-out-corule : FinMetaRule U
+inp-out-corule .Ctx = 
+	$\Sigma$[ (_ , g) $\in$ Continuation $\times$ Continuation ] Witness g
+inp-out-corule .comp ((f , g) , x , _) = 
+	(f x .force , g x .force) :: [] , (inp f , out g)
+\end{lstlisting}
+
+
+We can now define two inference systems, \lstinline{FCompIS} that consists of the plain rules only 
+and \lstinline{FCompCOIS} that consists of the corules only. 
+These are called $\is[C]$ and $\cois[C]$ in \Cref{ssec:agda_fc_def}.
+
+\begin{lstlisting}
+FCompIS : IS U
+FCompIS .Names = RuleNames
+FCompIS .rules success = from success-rule
+FCompIS .rules out-inp = out-inp-rule
+FCompIS .rules inp-out = inp-out-rule
+
+FCompCOIS : IS U
+FCompCOIS .Names = CoRuleNames
+FCompCOIS .rules out-inp = from out-inp-corule
+FCompCOIS .rules inp-out = from inp-out-corule
+\end{lstlisting}
+
+where the Agda function \lstinline{from} converts a finite rule into its more general
+form on-the-fly, so that the internal representation of all rules is uniform.
+
+We obtain the generalized interpretation of $\gis{\is[C]}{\cois[C]}$, 
+named \lstinline{FCompG}, through the library function \lstinline{Gen}.
+We also define a predicate \lstinline{FCompI} as the inductive interpretation 
+of the union of \lstinline{FCompIS} and \lstinline{FCompCOIS}, 
+which is useful in the soundness and boundedness proofs of the \GIS.
+
+\begin{lstlisting}
+FCompG : Session $\rightarrow$ Set
+FCompG = Gen$\llbracket$ FCompIS , FCompCOIS $\rrbracket$
+
+FCompI : Session $\rightarrow$ Set
+FCompI = Ind$\llbracket$ FCompIS $\cup$ FCompCOIS $\rrbracket$
+\end{lstlisting}
+
+The relation $\compliance{}{}$ defined by the \GIS in \Cref{fig:compliance} 
+is now just a curried version of \lstinline{FCompG}.
+
+\begin{lstlisting}
+_$\compliance{}{}$_ : SessionType $\rightarrow$ SessionType $\rightarrow$ Set
+R $\compliance{}{}$ S = FCompG (R , S)
+\end{lstlisting}
+
+We conclude this section without showing correctness results as they will
+be detailed separately in \Cref{sec:agda_fc_corr}.

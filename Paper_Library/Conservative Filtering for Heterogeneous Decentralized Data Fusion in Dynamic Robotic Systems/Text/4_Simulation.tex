@@ -1,0 +1,63 @@
+To test the proposed method, a simulation of 4 robots tracking 5 dynamic targets was preformed. The robots are connected in a chain  
+$(1\leftrightarrow 2\leftrightarrow 3\leftrightarrow 4)$ with bidirectional communication. Each robot is tasked with estimating the $2D$ (north, east) position and velocity $x^t=[n^t,\dot{n}^t,e^t,\dot{e}^t]^T$ of a subset of the 5 targets, and its own constant (but unknown) robot-to-target relative position measurement bias $s^i=[b^i_{n},b^i_{e}]^T$, similar to the bias in \cite{noack_treatment_2015}. Robots tasks, described by their local random state vector, are as follows:
+\begin{equation}
+    \begin{split}
+        \chi^1_k=\begin{bmatrix} x^1_k \\ x^2_k \\ s^1 \end{bmatrix},
+        \chi^2_k=\begin{bmatrix} x^2_k \\ x^3_k \\ s^2 \end{bmatrix},
+        \chi^3_k=\begin{bmatrix} x^3_k \\ x^4_k \\ x^5_k \\ s^3 \end{bmatrix},
+        \chi^4_K=\begin{bmatrix} x^4_k \\ x^5_k \\ s^4 \end{bmatrix}.
+    \end{split}
+\end{equation}
+For example, robot 1 is tasked with tracking targets 1 and 2 and its own local bias. Common states between robots are those states in the intersection between the state vectors, e.g, $\chi^{12}_{C,k} = x^2_k$ is the common state vector between robots 1 and 2, and $\chi^1_{L,k}=[(x^1_k)^T, (s^1)^T]^T$ are the local state vectors at robot 1. Notice that in homogeneous fusion, all 4 robots reason and communicate the full global state, including 28 states. On the other hand, in heterogeneous fusion robots only reason over their local tasks, including maximum 14 states (robot 3) and communicate over maximum 8 common states (robots 3-4). For Gaussian distributions that translates to more than $95\%$ reduction in communication and computation costs for robots 1,2,4 and about $90\%$ for robot 3.
+
+In every time step $k$, each robot $i$ takes two types of measurements, a relative measurement to target $t$, $y^{i,t}_{k}$,  and a measurement to a known landmark, $m^i_{k}$,
+\begin{equation}
+    \begin{split}
+        &y^{i,t}_{k} = x^t_k+s^i+v^{i,1}_k, \ \ v^{i,1}_k \sim \mathcal{N}(0,R^{i,1}_k),  \\
+        &m^i_{k} = s^i+v^{i,2}_k, \ \ v^{i,2}_k \sim \mathcal{N}(0,R^{i,2}_k).
+    \end{split}
+    \label{eq:meas_model}
+\end{equation}
+
+As in many target tracking problems \cite{bar-shalom_linear_2001}, each target $t$ dynamics is model by the following kinematic model,
+\begin{equation}
+    \begin{split}
+    &x^t_{k+1}=Fx^t_{k}+Gu^t_k+\omega_k, \ \ \omega_k \sim \mathcal{N}(0,0.08\cdot I_{n_x\times n_x}),\\
+    &F=\begin{bmatrix}1 & \Delta t &0 &0\\0 &1 &0 &0\\ 0 &0 &1 & \Delta t\\0& 0 &0 &1 \end{bmatrix}, \quad
+    G=\begin{bmatrix}\frac{1}{2}\Delta t^2 &0\\\Delta t&0\\0 &\frac{1}{2}\Delta t^2\\0 &\Delta t \end{bmatrix}.
+    \end{split}
+    \label{eq:dynamicEq}
+\end{equation}
+
+The simulation uses the FG-DDF algorithm \cite{dagan_factor_2021}, with the addition of the conservative filtering algorithm \ref{algo:cons_filter}. Each robot then maintains and reasons over its local dynamic factor graph and estimates the current MMSE estimate (mean and covariance) using the sum-product (message passing) algorithm on the factor graph \cite{frey_factor_1997}.
+
+The algorithm's performance was tested with 250 Monte Carlo simulations. Consistency of each robot's estimate was tested using the normalized estimation error squared (NEES) test \cite{bar-shalom_linear_2001}.  Fig. \ref{fig:NEES_simResults} shows the four robots' results with $95\%$ confidence bounds for robots 1,2,4 in dashed red centered around 10 (number of estimated states) and for robot 3 in dashed blue around 14. Results show that all robots are consistent, underestimating their uncertainty due to due to the information matrix deflation (covariance inflation) in the conservative filtering process.
+
+\begin{figure}[bt]
+	\centering
+    %\includesvg[width=0.7\textwidth]{Figures/static_50MC_a3_a4.svg}
+     \includegraphics[width=0.47\textwidth]{Figures/NEES_all_agents_9sec.eps}
+	\caption{NEES test results from 250 Monte Carlo of 4-robots, 5-targets tracking simulations. Shown are $95\%$ confidence bounds.}
+	\label{fig:NEES_simResults}
+	\vspace{-0.2in}
+\end{figure}
+
+To validate that the robots' estimates are conservative, the local uncertainty of each robot was compared with a centralized estimator over the full 28 random state vector, getting all data from all the robots at every time step. We thus require the robot's covariance to be larger than the centralized covariance in the PSD sense, $\Sigma_{\chi^i}-\Sigma_{\chi^i}^{cent} \succeq 0$, where $\Sigma_{\chi^i}^{cent}$ is the marginal covariance over the local random state vector of robot $i$, $\chi^i$, taken from the joint centralized covariance over the full system state $\chi$. In practice, this is verified by computing the minimal eigenvalue of the above covariance difference and testing that it is not negative. The left plot of Fig. \ref{fig:lamda} shows the minimal eigenvalue of the covariance difference with and without the conservative filtering algorithm. It can be seen that without the algorithm the heterogeneous fusion results are not conservative. On the other hand, with the algorithm 
+it takes about $1-1.5$ seconds for the robots' estimates to become conservative, but once it is conservative, it stays conservative. 
+
+The right plot of Fig. \ref{fig:lamda} shows the change in the deflation constant in time across all robots. Intuitively, as robots accumulate more data, approximations by detaching dependencies have lower impact on the pdf, i.e., the sparse approximation is `closer' to the dense pdf. Thus the deflation constant approaches to some limit, depending on the problem statistics and structure. Also, notice that robots 1 and 4, which only communicate with one robot each, and thus accumulate less data, need smaller constants to regain conservativeness.  
+
+Another interesting observation is that both the minimal eigenvalues and deflation constant are constant across simulations. We attribute it to the fact that these are functions of the problem statistics, i.e., measurement and dynamic model noise, and of the communication network, all where kept constant across simulations. Thus in general, these can be analyzed and studied priori, with no connection to the actual measurements received.   
+
+\begin{figure}[bt]
+	\centering
+    %\includesvg[width=0.7\textwidth]{Figures/static_50MC_a3_a4.svg}
+     \includegraphics[width=0.48\textwidth]{Figures/lamda_plus_eval_horizontal_v3.eps}
+	\caption{Minimal eigenvalue of the covariance difference (left) and deflation constant (right) of the four robots. Shown are results with and without the conservative filtering algorithm.   }
+	\label{fig:lamda}
+	\vspace{-0.2in}
+\end{figure}
+
+
+
+

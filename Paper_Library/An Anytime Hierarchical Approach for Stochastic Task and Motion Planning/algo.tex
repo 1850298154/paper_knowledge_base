@@ -1,0 +1,276 @@
+\section{Computing Task and Motion Policies}
+\label{sec:algo}
+
+
+\subsection{HPlan Algorithm}
+\label{sec:atm}
+We extend the idea of planning with abstractions briefly discussed by \cite{srivastava2016metaphysics} to perform task and motion planning in stochastic environments using abstraction hierarchies. The goal is to find a valid high-level policy that also has valid low-level refinements for each of its actions. We propose the HPlan algorithm (Alg. \ref{alg:atam}) that performs hierarchical planning with arbitrary abstraction and concretization function.
+
+
+
+
+
+
+% In this section, we describe our approach for computing task and motion policies as defined above. Remember that every abstract action $[a] \in [\mathcal{M}]$  (e.g., \emph{Place($obj_1$,$config_1$,$config_2$,$pose_1$,$traj_1$)}) has symbolic arguments that has to be instantiated to generate a concrete action $a$, that can be executed in the concrete model $\mathcal{M}$. The goal is to compute instantiations for each action in the high-level solution. 
+
+HPlan (Alg.~\ref{alg:atam}) uses a policy refinement graph (PRG) to keep track of different abstract models and their corresponding policies. As shown in Fig.~\ref{fig:prg}, each node $u$ in a PRG contains an abstract model $\abs{\M}_{u}$, an abstract policy $\abs{\pi}_u$, and the current state of refinement for each action $\abs{a_j} \in \abs{\pi}_u$. An edge $(u,v)$ in a PRG from a node $u$ to a node $v$ consists of a partial refinement of the policy ($\sigma_{uv}$) and a failed precondition of the first action from $\abs{\pi}_u$ that does not have a valid motion planning refinement. Our approach combines two processes: $1)$ Concretizing the abstract policy, and $2)$ refining the abstract model.
+
+
+
+HPlan (Alg.~\ref{alg:atam}) performs the above-mentioned two steps in an interleaved manner. The algorithm starts by 
+% a single policy refinement node (PRN) in the PRG with an initially provided abstract model. Line $1$ 
+initializing the PRG with a node containing this abstract model $\abs{\M}$, and an abstract policy $\abs{\pi}$ computed using an off-the-shelf symbolic solver that achieves the goal $\mathcal{G}$ (line $1$). Each iteration of the main loop (line $2$) selects a policy refinement node (PRN) $u$ from the PRG using a defined strategy (line $3$). 
+%  and extracts a root-to-leaf (RTL) path from the current PRG node's policy $\abs{\pi}_u$ such that the path has at least one action that has not been instantiated (line $3$-$5$). 
+ Arbitrary strategies can be used to make this selection. HPlan uses an off-the-shelf task planner to compute a high-level policy for the current abstract model if the selected PRN does not already have a high-level policy (line $5$). Once a policy is computed (or obtained), HPlan non-deterministically decides (line $6$) to either refine the high-level policy in the selected PRN by instantiating abstract arguments  of actions in the policy (lines $7$-$13$) or to update the high-level abstractions to compute accurate high-level policies (lines $14$-$20$). The algorithm carries out these interleaved steps in as follows: 
+
+\paragraph{\textbf{a) Concretizing the Abstract Policy}}  
+Lines \emph{8-13} search for a valid concretization (refinement) of the high-level policy selected/computed on line $5$ by concretizing the abstract actions with actions from the concrete domain $\mathcal{M}$ using the concretization function $\Tau_{\alpha}$ as explained in Sec.~\ref{sec:entity}. To refine a high-level policy, a root-to-leaf (RTL) path is selected that has at least one action that has not been refined. Each unrefined action is concretized using a local backtracking search (line $13$)~\cite{srivastava14_tmp}. A concretization $c_0, a_1, c_1, \ldots, a_k, c_k$ is a valid concretization of an RTL path $\abs{s_0}, \abs{a_1}, \abs{s_1}, \ldots, \abs{a_k}, \abs{s_k}$ is valid iff $c_{i+1} \in a_{i+1}(c_i)$ and $c_i \models precon(a_i+1)$ for $i = 0, \ldots, k -1$. A policy is refined when concretization for each action in every RTL path in the policy is computed. However, due to lossy nature of the abstraction, it may be possible that no valid concretization exists for the policy $\abs{\pi}_u$. For example, consider an abstraction which drops \emph{InCollision} predicate that checks whether a trajectory is in collision with some object or not from an action that places an object at a desired pose. Such high-level actions would not have any valid concretization if all the trajectories are being obstructed by some object in the low level. 
+
+
+
+
+\paragraph{\textbf{b) Refining the Abstract Model}} 
+Lines \emph{15-20} fix a concretization for the partially refined policy selected on line $5$ and identify the earliest abstract state in the selected policy whose subsequent action's concretization is infeasible. The abstract model is refined by adding the true form of the violated precondition at the low level. Continuing the same example, if all the trajectories from the current state to the state that has the object at the desired pose are in a collision with some other object $obj_x$, the concrete precondition \emph{InCollision(traj, $obj_x$)} is violated at the concrete level and is added to the current abstract model. The rest of the policy after this abstract state is discarded.  Lines \emph{19-20} use the new model to compute a new policy. The symbolic planner is invoked to compute a new policy from the updated state; its solution policy is unrolled as a tree of bounded depth and appended to the partially refined path. This allows the time horizon of the policy to be increased dynamically.
+
+
+  
+
+
+
+
+
+
+   \begin{theorem}
+    \label{thm:pc}
+    If there exists a proper policy that reaches the goal within
+    horizon $h$ -{}- i.e. the probability of reaching the goal is $1.0$ -{}- and has feasible
+    low-level concretization for each of its actions,  and measure of these refinements under the probability density of the generators is non-zero, then Alg.~\ref{alg:atam} will find it with
+    probability $1.0$ in the limit of infinite samples.
+  \end{theorem}
+
+  \begin{proof}
+    Let $\pi_p$ be the proper policy that achieves the goal with horizon $h$ and has valid low-level concretization for each of its actions. Consider a policy $\pi_i$ inside a PRN $i$ at an intermediate step of Alg.~\ref{alg:atam}; let $k$ denote the minimum depth up to which $\pi_p$ and $\pi_i$ match. Here, $k$ denotes a measure of correctness. When PRN $i$ is selected for refinement, eventually Alg.~\ref{alg:atam} would try to compute low-level concretization for an action at depth $k+1$ that does not match with the proper policy $\pi_p$. In this case, there is a chance that Alg.~\ref{alg:atam} would select the correct action (that matches with $\pi_p$ at depth $k+1$) under the \emph{explore} condition (lines $10$-$12$) of Alg.~\ref{alg:atam} and then generates a plan that reaches the goal state. Finite number of discrete actions in the abstract model and the fixed horizon ensures that in time bounded in expectation, HPLan will generate a policy with the measure of correctness $k+1$ and eventually with the measure of correctness $h$. Once the algorithm finds the policy with the measure of correctness $h$, it stores it in the PRG and is guaranteed to find feasible refinements with probability one if the measure of these refinements under the probability-density of the generators is non-zero.
+  \end{proof}
+  
+  % \begin{proof} 
+  %   \textcolor{red}{\emph{(Sketch)} Let $\pi_p$ be a proper policy that reaches the goal withing horizon. Consider a policy
+  %   $\pi$ in a \emph{PRG}; let $k$ denote the minimum depth up to which
+  %   $\pi_p$ and $\pi$ match. $k$ will be used as a \emph{measure of correctness}. When the plan refinement node containing $\pi$ is selected, suppose we try to refine one of the child nodes of depth $k+1$ in the partial path that had the $k$-length prefix consistent with the correct solution $\pi_p$.  The algorithm selects the correct child action with non-zero probability under the \emph{explore} step (line $11$) and then generates a plan to reach the goal from the resultant state. The finite number of discrete actions and the fixed horizon ensures that in time bounded in expectation, \emph{HPlan} will generate a policy with the measure of correctness $k+1$. Once the algorithm finds the policy with the measure of correctness \emph{h}, it stores it in the PRG and is guaranteed to find feasible refinements with probability one if the measure of these refinements under the probability-density of the generators is non-zero.}
+  % \end{proof}
+
+
+  \begin{figure}[t!]
+    \begin{center}
+      \includegraphics[width=0.6\columnwidth]{./ptree.eps}
+    \end{center}
+    \caption{Left: Backtracking from node $B$ invalidates the concretization of subtree rooted at $A$. Right: Replanning from node $B$}
+    \label{fig:ptree}
+  \end{figure}
+
+
+
+ 
+
+
+
+  %     \hspace{0.6cm}
+  %     \begin{subfigure}{0.46\textwidth}
+  %       \includegraphics[height=2in,width=1.5in]{./clutter_1.png}
+  %       % \hspace{1em}
+  %       \includegraphics[height=2in,width=1.5in]{./clutter_2.png}
+  %       \caption{Fetch sorts a cluttered table. All the blue cans have to be placed on the left table and all the green cans have to be placed on right table. Red cans act as obstacles.}
+  %     \end{subfigure} \\ 
+  %     \begin{subfigure}{1\textwidth}
+  %       \includegraphics[height=1.5in,width=1.5in]{./kitchen_1.png}
+  %       % \hspace{1em}
+  %       \includegraphics[height=1.5in,width=1.5in]{./kitchen_3.png}
+  %       \caption{Fetch uses STAMP policy to set up a dining table. A tray is available to carry multiple items at a time but carrying more than two items on the tray may break the items.}
+  %     \end{subfigure}
+  %     \hspace{0.6cm}
+  %     \begin{subfigure}{0.46\textwidth}
+  %       \includegraphics[height=2in,width=1.5in]{./drawer_1.png}
+  %       % \hspace{1em}
+  %       \includegraphics[height=2in,width=1.5in]{./drawer_2.png}
+  %       \caption{Fetch searches for a can in drawers. The can can be placed in one of the drawers stochastically.}
+  %     \end{subfigure} \\ 
+  
+  %     \caption{Photos from our evaluation using the pysical and simulated robots. Videos are available at: \url{https://aair-lab.github.io/stamp.html}. \textcolor{red}{images are as placeholders. trying to get better images and alignment}}
+  %     \label{fig:keva_strucutres}
+  %     \label{fig:fetch_exp}
+  %     \label{fig:sim_fig}
+  %     % \vspace{-10pt}
+  % \end{figure*}
+
+% \subsection{HPlan with entity abstraction for TAMP}
+
+% We use \emph{entity abstraction} as defined in section \ref{sec:entity} to define the TAMP problem (section \ref{sec:definition}). As defined in the section \ref{sec:entity}, \emph{entity abstraction} symbolizes the continuous arguments in the action descriptions. All the symbolic arguments need to be instantiated with continuous values from the concrete domain to compute the solution task and motion policies. We use the \emph{HPlan} algorithm to concretize the abstracted entities in the symbolic actions. 
+
+% \emph{HPlan} uses a \emph{generator} for each abstracted entity to instantiate the symbolic arguments as the concretization function $\gamma$. A generator samples a value for the corresponding abstracted argument from its concrete domain.  Line $13$ in Algorithm \ref{alg:atam} performs a local backtracking search to instantiate the arguments using such generators. 
+% If it fails to assign a valid concrete value to one of the arguments, the algorithm backtracks to the previous action in the high-level solution or generates a new \emph{PRN} depending on the non-deterministic choice made on line $7$.
+
+
+
+
+
+\subsection{HPlan for STAMP}
+We enhance the basic Alg.~\ref{alg:atam} in two primary directions to facilitate STAMP problems. These optimizations allow Alg.~\ref{alg:atam} to compute anytime solutions for STAMP problems and improve the search of concretization of abstract policies. 
+
+
+
+\paragraph{\textbf{Search for Concretizations}} 
+Sampling-based backtracking search performed by Alg.~\ref{alg:atam} (line $13$) to concretize the abstract actions suffers from a few limitations in stochastic settings that are not present in the deterministic settings. Fig.~\ref{fig:ptree} illustrates the problem. The gray nodes in the image show the actions which are concretized. White nodes represent actions that are yet to be concretized. Sibling nodes represent the non-deterministic action outcomes. Now, if the action in the node $B$ does not accept any valid concretization, backtracking to node $A$ and changing its action's concretization would invalidate concretization for the entire subtree rooted at node $A$. Alg.~\ref{alg:atam} handles such scenarios by non-deterministically selecting whether to perform backtracking searching or not (line $6$) and by maintaining different abstract models through \emph{PRG} and employing a resource limit (line $8$) to explore them simultaneously. 
+
+
+
+\paragraph{\textbf{Anytime Computation for Task and Motion Policies}} 
+The main computational challenge for Alg.~\ref{alg:atam} in stochastic settings is that the number
+of root-to-leaf (RTL) branches grows exponentially with the time
+horizon and the number of contingencies in the domain. In most scenarios, not all contingencies are equally probable. Each RTL path has a certain
+probability of being encountered; refining it incurs a computational
+cost. Waiting for a complete refinement of the policy tree results in wasting a lot of
+time as most of the situations have a very low probability of being encountered.  The optimal selection of the paths to refine within a fixed
+computational budget can be reduced to the knapsack
+problem. Unfortunately, we do not know the precise
+computational costs required to refine an RTL path. However, we can approximate this cost depending on the number of actions in an RTL path and the size of the domains of the arguments of those actions. Furthermore, the knapsack problem is NP-hard. However, we can compute provably good approximate solutions to this problem using a greedy approach: we prioritize the selection of a path to refine based on the probability
+of encountering that path \emph{p} and the estimated cost of
+refining that path \emph{c}. We compute $p/c$ ratio for all the paths and select the unrefined path with the largest ratio for refinement (line $9$ and $15$). $p/c$ ratio for each path is updated after each iteration of the main loop (line $21$). Intuitively, our approach works as follows:
+
+\begin{figure*}[t]
+  \centering
+  % \includegraphics[width=\textwidth]{./example1.png}
+  \includegraphics[width=0.8\textwidth]{./stamp_image.pdf}
+  % \includegraphics[width=0.7\textwidth]{./example1_2.png}
+  \caption{A working example for Alg.~\ref{alg:atam}. (a) shows initial environment configuration. Goal for the robot is to pick up the ``Red'' object which is surrounded by ``Blue'', ``Green'', ``Orange'', and ``Black'' objects. G is the end-effector of a robot. (b) shows a high-level, abstract task specification of the ``pick'' action. (c) shows the policy refinement graph (PRG) which is generated incrementally by Alg.~\ref{alg:atam}. Each green box represents a policy refinement node (PRN). Tree in each PRN represents a high-level policy. Each node in a high-level policy is a state-action pair. For brevity, we only show high-level action in the node. Trees with dotted lines are partial policies. Red number represents $p/c$ ratio for each RTL path in a policy. }
+  \label{fig:working_example}
+  
+\end{figure*}
+
+
+
+\begin{figure*}[t!]
+  \begin{subfigure}{\textwidth}
+    \centering
+    \vspace{1em}
+      % \includegraphics[width=1.5in,height=1.5in]{./fetch_replace.eps}
+      \includegraphics[width=1.5in,height=1.5in]{./fetch_new_1.png}
+      % \includegraphics[width=1.5in,height=1.5in]{./fetch_crushed.eps}
+      \includegraphics[width=1.5in,height=1.5in]{./fetch_new_2.png}
+      % \includegraphics[width=1.5in,height=1.5in]{./fetch_target.eps}
+      \includegraphics[width=1.5in,height=1.5in]{./fetch_new_3.png}
+      % \caption{\footnotesize The Fetch mobile manipulator uses a STAMP policy to
+      %   pickup a target bottle while avoiding those that are likely to
+      %   be crushed. It replaces a bottle that wasn't crushed (left), 
+      %   discards a bottle that was crushed (center) and picks up the target
+      %   bottle (right).  }
+    \end{subfigure}
+    \begin{subfigure}{\textwidth}
+      \centering
+    \includegraphics[width=1.5in,height=1.5in]{./tower_12.eps}
+    \includegraphics[width=1.5in,height=1.5in]{./twisted_12.eps}
+    \includegraphics[width=1.5in,height=1.5in]{./3Towers.eps}
+    \end{subfigure}  \\
+    \caption{
+    Top: Cluttered Table: The Fetch mobile manipulator uses a STAMP policy to
+      pick up a target bottle while avoiding those that are likely to
+      be crushed. It replaces a bottle that wasn't crushed (left), 
+      discards a bottle that was crushed (center) and picks up the target
+      bottle (right).    
+    Bottom: Building Structures with Keva Planks: ABB YuMi builds Keva structures using a STAMP policy:
+        12-level tower (left), twisted 12-level tower (center), and
+        $3$-towers (right).}
+    \label{fig:exp_1_2}
+  \end{figure*}
+  
+  \begin{figure*}
+
+  
+    \centering
+    \includegraphics[height=0.24\columnwidth]{./hanger_1.png}
+    \hspace{-0.5em}
+    \includegraphics[height=0.24\columnwidth]{./hangar_2.png}
+    \hspace{0.3em}
+    \includegraphics[height=0.24\columnwidth]{./drawer_1_new.png}
+    \hspace{-0.7em}
+    \includegraphics[height=0.24\columnwidth]{./drawer_2_new.png}
+
+
+  % \begin{subfigure}{0.45\textwidth}
+  %   \centering
+  %   \includegraphics[width=1.5in]{./hanger_1.png}
+  %   % \hspace{1em}
+  %   \includegraphics[width=1.5in]{./hangar_2.png}
+   
+  % \end{subfigure}
+  % \begin{subfigure}{0.45\textwidth}
+  %   \centering
+  %   \includegraphics[width=1in]{./drawer_1_new.png}
+  %   % \hspace{1em}
+  %   \includegraphics[width=1in]{./drawer_2_new.png}
+  % \end{subfigure} \\
+  \caption{Top: Aircraft Inspection: UAV inspects faulty parts of an aircraft in an airplane hangar and alerts the human about the location of the fault. UAV's movements and sensors are noisy, so it may drift from its location or fail to locate the fault. Bottom: Find the can: Fetch searches for a can in drawers. The can can be placed in one of the drawers stochastically.}
+  \label{fig:exp_3_6}
+\end{figure*}
+
+
+\paragraph{\textbf{Example}} Fig.~\ref{fig:working_example} illustrates our approach for solving a STAMP problem using Alg.~\ref{alg:atam}. Fig.~\ref{fig:working_example}(a) shows a low-level configuration of an environment. Here, a robot with an effector G is asked to pick up the red object which is surrounded by green, blue, orange, and black objects. Fig.~\ref{fig:working_example}(b) shows a high-level specification of the pick action in the PPDDL format. Fig.~\ref{fig:working_example}(c) shows the policy refinement graph (PRG) that is generated incrementally by Alg.~\ref{alg:atam}.
+
+As explained in Sec.~\ref{sec:atm}, Alg.~\ref{alg:atam} starts with a single node in the PRG -{}- in this case, PRN$1$. Initially, PRN$1$ does not have a high-level policy. Alg.~\ref{alg:atam} uses the abstract action descriptions (abstract model $\abs{\M}$) and an off-the-shelf high-level SSP solver to compute a high-level symbolic policy that reaches the abstract goal (line $5$) and computes $p/c$ ratios for each RTL path in this abstract policy. To compute this ratio, we estimate the cost of refining each high-level action as follows: Suppose that the generators used to concretize the pick actions samples four grasp up poses in four cardinal directions to pick up the object and five motion planning trajectories between robot's current configuration to the grasp pose, then the approximate cost of refining this action would $4\times5 = 20$. We use this approximate cost to compute $p/c$ ratios (red numbers in Fig.~\ref{fig:working_example}). The next step for Alg.~\ref{alg:atam} is to non-deterministically decide between refining the computed high-level policy and refining the abstraction. 
+
+Assume Alg.~\ref{alg:atam}  non-deterministically decides to refine the high-level policy (line $6$). After deciding to refine the high-level policy, Alg.~\ref{alg:atam} selects an RTL path using the $p/c$ ratio and tries to refine each action on this path by instantiating each symbolic argument. Here in this example, the first RTL path would only have a single high-level action \emph{pick(Red, gp$_1$, traj$_1$)} that needs refinement. To instantiate the high-level pick action, it first uses a generator to sample one of the possible grasp poses for the red object and then uses a low-level motion planner to generate a trajectory that would take the robot end-effector G to the selected grasp pose from its current pose. As the red object is surrounded by other objects, all the trajectories that take the end-effector to the grasp pose, are in collision with at least one object. This violates the precondition of the pick action making the refinement infeasible. Alg~\ref{alg:atam} continues trying to refine this action using the local and global backtracking search for a fixed amount of time before again making a non-deterministic choice between refining the high-level policy or the high-level abstraction. 
+
+
+
+
+Suppose this time Alg.~\ref{alg:atam} decides to refine the high-level abstraction. To do so, it would identify the failing precondition preventing a valid refinement for the high-level policy and generate a set of child nodes in the PRG -{}- PRN$2$ and PRN$3$ in this case corresponding to failing preconditions \emph{Obstructs(traj$_1$, Blue)} and \emph{Obstructs(traj$_1$, Green)}. Once these nodes are generated, Alg.~\ref{alg:atam} would move on to the next iteration of the approach where it would select one of these newly generated plan refinement nodes and repeat the entire process until a complete task and motion policy is computed. 
+
+\begin{theorem} \label{thm:knapsack} Let $t$ be the time since the start of the algorithm
+  at which the refinement of any \emph{RTL} path is completed. If
+  path costs are accurate and constant then the total probability of
+  unrefined paths at time $t$ is at most $1 - opt(t)/2$, where
+  $opt(t)$ is the best possible refinement (in terms of the
+  probability of outcomes covered) that could have been achieved in
+  time $t$.
+\end{theorem}
+
+% \begin{figure*}
+  % \begin{subfigure}{\textwidth}
+  %   \centering
+  %     % \includegraphics[width=3in]{./clutter_1_1.png} 
+  %     \includegraphics[width=3in]{./sort_top_1.eps} 
+  %     % \hspace{1em}
+  %   %  \hspace{1em} \includegraphics[width=3in]{./clutter_2_1.png}
+  %    \hspace{1em} \includegraphics[width=3in]{./sort_top_2.eps}
+  %   \caption{Fetch sorts a cluttered table. All the blue cans have to be placed on the left table and all the green cans have to be placed on right table. Red cans act as obstacles. Left: The initial state for a problem. Right: The goal state.}
+  %   \label{fig:sort}
+  %   \end{subfigure} 
+ 
+
+
+
+
+
+
+
+\begin{proof}
+  (\emph{Sketch})
+   The proof follows from the fact that the greedy algorithm achieves a
+   2-approximation for the knapsack problem. In practice, we estimate the
+   cost as $\hat{c}$, the product of measures of the true domains of each
+   symbolic argument in the given \emph{RTL}. Since, $\hat{c}\ge c$ modulo
+   constant factors, the priority queue never can only underestimate the relative value of refining a path, and the algorithm's coverage of
+   high-probability contingencies will be closer to optimal than the
+   bound suggested in the theorem above. This optimization gives a user
+   the option of starting execution when the desired value of the probability
+   of covered contingencies has been reached. 
+   \end{proof}
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,202 @@
+Dense instances are challenging for \ecbs to solve.
+% 
+Fig.~\ref{fig:stuck_example} shows an example of applying \ecbs to solve a dense instance in $20\times 20$ that has 272 robots with random starts and goals.
+% 
+The \noc decreases as the number of iterations of high-level expansion increases.
+% 
+
+When robot density is not very high, every time a constraint is added to a high-level node, it will lead to the \noc decreasing by at least one.
+% 
+Meanwhile, the \noc of the initial node is not very large for sparse instances.
+% 
+Therefore, \ecbs finds a conflict-free solution efficiently when robot density is not very high.
+% 
+However, when robot density is high, the \noc will be stuck at some non-zero point.
+% 
+This is because robots' interactions are strongly correlated in high-density settings.
+% 
+Adding one constraint to resolve  a given conflict may cause the low-level planner to find a path conflicting with another robot.
+% 
+As a result, the \noc does not decrease and there would be a large number of nodes with the same \noc in the OPEN list.
+% 
+The stagnation of \noc will continue for a long period of high-level expansion until it accidentally expands the correct node. 
+% 
+Even worse, it is possible that \ecbs cannot find a feasible solution after expanding all the nodes with the stagnated \noc in the current OPEN list  and it needs to expand nodes with higher \noc,
+% 
+which makes \ecbs very inefficient.
+% 
+\begin{figure}[!htbp]
+% 
+    \centering
+    \includegraphics[width=\linewidth]{./figures/ecbs_stuck.pdf}
+    \caption{Left:  Number of iterations to enter \noc stagnation on 10 random instances on $20\times 20$ map with 272 robots. Right: An example of \noc stagnation phenomenon when applying \ecbs to solve a dense instance in $20\times 20$ map with 272 robots.}
+    \label{fig:stuck_example}
+    \vspace{2mm}
+\end{figure}% 
+% \begin{wrapfigure}[6]{r}{1.2in}
+% \vspace{-6.5mm}
+%   \begin{center}
+%     \includegraphics[width=1.2in]{./figures/ecbs_stuck.pdf}
+%   \end{center}
+%   \vspace{-4mm}
+%   \caption{An example of applying \ecbs to solve a dense instance in $20\times 20$ map with 272 robots.}
+%   \label{fig:stuck_example}
+% \end{wrapfigure}
+
+To address the issue, we propose \emph{database-accelerated enhanced conflict-based search} (\decbs) (Alg.~\ref{alg:decbs}), which introduces a database-driven conflict resolution mechanism into \ecbs to speed up the high-level expansion and circumvent the \noc stagnation.
+% 
+\decbs expands the high-level nodes regularly as \ecbs does initially.
+% 
+When the \noc of the node to expand drops to a specific point, the database conflict resolution mechanism is triggered and is applied to that node (Line 7).
+% 
+The paths of the current node are used as the initial paths for conflict resolution.
+% 
+We apply the database heuristics to resolve all the conflicts in the paths, in a local $2\times 3$ sub-graph or $3\times 3$ sub-graph. 
+% 
+There is the possibility that we cannot find a sub-graph for a pair of conflicting robots if the map is not a low-resolution graph \cite{han2019ddm}.
+% 
+
+When we could not resolve the conflicts, we return to the \ecbs high-level expansion routine and continue to use focal search in the low level to resolve the conflicts.
+% 
+If $\texttt{DbResolution}$ succeeds in finding a solution, to ensure the solution quality, we check if the \makespan(\soc) suboptimality ratio of paths is within the bound of $w_2$, where $w_2>w_1$ is another user-defined suboptimality bound. 
+% 
+When the solution, after resolving all the conflicts using database heuristics satisfies the optimality need, we return the solution.
+% 
+Otherwise, we continue the \ecbs high-level expansion.
+% 
+\begin{algorithm}
+\begin{small}
+\DontPrintSemicolon
+\SetKwProg{Fn}{Function}{:}{}
+\SetKwFunction{Fcbs}{\decbs}
+\SetKw{Continue}{continue}
+ \caption{\decbs Outline\label{alg:decbs}}
+$\text{Root}\leftarrow$\texttt{InitializeRoot()}\;
+\vspace{1mm}
+$\text{OPEN}.push(\text{Root})$\;
+\vspace{1mm}
+\While{$\textsc{OPEN}\neq \emptyset$}{
+\vspace{1mm}
+$\text{FOCAL}\leftarrow \text{PriorityQueue}(\{n\in \text{OPEN}|n.\soc<\omega_1\cdot n.LB\})$\;
+\vspace{1mm}
+$N\leftarrow \text{FOCAL}.pop()$\;
+\vspace{1mm}
+$\text{OPEN}.remove(N)$\;
+{\color{blue}{
+\vspace{1mm}
+\If{$\texttt{DbTriggered}(N)=true$}{
+$success\leftarrow \texttt{DbResolution}(N)$\;
+\If{$success= true$ and \texttt{CheckOptimality}($N,\omega_2$)=true}{
+\Return $N.paths$\;
+}
+}
+}
+}
+\vspace{1mm}
+$conflict\leftarrow\texttt{FindFirstConflict}(N)$\;
+% \If{$conflict=None$}{
+% \Return $N.paths$\;
+% }
+\vspace{1mm}
+\For{$r$ involved in $conflict$} {
+$N'\leftarrow N.copy()$\;
+$C'\leftarrow \texttt{ResolveConflict}(conflict,r)$\;
+$N'.constraints.add(C')$\;
+$success\leftarrow\texttt{LowLevelPlanner}(N')$\;
+\If{success=true}{$\text{OPEN}.push(N')$}\;
+}
+}
+\end{small}
+\end{algorithm}
+
+Because \decbs preserves the general structure of \ecbs, the bounded-suboptimality guarantee of \ecbs is inherited.
+\begin{proposition}
+\decbs is complete and $w_2$ bounded-suboptimal.
+\end{proposition}
+
+To make \decbs efficient, we observe that we must pay careful attention to a few key points.
+% 
+First, we must choose the right time to trigger the database-driven conflict resolution. 
+% 
+Second, the \noc of the node should drop as quickly as possible and enter the \noc stagnation state as fast as possible.
+% 
+%
+For example, in Fig.~\ref{fig:stuck_example}, the blue curve is better than the yellow curve for \decbs since it ``converges" to the stagnation point in a much shorter time.
+% 
+Third, if we want a suboptimality guarantee at some desired level, $\omega_2$ should be also carefully chosen to balance runtime and optimality. 
+% 
+We certainly hope that the \noc of the node to apply database conflict resolution is small enough.
+% 
+Otherwise, if the node still contains a lot of conflicts, the resulting paths would be very sub-optimal.
+% 
+On the other hand, in dense scenarios, if the desired \noc is too small,  it might take a very long time for the \noc of the node to drop to this value.
+% 
+
+Based on the observations above, we introduce several additional techniques to enhance the performance of \decbs.
+%
+We first apply a DFS-like expansion mechanism to speed up the \noc descent.
+% 
+The high level  is a best-first search which always first expands the node with the smallest \noc in the FOCAL.
+% 
+When the density is high, as mentioned before, adding one constraint for avoiding a given conflict may cause a new conflict in the child node. 
+% 
+As a result, there would be a lot of nodes with the same \noc.
+% 
+The high-level may randomly pick one node among them, which can be very inefficient. 
+% 
+Using \soc of the paths as the tie-breaker is a common way for the high-level search.
+% 
+However, this makes the high-level search inclined to expand nodes with shorter paths, which is efficient in sparse environments.
+% 
+In dense environments, robots inevitably need to take more detours, and shorter paths do not really have fewer conflicts.
+% 
+
+Since shorter paths can be wasteful to sift through, we speed up the expansion in \decbs by adopting a DFS-like strategy. 
+% 
+Specifically, among the nodes with the same \noc, we choose to first explore the node that was \emph{most lately} pushed to the OPEN list.
+% 
+With this choice, the high-level search is more inclined to explore as far as possible along a branch.
+% 
+As it goes deeper along a branch more quickly, the \noc descent enters stagnation in less time. 
+% 
+In the example from Fig.~\ref{fig:stuck_example}, the blue curve uses the second strategy while the orange one uses \soc as the tie-breaker.
+% 
+Using DFS-like expansion strategy leads to ``steeper" \noc descent, which is more suitable for \decbs.
+
+In our method, the proper time to trigger the database can be based on the following rules:
+\begin{enumerate}
+    \item The \noc of the current high-level node is less than a predefined value $NOC_p$.
+    \item The \noc is in stagnation. For example, the value-change of the \noc in the high-level expansion is within a range for a number of iterations.
+\end{enumerate}
+
+Rule (1) is straightforward. 
+% 
+The solution quality of the database conflict resolution mechanism is heavily affected by the \noc of the node. 
+% 
+If the \noc of the current node is small enough, applying the database to resolve the conflicts will introduce only small overheads, and leads to a solution with good quality.
+% 
+However, the suitable $NOC_p$ may vary in different maps and densities.
+% 
+If the $NOC_p$ is set very small in a very dense environment, the high-level search may enter \noc stagnation before its \noc drops below $NOC_p$.
+% 
+As a result, it takes a long time to trigger the database conflict resolution.
+% 
+% Rule (2) is more flexible than rule (1).
+% 
+% It triggers the database conflict resolution with larger $NOC_p$ when robot density is high and smaller $NOC_p$ when robot density is low.
+% % 
+% However, ``$PEC_p$" still has to be chosen empirically.
+% 
+In rule (2), the database conflict resolution  is applied when the searching enters \noc stagnation, which is more flexible than the rule (1).
+% 
+The main drawback of this rule is that there might be multiple stagnations.
+% 
+If the high-level search enters one stagnation but the \noc is still large, the final solution can be very sub-optimal.
+
+
+
+
+
+
+% Since using database heuristics to resolve conflicts would inevitably increase the length of the paths, it is very important to 
+

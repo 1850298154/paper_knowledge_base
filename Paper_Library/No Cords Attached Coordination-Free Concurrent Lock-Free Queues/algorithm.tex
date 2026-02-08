@@ -1,0 +1,506 @@
+\hypertarget{the-cmp-algorithm}{%
+\section{The CMP Algorithm}\label{the-cmp-algorithm}}
+
+Cyclic Memory Protection (CMP) is a lock-free MPMC queue that achieves
+strict FIFO ordering and unbounded capacity with bounded reclamation
+requiring no inter-thread coordination. CMP eliminates use-after-free
+hazards and uses a configurable protection window to bound reclamation
+and prevent ABA within the window. Building on the Michael \& Scott
+linking discipline, CMP removes stale helping and enables fully
+concurrent reclamation without per-thread announcements (hazard
+pointers, epochs, etc.). A scan cursor and a single claim CAS make
+enqueue and dequeue O(1) in the common case.
+
+\hypertarget{dual-protection-mechanism-1}{%
+\subsection[Dual Protection Mechanism ]{\texorpdfstring{Dual Protection
+Mechanism \footnote{\textbf{Memory Ordering Convention:} \texttt{LOAD}
+  uses acquire ordering for reads requiring visibility of prior writes;
+  \texttt{STORE} uses relaxed ordering except for publishing operations
+  which use release; \texttt{FETCH\_MIN} and \texttt{INCREMENT} use
+  sequential consistency or relaxed; CAS operations use acquire-release
+  semantics. Non-atomic operations are safe due to immutability (e.g.,
+  \texttt{current.cycle}) or single-writer guarantees (e.g., recovery
+  state updates).}}{Dual Protection Mechanism }}\label{dual-protection-mechanism-1}}
+
+The key idea is that protection is established before any thread
+dereferences a node. A sliding protection window defines which nodes are
+temporally safe; within this window, nodes cannot be reclaimed, so
+threads dereference without handshakes or coordination. After accessing
+a node, a thread unilaterally publishes its observation point (the
+node's cycle), sliding the window forward for future nodes. Safety
+against ABA and use-after-free (UAF) follows from mathematical
+invariants, not consensus.
+
+This preemptive model contrasts with traditional reactive approaches
+(hazard pointers, epochs) that attempt protection after dereferencing,
+often leading to additional complex race conditions and retries. CMP
+eliminates this by establishing temporal safety boundaries first,
+accessing once, and moving on, resulting in scalable performance with
+fewer atomic operations and lower contention.
+
+CMP ensures safety through two independent but complementary mechanisms:
+
+\textbf{1. State-based protection.} Each node follows a two-state
+lifecycle: \texttt{AVAILABLE\ →\ CLAIMED}. \texttt{AVAILABLE} nodes are
+protected from reclamation and eligible for dequeue operations.
+\texttt{CLAIMED} nodes become reclamation candidates once they satisfy
+the cycle-based protection condition.
+
+\textbf{2. Cycle-based sliding window protection.} Each enqueued node is
+assigned an immutable monotonically increasing \texttt{cycle} at
+creation, establishing a temporal identity that persists throughout its
+lifetime. Dequeues publish the cycle of the node they claim as
+\texttt{deque\_cycle}, which establishes an active sliding protection
+window, \texttt{P\ =\ {[}deque\_cycle\ -\ W,\ deque\_cycle{]}}
+
+where \texttt{W} is the protection window size, tuned to balances memory
+usage with tolerance to thread delays,
+\texttt{W\ =\ max\ (MIN\_WINDOW,\ OPS} \(\times\) \texttt{R)} where
+\texttt{OPS} is expected dequeue rate (ops/s) and \texttt{R} is
+resilience in seconds (maximum acceptable thread delay). The window
+should accommodate the worst-case delay between dequeues under normal
+and stressed conditions. Larger windows increases resilience to
+scheduling delays and preemption but increase memory use, which is
+bounded by \texttt{window\_size} \(\times\) \texttt{node\_size}
+regardless of total queue capacity. \texttt{W} is configured per queue
+instance at initialization, allowing different queues in the same
+deployment to use different window sizes based on their workload
+characteristics.
+
+The key insight is that dequeue operations collectively maintain a
+protection boundary without coordination, guaranteeing safe access to
+future nodes and even to \texttt{CLAIMED} nodes that stalled threads may
+still observe. When a new dequeue operation begins, protection from
+previous dequeues already exists, enabling immediate safe access without
+per-operation coordination. This preemptive approach eliminates the
+coordination overhead, complex retry logic, and timing dependencies
+common in traditional memory reclamation schemes, making dequeue latency
+predictable and scalable regardless of thread count or timing anomalies.
+
+While state-based protection is common in lock-free algorithms, the
+sliding protection window approach eliminates the need for inter-thread
+coordination entirely. Each node receives a cycle timestamp at enqueue,
+and garbage collection maintains a protection window \texttt{P} based on
+the highest cycle accessed by any dequeue operation. Nodes can only be
+reclaimed when they are both \texttt{CLAIMED} and outside this sliding
+window. This cycle-based protection provides bounded memory usage with
+configurable parameters, automatic advancement without coordination, and
+resilience to thread failures - unlike traditional approaches that
+require hazard pointer scanning, epoch coordination, or other complex
+synchronization protocols.
+
+These two mechanisms together provide safety that is both mathematically
+robust and operationally simple. State protection prevents freeing any
+node that may still be accessed, while the cycle window adds a temporal
+guard that covers stalls and failures. In combination, they eliminate
+UAF and ABA by construction, without auxiliary validation protocols.
+This redundancy does not add overhead: the mechanism relies only on the
+atomic operations already required for correctness.
+
+The dual protection also improves performance. Each operation is
+self-contained and coordination-free, which improves cache locality and
+delivers linear scalability across cores. It additionally provides
+automatic recovery: coordinated schemes can let a stalled thread block
+reclamation and trigger unbounded memory growth, whereas the cycle
+window naturally expires old protection so a stalled thread cannot hold
+the system hostage. This behavior is crucial in production, where long
+preemptions and failures are inevitable.
+
+\hypertarget{data-structure-and-rationale}{%
+\subsection{Data Structure and
+Rationale}\label{data-structure-and-rationale}}
+
+The data structure design implements a lock-free FIFO queue with state-
+and cycle-based protection for memory safety. It comprises two
+components: a lock-free queue structure that handles FIFO linking and
+node state transitions, and a cycle management structure that enforces
+temporal ordering and controls reclamation.
+
+\hypertarget{lock-free-queue-structure}{%
+\subsubsection{Lock-free Queue
+Structure}\label{lock-free-queue-structure}}
+
+Each queue node contains four critical fields that together provide dual
+protection. The \texttt{cycle} field is an immutable temporal
+identifier; it is set at enqueue and never changes. The \texttt{next}
+field maintains the linked list structure required for FIFO ordering,
+with atomic updates ensuring that modifications are visible consistently
+across threads and set to \texttt{NULL} on reclaim to prevent stale
+traversal. The \texttt{data} field stores the user payload and is only
+accessed once the node has been safely claimed. The \texttt{state} field
+implements the state-based protection mechanism, transitioning through
+\texttt{AVAILABLE} → \texttt{CLAIMED} to guarantee that no node is
+reclaimed while still available for dequeue operations.
+
+All linked-list nodes (not payloads) are allocated and recycled from a
+type-stable memory pool - nodes reside in a persistent pool, recycled
+exclusively as Node objects, and never freed to the OS. This type
+stability ensures any pointer to pool memory always references a valid
+Node structure with an accessible cycle field, enabling safe cycle-based
+protection checks even on recycled addresses.
+
+The \texttt{head} pointer always references a dummy node, simplifying
+insertion and deletion. The \texttt{tail} pointer optimizes concurrent
+enqueue operations under contention.
+
+The \texttt{scan\_cursor} serves as a dequeue optimization, pointing to
+the first likely available node to reduce traversal to \texttt{O(1)} in
+the common case. Each successful dequeue advances the cursor atomically
+for the benefit of subsequent operations. The
+\texttt{protection\_window} parameter bounds memory usage by defining
+the temporal window for reclamation safety.
+
+\hypertarget{cycle-management-structure}{%
+\subsubsection{Cycle Management
+Structure}\label{cycle-management-structure}}
+
+The cycle mechanism enforces temporal safety through invariants rather
+than coordination, using two counters to define ordering and reclamation
+boundaries.
+
+The global \texttt{cycle} establishes ordering across all enqueue
+operations. Each enqueued node is tagged with the current cycle,
+creating an immutable temporal identity that enables safe reclamation
+decisions.
+
+The \texttt{deque\_cycle} counter tracks the highest cycle value of any
+node successfully claimed and processed, representing the current
+frontier of dequeue progress. Every dequeue operation unilaterally
+announces its progress by updating the global \texttt{deque\_cycle} to
+the cycle of the node it has claimed. This announcement requires no
+coordination or acknowledgment and always advances monotonically.
+
+Safe reclamation is determined by computing protection window
+\texttt{P}. Only nodes outside this window and in state \texttt{CLAIMED}
+are reclaimed. This creates a temporal barrier: any node inside
+protection window \texttt{P} is guaranteed to be protected. Since
+\texttt{deque\_cycle} monotonically tracks the highest cycle accessed by
+any dequeue, and the reclaim process maintains a trailing protection
+window of size \texttt{W}, this ensures that nodes cannot be freed while
+active and cannot be freed if their cycle lies within the protection
+window, even if retired.
+
+The 64-bit cycle counter provides a practically infinite sequence space.
+At one billion operations per second, wraparound would require more than
+584 years, making it irrelevant for practical systems.
+
+\hypertarget{lock-free-enqueue-algorithm}{%
+\subsection{Lock-Free Enqueue
+Algorithm}\label{lock-free-enqueue-algorithm}}
+
+The enqueue operation implements a modified Michael \& Scott linked-list
+insertion algorithm with cycle-based versioning for memory safety.
+Multiple producer threads can enqueue concurrently without coordination,
+maintaining strict FIFO ordering through atomic linked-list operations.
+
+\input{enqueue.tex}
+
+\textbf{Phase 1: Node Allocation and Cycle Assignment.} A new node is
+allocated from the available pool, and initialized with user data. The
+global cycle counter is atomically incremented and assigned to the node,
+establishing its unique temporal identity within the 64-bit space. This
+ordering enables cycle-based protection, where garbage collection
+retains a trailing protection window relative to dequeue progress. If
+allocation fails, the algorithm triggers immediate reclamation and
+retries, providing automatic memory pressure relief without external
+intervention.
+
+\textbf{Phase 2: Lock-Free Insertion.} The insertion phase uses a
+streamlined version of the Michael \& Scott algorithm that eliminates
+helping mechanisms. The algorithm loads the current \texttt{tail}
+pointer and its \texttt{next} field using ACQUIRE ordering to ensure
+visibility of concurrent updates. The \texttt{tail-\textgreater{}next}
+pointer is expected to be \texttt{null} for normal operation. However,
+if the tail's next pointer is non-null, indicating that another thread
+has inserted a node, the algorithm retries with fresh state rather than
+attempting complex coordination. It uses cpu pause when necessary. When
+the tail's next is null, the algorithm attempts to link the new node
+using CAS with RELEASE ordering, ensuring all node writes are visible
+before publication. After successful insertion, the algorithm advances
+the tail pointer to the new node.
+
+\textbf{Phase 3: Conditional Reclamation.} After every N insertions, the
+enqueue thread triggers reclamation (cycle \% N == 0), distributing
+reclamation work across producers and avoiding dedicated GC threads
+while maintaining bounded memory use. The algorithm is agnostic to the
+triggering policy - implementations may use deterministic modulo (as
+shown), randomized triggers (Bernoulli p = 1/N), or hybrid approaches,
+depending on workload fairness requirements. Reclamation is
+non-blocking. If another thread is already reclaiming, enqueue proceeds
+without reclamation.
+
+\textbf{Performance.} In the common case, enqueue requires 3--5 atomic
+operations: one increment for cycle assignment, one or two for loads,
+one CAS to link the node, and optionally one CAS to advance the tail.
+This matches or improves upon Michael \& Scott's performance while
+adding stronger correctness guarantees through cycle-based protection.
+
+\hypertarget{modifications-to-michael-scotts-algorithm}{%
+\subsection{Modifications to Michael \& Scott's
+Algorithm}\label{modifications-to-michael-scotts-algorithm}}
+
+CMP modifies the original Michael \& Scott (M\&S) algorithm to address
+specific inefficiencies, particularly by reducing unnecessary atomic
+operations.
+
+\input{ms-helping.tex}
+
+In the original M\&S algorithm, threads attempt to advance the tail
+pointer when it is stale (i.e., when next is not null). However, this
+helping based on stale data is redundant and often counterproductive.
+Under high load, it can increase contention when multiple threads
+attempt to act on outdated observations. A more effective approach is to
+simply retry with fresh state whenever stale conditions are detected
+(Algorithm 1, line 15), ensuring that operations always proceed on
+current information. Eliminating ``helping'' reduces both the number of
+atomic operations and cache line bouncing in contended scenarios, while
+preserving the correctness guarantees of the original algorithm.
+
+Removing this helping mechanism also helps with removing an extra
+validation (Algorithm 2 line 5) which was originally meant to avoid
+expensive CAS. Since the \texttt{next} non-null value is now eliminated
+in earlier condition, the extra atomic validation is no longer required.
+
+These modifications do not compromise any correctness properties of the
+original algorithm. The helping mechanism was intended as a performance
+optimization, not as a correctness requirement. By removing it, CMP
+strengthens correctness by avoiding potential races between stale
+observations and helping actions.
+
+It is worth noting that production implementations have taken different
+approaches: Java's ConcurrentLinkedQueue employs opportunistic helping,
+Boost.Lockfree implements the full helping mechanism as in the original
+Michael \& Scott algorithm, while .NET's ConcurrentQueue omits helping
+entirely.
+
+\hypertarget{lock-free-dequeue-algorithm}{%
+\subsection{Lock-Free Dequeue
+Algorithm}\label{lock-free-dequeue-algorithm}}
+
+The dequeue operation follows a coordination-free model where temporal
+protection mechanisms are preemptively established, enabling seamless
+lock-free execution without requiring explicit safety coordination. It
+uses the \texttt{scan\_cursor} optimization to achieve \texttt{O(1)}
+common case performance while allowing multiple threads to improve
+shared state without explicit coordination.
+
+\input{dequeue.tex}
+
+\textbf{Phase 1: Scan Cursor Load.} The dequeue loads
+\texttt{scan\_cursor}, which points to the first potentially available
+node, avoiding re-traversal of already-processed nodes and providing
+\texttt{O(1)} performance in most cases without requiring coordination
+protocols. The cursor is initialized to the dummy node at setup and is
+never set to NULL. During traversal, if \texttt{deque\_cycle} advances
+(indicating other threads' progress), the algorithm reloads
+\texttt{scan\_cursor} to accelerate convergence under high contention to
+reduce traversal.
+
+\textbf{Phase 2: Atomic Node Claiming.} Starting at
+\texttt{scan\_cursor}, the thread linearly probes and attempts
+\texttt{CAS\ (state,\ AVAILABLE\ →\ CLAIMED)}. This atomic operation
+ensures that exactly one thread claims a node; others automatically
+continue scanning forward to subsequent nodes. If a CAS fails, another
+thread claimed it; continue scanning. On success, the thread has
+exclusive access and can read the payload.
+
+\textbf{Phase 3: Atomic Data Claiming.} After claiming, the thread
+revalidates that the node state remains \texttt{CLAIMED} (detecting
+potential ABA/reassignment scenarios), and extracts data using
+CAS(current.data, data, NULL) to atomically claim ownership of the
+payload. This CAS prevents duplicate data extraction when multiple
+threads might contest for the same data if threads were preempted and
+stalled in the \texttt{CLAIMED} state. The atomic nullification ensures
+data will be accessed by only one thread, preventing duplicate access
+and potential UAF by clearing the data pointer immediately after
+extraction.
+
+\textbf{Phase 4: Scan Cursor Advance \& Cycle Announcement.} After
+claiming, the thread opportunistically advances \texttt{scan\_cursor} if
+and only if both the pointer value and cycle still equal the last loaded
+cursor, and the claimed node has a non-null next. This dual condition
+mathematically eliminates ABA problems. Since cycles are monotonic and
+never wrap around, even if \texttt{scan\_cursor} is reassigned to the
+same pointer value, the different cycle will prevent this condition from
+being satisfied, providing mathematical certainty against ABA hazards.
+This conditional advance prevents redundant atomic operations when
+another thread has already advanced the cursor, and if the advancement
+CAS fails, correctness is unchanged with only performance impact.
+
+\textbf{Phase 5: Protection Boundary Update.} Upon successful
+advancement, it announces temporal progress by writing
+\texttt{deque\_cycle\ =\ claimed.cycle}. This maintains the invariant
+\texttt{scan\_cursor.cycle} \(\geq\) \texttt{deque\_cycle} and tightens
+the protection boundary.
+
+\textbf{Correctness Guarantees.} The Boundary Update (Phase 5) maintains
+a trailing protection window that prevents freeing nodes within
+protection window of any completed dequeue. The \texttt{scan\_cursor}
+optimization maintains correctness even under high concurrency because
+all updates move the pointer forward monotonically, and race conditions
+only affect performance, never safety. Dual protection ensures nodes
+cannot be freed in the state \texttt{AVAILABLE} (state protection) and
+cannot be freed while within the temporal window (cycle protection).
+
+\textbf{Performance.} The dequeue requires 4-9 atomic operations in the
+common case: one for \texttt{deque\_cycle} loading, one for
+\texttt{scan\_cursor} loading, one for node claiming, one for data
+claiming, and optionally 3-5 additional operations for
+\texttt{scan\_cursor} advancement and \texttt{deque\_cycle} updates. The
+\texttt{scan\_cursor} optimization typically reduces scanning to a
+single iteration, achieving near-constant time performance regardless of
+queue history. Advancement failures are benign---they simply indicate
+another thread already optimized the cursor position.
+
+\hypertarget{coordination-free-memory-reclamation}{%
+\subsection{Coordination-Free Memory
+Reclamation}\label{coordination-free-memory-reclamation}}
+
+\textbf{Safety Predicate.} A node is reclaimed if and only if: \[
+(state \neq AVAILABLE) \land (node.cycle < safe\_cycle)
+\]
+
+\begin{itemize}
+\tightlist
+\item
+  \texttt{state} \(\neq\) \texttt{AVAILABLE} ensures the node has been
+  removed from the abstract queue.
+\item
+  \texttt{node.cycle\ \textless{}\ safe\_cycle} ensures no active
+  consumer thread can access this node or any older cycle.
+\end{itemize}
+
+Both conditions are jointly necessary; omitting either risks freeing
+memory still reachable by some thread.
+
+The reclamation operates without coordination and is lock-free, allowing
+normal queue operations to proceed unimpeded, and uses batched
+collection to amortize atomic costs while maintaining predictable
+latency. Dual safety conditions ensure nodes are reclaimed only when
+both state-based and cycle-based protection mechanisms confirm safety.
+
+Unlike traditional approaches where stalled threads can block garbage
+collection indefinitely, CMP allows reclamation to continue past nodes
+in \texttt{CLAIMED} state from failed or stalled threads. Once a thread
+successfully claims a node, that node becomes a reclamation candidate
+after a minimum of \texttt{W} dequeue cycles have passed, enabling
+automatic recovery while maintaining all safety guarantees.
+
+\input{reclaim.tex}
+
+\textbf{Phase 1: Protection Boundary Calculation.} Reclamation begins by
+calculating the \texttt{safe\_cycle} value that is safe for reclamation
+based on the current \texttt{deque\_cycle} value and the configured
+protection window size \texttt{W}. \[
+safe\_cycle = deque\_cycle - W
+\] Nodes with cycles below this \texttt{safe\_cycle} threshold are
+candidates for reclamation, while nodes inside the protection window are
+preserved to prevent ABA hazards. Only nodes in \texttt{CLAIMED} state
+are considered; \texttt{AVAILABLE} nodes are absolutely protected
+regardless of cycle value.
+
+\textbf{Phase 2: Cycle-Based Safety Boundary.} Starting from
+\texttt{head.next}, the algorithm first checks whether a node's cycle is
+below the threshold. Since the \texttt{cycle} field is immutable, this
+check is a fast, non-atomic read. Only nodes passing this test proceed
+to state verification. Dequeue operations maintain the invariant
+\texttt{scan\_cursor.cycle} \(\geq\) \texttt{deque\_cycle}, and the
+\texttt{tail} always holds the latest cycle value, so active queue
+boundaries remain protected without explicit pointer checks.
+
+\textbf{Phase 3: State-Based Safety.} The algorithm confirms that the
+node is not in \texttt{AVAILABLE} state. Nodes in \texttt{AVAILABLE}
+state are never reclaimed, regardless of their cycle values, as they
+represent nodes waiting to be dequeued. Reclamation halts at the first
+node that is in \texttt{AVAILABLE} state to maintain FIFO order and
+prevent premature reclamation.
+
+\textbf{Phase 4: Batch Collection.} Eligible nodes are collected in a
+batch rather than reclaimed one by one. Batching avoids repeated head
+updates, reduces atomic operations, and improves cache efficiency. The
+algorithm records the original head and the new head after all
+reclaimable nodes, performing a single atomic CAS to advance across the
+batch.
+
+\textbf{Phase 5: Atomic Head Update and Memory Management.} When the
+batch reaches the minimum threshold, reclamation attempts a CAS update
+of the head pointer. If another thread interferes, the attempt is
+abandoned to avoid consistency issues. Only after a successful CAS are
+the collected nodes processed for deallocation. To ensure any dequeue
+thread with a stale pointer safely terminate traversal, the
+\texttt{next} and \texttt{data} pointers set to NULL before being
+returning free node to the memory pool.
+
+\textbf{Mathematical Safety Guarantees.} Temporal progression is
+enforced by monotonic updates of \texttt{deque\_cycle}. Reclamation lags
+by at least \texttt{W} cycles, ensuring that any active or stalled
+thread remains protected against reclamation. This eliminates UAF and
+ABA hazards without coordination, provided the protection window
+\texttt{W} exceeds the maximum possible delay in dequeue progress.
+
+\hypertarget{correctness-and-progress-guarantees-2}{%
+\subsection[Correctness and Progress Guarantees
+]{\texorpdfstring{Correctness and Progress Guarantees \footnote{Complete
+  formal proofs of linearizability, FIFO ordering, memory safety,
+  lock-free progress, and bounded reclamation properties available upon
+  request.}}{Correctness and Progress Guarantees }}\label{correctness-and-progress-guarantees-2}}
+
+CMP achieves strict FIFO semantics, lock-free progress, unbounded
+capacity, and bounded reclamation, with common-case \texttt{O(1)}
+latency and stable performance under contention. The design simplifies
+the enqueue path by eliminating ``helping'' and redundant validations
+from M\&S, and ensures automatic recovery from failed or stalled threads
+through its bounded temporal protection window.
+
+\textbf{Linearizability.} Enqueue operations linearize at the successful
+\texttt{CAS(tail.next,\ null,\ new\_node)} that links a node, while
+dequeue operations linearize at the successful
+\texttt{CAS\ (current.state,\ AVAILABLE,\ CLAIMED)} that claims
+ownership. Empty dequeues linearize when the scan cursor reaches null.
+These points yield a total order consistent with real-time precedence
+and sequential queue semantics.
+
+\textbf{FIFO Ordering.} Strict FIFO ordering is maintained through three
+key invariants: (1) \textbf{Append-only linking:} Enqueues link new
+nodes strictly at the physical tail via
+\texttt{CAS\ (tail.next,\ null,\ new\_node)}, establishing chronological
+order. After linking, list order is immutable. (2) \textbf{Cursor
+minimality:} The \texttt{scan\_cursor} never advances past an
+\texttt{AVAILABLE} node---every node strictly before
+\texttt{scan\_cursor} is in \texttt{CLAIMED} state. (3)
+\textbf{Earliest-claim property:} Dequeues linearly probe from
+\texttt{scan\_cursor}; a node can be claimed
+\texttt{(AVAILABLE\ →\ CLAIMED)} only after all predecessors are
+non-AVAILABLE. Together, (1)--(3) ensure the first successful claim
+always targets the earliest available node in list order, guaranteeing
+removals respect enqueue order regardless of thread scheduling.
+
+\textbf{Lock-Free Progress.} All operations complete in bounded time
+with system-wide progress guarantees. Enqueues use simplified M\&S
+insertion where each failed CAS indicates another thread's successful
+progress. Dequeues scan forward from optimized positions, with each
+failed claim CAS representing another thread's advancement. The
+\texttt{scan\_cursor} optimization achieves \texttt{O(1)} amortized
+dequeue performance by tracking the earliest viable position.
+
+\textbf{Bounded Reclamation.} Nodes are reclaimed within at most
+\texttt{W} dequeue cycles plus GC delay cycles after reaching
+\texttt{CLAIMED} state, independent of thread failures, scheduling
+stalls, or queue size. This provides predictable memory usage, stable
+latency, and resilience under crashes.
+
+\textbf{Memory Safety Guarantees.} The state-based protection prevents
+reclamation of nodes in the \texttt{AVAILABLE} state, while the
+cycle-based protection retains processed nodes within a bounded temporal
+window \texttt{P}. Together, these mechanisms ensure absolute safety
+against UAF, and safety against ABA within the configured window size
+\texttt{W}, without relying on complex retries, validation, or
+coordination overhead, achieving both safety and performance through
+algorithmic invariants rather than runtime detection.
+
+These properties are established through rigorous mathematical analysis
+including invariant preservation, progress arguments, and safety proofs.
+The formal treatment demonstrates that CMP achieves the challenging
+combination of strict FIFO semantics, high performance,
+coordination-free operation, and automatic fault recovery without
+sacrificing correctness guarantees.

@@ -1,0 +1,476 @@
+\pdfoutput=1
+% packages already loaded by the documentclass
+\PassOptionsToPackage{dvipsnames}{xcolor}
+
+\documentclass[sigplan]{acmart}
+
+% Code
+\usepackage{algorithm}
+\usepackage[noend]{algpseudocode}
+\usepackage{cleveref}
+\usepackage{listings}
+
+% Tables
+\usepackage{dcolumn}
+\usepackage{multirow}
+\usepackage{numprint}
+\usepackage{xfp}
+
+\usepackage{xspace}
+
+% Hyphenate in \texttt.
+\usepackage[htt]{hyphenat}
+
+% Make \texttt font size smaller.
+\makeatletter
+\DeclareRobustCommand\ttfamily{%
+  \not@math@alphabet\ttfamily\mathtt\fontfamily\ttdefault%
+  \small%
+  \selectfont}
+\makeatother
+
+% Cref types and separators
+\crefname{lstlisting}{Listing}{Listings}
+\crefname{algorithm}{Algorithm}{Algorithms}
+\def\crefrangeconjunction{--}
+\def\crefpairconjunction{,~}
+
+\bibliographystyle{ACM-Reference-Format.bst}
+
+\title{An Ownership Policy and Deadlock Detector for Promises}
+
+\author{Caleb Voss}
+\email{cvoss@gatech.edu}
+\affiliation{%
+  \institution{Georgia Institute of Technology}
+}
+
+\author{Vivek Sarkar}
+\email{vsarkar@gatech.edu}
+\affiliation{%
+  \institution{Georgia Institute of Technology}
+}
+
+\settopmatter{printacmref=false,printfolios=false}
+
+\begin{document}
+
+\setcopyright{none}
+\renewcommand\footnotetextcopyrightpermission[1]{}
+\pagestyle{plain}
+
+\input{listings}
+\input{algorithms}
+\input{tables}
+
+\begin{abstract}
+  Task-parallel programs often enjoy deadlock freedom under certain
+  restrictions, such as the use of structured join operations, as in
+  Cilk and X10, or the use of asynchronous task futures together with
+  deadlock-avoiding policies such as Known Joins or Transitive Joins.
+  %
+  However, the \emph{promise}, a popular synchronization primitive for
+  parallel tasks, does not enjoy deadlock-freedom guarantees. Promises
+  can exhibit deadlock-like bugs; however, the concept of a deadlock
+  is not currently well-defined for promises.
+
+  To address these challenges, we propose an ownership semantics in
+  which each promise is associated to the task which currently intends
+  to fulfill it.
+  %
+  Ownership immediately enables the identification of bugs in which a
+  task fails to fulfill a promise for which it is responsible.
+  %
+  Ownership further enables the discussion of deadlock cycles among
+  tasks and promises and allows us to introduce a robust definition of
+  deadlock-like bugs for promises.
+
+  Cycle detection in this context is non-trivial because it is
+  concurrent with changes in promise ownership.
+  %
+  We provide a lock-free algorithm for precise runtime deadlock
+  detection.
+  %
+  We show how to obtain the memory consistency criteria required for
+  the correctness of our algorithm under TSO and the Java and C++
+  memory models.
+  %
+  An evaluation compares the execution time and memory usage overheads
+  of our detection algorithm on benchmark programs relative to an
+  unverified baseline. Our detector exhibits a \geomeanTimeFancy
+  geometric mean time overhead and a \geomeanMemFancy geometric mean
+  memory overhead, which are smaller overheads than in past approaches
+  to deadlock cycle detection.
+\end{abstract}
+
+\maketitle
+
+\section{Introduction}
+
+The task-parallel programming model is based on the principle that
+structured parallelism (using high-level abstractions such as
+spawn-sync~\cite{Cilk,OpenMP}, async-finish~\cite{X10,HJlib,hclib},
+futures~\cite{JCP,Cpp17}, barriers~\cite{OpenMP}, and
+phasers~\cite{HJ,Phaser}) is a superior style to unstructured
+parallelism (using explicit low-level constructs like threads and
+locks).
+%
+Structured programming communicates programmer intent in an upfront
+and visible way, providing an accessible framework for reasoning about
+complex code by isolating and modularizing
+concerns.
+%
+However, the \emph{promise} construct, found in mainstream languages
+including C++ and Java, introduces an undesirable lack of structure
+into task-parallel programming. A promise generalizes a future in that
+it need not be bound to the return value of a specific task.
+%
+Instead, any task may elect to supply the value, and the code may not
+clearly communicate which task is intended to do so.
+
+Promises provide point-to-point synchronization wherein one or more
+tasks can await the arrival of a payload, to be produced by another
+task.
+%
+Although the promise provides a safe abstraction for sharing data
+across tasks, there is no safety in the kinds of inter-task blocking
+dependencies that can be created using promises.
+%
+The inherent lack of structure in promises not only leads to
+deadlock-like bugs in which tasks block indefinitely due to a cyclic
+dependence, but such bugs are not well-defined and are undetectable in
+the general case due to the lack of information about which task is
+supposed to fulfill which promise.
+
+\lstDeadlock
+
+A deadlock-like cycle may only be detected once all tasks have
+terminated or blocked. For example, the Go language runtime reports a
+deadlock if no task is eligible to run~\cite{Go}. However, if even one
+task remains active, this technique cannot raise an alarm.
+%
+An example of such a program is in \cref{lst:deadlock}; the root task
+and $t_2$ are in a deadlock that may be hidden if $t_1$ is a
+long-running task, such as a web server.
+%
+An alternative detection approach is to impose timeouts on waits,
+which is only a heuristic solution that may raise an alarm when there
+is no cycle.
+%
+In both of these existing approaches, the detection mechanism may find
+the deadlock some time \emph{after} the cycle has been created.
+%
+It is instead more desirable to detect a cycle immediately when it
+forms.
+
+\subsection{Promise Terminology}
+
+There is inconsistency across programming languages about what to call
+a promise and sometimes about what functionality ``promise'' refers
+to.
+%
+The synchronization primitive we intend to discuss is called by many
+names, including promise~\cite{Cpp17}, handled
+future~\cite{LambdaFut}, completable
+future~\cite{JavaCompletableFuture}, and one-shot
+channel~\cite{RustOneshot}.
+%
+For us, a promise is a wrapper for a data payload that is initially
+absent; each \emph{get} of the payload blocks until the first
+and only \emph{set} of the payload is performed.
+%
+Setting the payload may also be referred to as completing, fulfilling,
+or resolving the promise.
+
+Some languages, such as C++, divide the promise construct into a pair
+of objects; in this case, ``promise'' refers only to the half with a
+setter method, while ``future'' refers to the half with a getter
+method.
+%
+In Java, the \textsf{CompletableFuture} class is a promise, as it
+implements the \textsf{Future} interface and additionally provides a
+setter method.
+
+Habanero-Java introduced the data-driven future~\cite{DDF}, which is a
+promise with limitations on when gets may occur. When a new task is
+spawned, the task must declare up front which promises it intends to
+consume. The task does not become eligible to run until all such
+promises are fulfilled.
+
+In JavaScript, the code responsible for resolving a promise must be
+specified during construction of the
+promise~\cite{JavaScriptPromise}. This is a limitation that makes
+deadlock cycles impossible, although the responsible code may omit to
+resolve the promise altogether, leading to unexecuted callbacks.
+
+Promises may provide a synchronous or an asynchronous API. The Java
+concurrency library provides both, for
+example~\cite{JavaCompletableFuture}.
+%
+The synchronous API consists of the \emph{get} and \emph{set} methods.
+%
+The asynchronous API associates each of the synchronous operations to a
+new task.
+%
+A call to \emph{supplyAsync} binds the eventual return value of a new
+task to the promise.
+%
+The \emph{then} operation schedules a new task to operate on the
+promise's value once it becomes available.
+%
+The asynchronous API can be implemented using the synchronous API.
+%
+Conversely, the synchronous API can be implemented using continuations
+and an asynchronous event-driven scheduler \cite{Imam14}.
+%
+We focus on the synchronous API in this work.
+
+\subsection{Two Bug Classes}
+
+We identify two kinds of synchronization bug in which the improper use
+of promises causes one or more tasks to block indefinitely:
+%
+\begin{enumerate}
+\item the \emph{deadlock cycle}, in which tasks are mutually blocked
+  on promises that would be set only after these tasks unblock, and
+\item the \emph{omitted set}, in which a task is blocked on a promise
+  that no task intends to set.
+\end{enumerate}
+%
+However, neither of these bugs manifests in an automatically
+recognizable way at runtime unless every task in the program is
+blocked.
+%
+In fact, the definitions of these bugs describe conditions which
+cannot generally be detected.
+%
+What does it mean for no task to \emph{intend} to set a promise?
+%
+What does it mean that a task \emph{would} set a promise once the task
+unblocks?
+%
+In a traditional deadlock, say one involving actual locks, the cycle
+is explicit: Task 1 holds lock $A$ and blocks while acquiring lock
+$B$, because task 2 is holding lock $B$ and concurrently blocked
+during its acquisition of lock $A$.
+%
+Intention to release a lock (thereby unblocking any waiters) is
+detectable by the fact that a task holds the lock.
+%
+But we currently have no concept of a task ``holding'' a promise and
+no way to tell that a task intends to set it.
+
+\newcommand\defkw[1]{
+  \expandafter\newcommand\csname kw#1\endcsname{%
+    \textsf{\textbf{#1}}\ifmmode\ \else\xspace\fi%
+  }
+}
+\defkw{new}
+\defkw{set}
+\defkw{get}
+\defkw{async}
+
+\newcommand\deffld[1]{
+  \expandafter\newcommand\csname fld#1\endcsname{%
+    \textsf{#1}\xspace%
+  }
+}
+\deffld{owner}
+\deffld{owned}
+\deffld{waitingOn}
+
+\newcommand\Null{\mathit{null}}
+
+\subsection{Need for Ownership Semantics}
+
+Consider the small deadlock in \cref{lst:deadlock}.
+%
+Two promises, $p,q$, are created.
+%
+Task $t_2$ waits for $p$ prior to setting $q$, whereas the root task
+waits for $q$ prior to setting $p$.
+%
+Clearly a deadlock cycle arises? Not so fast. To accurately call this
+pattern a deadlock cycle requires knowing that task $t_1$ will not
+ever set $p$ or $q$. Such a fact about what \emph{will} not happen is
+generally not determinable from the present state without an offline
+program analysis.
+%
+For this reason, a deadlock cycle among promises evades runtime
+detection unless the cycle involves every currently executing task.
+
+\lstOmittedSet
+
+Now consider the bug in \cref{lst:omittedset}.
+%
+Two promises, $r,s$, are created. According to the comments, task
+$t_3$ is responsible for setting both, and it subsequently delegates
+the responsibility for $s$ to $t_4$.
+%
+However, $t_4$ fails to perform its intended behavior, terminating
+without setting $s$.
+%
+The root task then blocks on $s$ forever.
+%
+If a bug has occurred, we would like to raise an alarm at runtime when
+and where it occurs.
+%
+Where is this bug? Should the root task not have blocked on $s$?
+Should $t_4$ have set $s$? Should $t_3$ have set $s$?
+%
+The blame cannot be attributed, and the bug may, in fact, be in any
+one of the tasks involved.
+%
+Furthermore, \emph{when} does this bug occur?
+%
+The \emph{symptom} of the bug manifests in the indefinite blocking of
+the root task, potentially \emph{after} $t_4$ terminates successfully.
+%
+If some other task may yet set $s$, then this bug is not yet confirmed
+to have occurred.
+%
+Omitted sets evade runtime detection and, even once discovered, evade
+proper blame assignment.
+
+We propose to augment the task creation syntax (\kwasync in our
+examples) to carry information about promise ownership and
+responsibility within the code itself, not in the comments.
+%
+In doing so, omitted sets become detectable at runtime with blame
+appropriately assigned.
+%
+Moreover, programmer intent is necessarily communicated in the code.
+%
+Finally, in knowing which task is expected to set each promise, it
+becomes possible to properly discuss deadlock cycles among promises.
+
+\subsection{Omitted Set in the Wild}
+
+\lstAmazon
+
+An example of an omitted set bug was exhibited by the Amazon Web
+Services SDK for Java (v2) when a certain checksum validation
+failed~\cite{AWSBugReport}.
+%
+An abbreviated version of the code is given in \cref{lst:amazon};
+line~\ref{ln:amazon:fix} was absent prior to the bug fix.
+%
+The control flow ensures that either exception handling code or
+non-exceptional code was executed, not both
+(line~\ref{ln:amazon:bug})~\cite{AWSBugIntroduced}.
+%
+However, only the non-exceptional code would set the value of a
+\texttt{CompletableFuture} (Java's promise) to indicate the work was
+completed (line~\ref{ln:amazon:complete}), whereas the
+\textsf{onError} method would take no action.
+%
+If checksum validation failed after a file download, any consumer
+tasks waiting for the download to complete would block indefinitely.
+%
+A month later, the omitted set bug was identified and
+corrected by adding line~\ref{ln:amazon:fix}~\cite{AWSBugFixed}.
+
+When this bug arises at runtime, the symptom (the blocked consumer) is
+far from the cause (the omitted set), and the bug is not readily
+diagnosable.
+%
+If the runtime could track which tasks are responsible for which
+promises, then this bug could be detected and reported as an exception
+as soon as the responsible task terminates.
+%
+Using our approach, the bug would be detected when the task running
+the \texttt{onComplete} callback finishes, and the alarm would name
+the offending task and the unfulfilled promise.
+
+\subsection{Contributions}
+
+In this work, we propose the addition of \emph{ownership semantics} for
+promises which enables a task's intention to set a promise to be
+reflected in the runtime state.
+%
+In so doing,
+%
+\begin{enumerate}
+\item we enable a precise definition of a deadlocked cycle of promises
+  in terms of runtime state;
+\item we define a second kind of blocking bug, the \emph{omitted
+    set}, which does not involve a cycle;
+\item we require important programmer intent to be encoded explicitly
+  and to respect a runtime-verifiable policy, thereby enabling
+  structured programming for promises.
+\end{enumerate}
+%
+In addition to these theoretical contributions,
+%
+\begin{enumerate}
+\item we introduce a new lock-free algorithm for detecting our
+  now-identifiable deadlock-cycle and omitted-set bugs \emph{when they
+    occur};
+\item we identify properties critical for establishing the correctness
+  of the algorithm under weak memory consistency and show how to
+  ensure these properties hold under the TSO, Java, and C++ memory
+  models;
+\item we prove that our algorithm precisely detects every deadlock
+  without false alarms;
+\item we experimentally show that a Java implementation has low
+  execution time and memory usage overheads on nine benchmarks
+  relative to the original, unverified baseline (geometric mean
+  overheads of \geomeanTime and \geomeanMem, respectively).
+\end{enumerate}
+
+\input{ownership}
+\input{detector}
+\input{weak}
+\input{correctness}
+\input{evaluation}
+\input{related}
+
+\section{Conclusion}
+
+We have introduced an ownership mechanism for promises, whereby each
+task is responsible for ensuring that all of its owned promises are
+fulfilled.
+%
+This mechanism makes it possible to identify a bug, called the omitted
+set, at runtime when the bug actually occurs and to report which task
+is to blame for the error.
+%
+The ownership mechanism also makes it meaningful, for the first time,
+to formally define, discuss, and detect deadlock cycles among tasks
+synchronizing with promises. Such a bug is now detectable as soon as
+the cycle forms.
+
+In our approach, any code that spawns a new asynchronous task must
+name the promises which are to be transferred to the new task.
+%
+The programmer must already be aware of this critical information in
+order to even informally reason about omitted set and deadlock
+bugs. We now ask that it be explicitly notated in the code.
+
+We provided an algorithm to check for compliance with the ownership
+policy at runtime, thereby detecting omitted sets, as well as an
+algorithm for detecting deadlock cycles using ownership information.
+%
+Both types of bug are detected when they occur, not after-the-fact.
+%
+Our deadlock detector is provably precise and correct under a weak
+memory model and we described how to obtain this correct behavior
+under the TSO, Java, and C++ memory models. Every alarm corresponds to
+a true deadlock and every deadlock results in an alarm.
+%
+Experimental evaluation demonstrates that our lock-free approach to
+deadlock detection exhibits low execution time and memory
+overheads relative to an uninstrumented baseline.
+
+\balance
+
+\begin{acks}
+  This work is supported by the \grantsponsor{NSF}{National Science
+    Foundation}{https://www.nsf.gov} under Collaborative Grant
+  No.~\grantnum{NSF}{1822919} and Graduate Research Fellowship Grant
+  No.~\grantnum{NSF}{1650044}.
+\end{acks}
+
+\bibliography{ref}
+
+\end{document}

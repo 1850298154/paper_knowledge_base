@@ -1,0 +1,168 @@
+\section{Formal Analysis Methodology}
+\label{framework}
+\vspace{-5pt}
+In this section, we first present a general overview of our methodology followed by a description of each step.
+
+\vspace{-5pt}
+\subsection{Methodology Overview}
+Figure~\ref{Figure:flowdiagram} provides an overview of the main idea behind our formal analysis of the Hadoop scheduler when integrating model checking and simulation, to early identify failure occurrences.
+The inputs of our proposed methodology are (1) the description of the Hadoop scheduler, (2) the specification of the properties to be verified, and (3) the scheduling metrics (\eg{} type of scheduler, number of nodes, workload and failure distributions, schedulability rate).
+Our proposed methodology is comprised of three main steps, including (a) the formal modeling of the Hadoop scheduler and its properties in CSP and LTL, (b) the quantitative analysis of failures using model checking in PAT, and (c) the qualitative analysis of the failures using simulation of the proposed scheduling strategies and real-simulation traces. The outputs of our methodology are the rate of failures of the verified scheduler, and a set of possible scheduling strategies to overcome these failures.
+
+\begin{figure}[ht]
+\centering
+\vspace{-10pt}
+%\includegraphics[width=12cm,height=5cm]{Figures/Methodology.pdf}
+\includegraphics[scale=0.5]{Figures/NewF.png}
+\caption{Overview of the Formal Analysis of Hadoop Schedulers Methodology}
+\vspace{-15pt}
+\label{Figure:flowdiagram}
+\end{figure}
+\noindent We have chosen the CSP language to formally describe the scheduler as it allows to model the behavior of processes in concurrent systems. It has been successfully applied in modeling synchronous and parallel components for several real-time and distributed systems~\cite{CSP} (which is the case of Hadoop). The properties we aim to verify are written in Linear Temporal Logic (LTL).
+Thereafter, we use the PAT model checker to perform the formal quantitative analysis of failures in Hadoop scheduler. PAT is based on CSP and implements various model checking techniques to analyze and simulate the behavior of several distributed systems (\eg{} transportation
+management system, Web authentication protocols, wireless sensor networks, etc.)~\cite{PAT}.    
+%has been widely used to simulate and verify concurrent and parallel processes in distributed systems, etc.~\cite{PAT}.} 
+Furthermore, it allows to model timed and probabilistic processes in the studied systems~\cite{Sun2009}. Based on the generated results from PAT, we perform a qualitative failures analysis to determine the circumstances and specifications leading to tasks' failures in the scheduler.
+The remainder of this section elaborates more on each of the steps of our methodology.
+
+\vspace{-10pt}
+
+\subsection{Hadoop Scheduler Formal Model: Model Checking}
+\vspace{-3pt}
+The first step in conducting the proposed formal analysis of the Hadoop scheduler using a model checker is to construct a formal model of the main components in Hadoop responsible for the scheduling of tasks, using the CSP language.
+To do so, we start by writing a formal description of the Hadoop master node: the JobTracker and NameNode.
+At the master level, we model the scheduler and the main entities responsible for task assignment and resources allocation in Hadoop.
+Next, we model the TaskTracker and the DataNode including the entity responsible for the task execution at the worker nodes.
+In addition, we integrate some of the important scheduling constraints in Hadoop in the model of the TaskTracker nodes including the data locality, data placement, and speculative execution of tasks~\cite{SOUALHIA2017}. Here, we selected these three constraints because of their direct impact on the scheduling strategies and the performance of executed tasks~\cite{SOUALHIA2017}. 
+At this level, we should mention that the provided model of the Hadoop scheduler represents a close representation of the actual ones (\eg{} FIFO, Fair, and Capacity) because it includes the main functionalities responsible for assigning the received tasks on available nodes.
+Furthermore, we checked the correspondence between the provided model and the real Hadoop scheduler by comparing the scheduling outcomes of scheduled tasks when using the formal model and the existing ones. More details about this comparison is given in Section~\ref{QFA}. 
+The obtained results showed a good matching between the two models. Nevertheless, further functionalities can be added to the presented model in order to improve its results (\textit{i.e.,} recovery mechanisms, efficient resources assignment). 
+%\blue{here explain correspondence between the model and actual hadoop behavior ??}
+%\Foutse{why only these ones? how representative are them? can you justify a bit?}
+In the following, we present a formal description of the steps to model a Hadoop cluster. Then, we present examples of implemented CSP processes\footnote{The entire CSP script is available at:\\ \url{http://hvg.ece.concordia.ca/projects/cloud/fvhs.html}} to describe the \textit{Hadoop scheduler}, \textit{TaskTracker activation} and \textit{task assignment}, where ``\textit{Cluster()}" is the main process and \textit{N} is the number of available TaskTracker nodes in the cluster: 
+\vspace{4pt}
+
+\noindent{\texttt{\footnotesize{
+Cluster()~=~initialize(); NameNode$\_$activate() $\parallel$ JobTracker$\_$activate() $\parallel$~\\
+\hspace*{6.5em}($\parallel$~i:\{0..(N-1)\}$@$DataNode$\_$activate(i)) $\parallel$~\\
+\hspace*{6.5em}($\parallel$~i:\{0..(N-1)\}$@$TaskTracker$\_$activate(i))$\parallel$~\\
+\hspace*{6.5em}Hadoop$\_$Scheduler();
+}} 
+\vspace{4pt}
+
+\noindent The following process presents a formal description of the steps in \textit{``Hadoop$\_$Scheduler()"} to check scheduling constraints of map/reduce tasks. First, it checks the availability of resource slots (\textit{slotTT[i]$>$0}).
+Then, it checks the type of task to be scheduled, either a map (\textit{Queue[index]~==~1}) or reduce (\textit{Queue[index]~==~2}) task. It also checks whether a task is speculatively executed or not (\eg{} map: \textit{Queue[index]~==~3} or reduce: \textit{Queue[index]~==~4}). Next, it assigns the received task to the TaskTracker node where it will be executed (\textit{signedtask?i~~$\rightarrow$~~signedtask$\_$i~~$\rightarrow$~~Task$\_$Assignment(location,type);}).\\
+
+\noindent{\texttt{\footnotesize{
+Hadoop$\_$Scheduler() = \\
+\hspace*{0.5em}\{\hspace*{1.2em}if(~(slotTT[i]>0)~)~~\\
+\hspace*{2.1em}\{while(~(found==0)~\&\&~(index~<~maxqueue~)~)\\
+\hspace*{2.7em}\{~if~(Queue[index]~==~1)~~//it~is~a~map~task~\\
+\hspace*{3.5em}\{~~schedulable~=~1;~found~=1;~location~=~index;\\
+\hspace*{4.5em}  type~=~MapTask;~IDjob$\_$~task~=~IDJob[index];\}~\\
+\hspace*{3em}~if((Queue[index]~==~2))~~//it~is~a~reduce~task~\\
+\hspace*{3.5em}\{~if(FinishedMap[IDJob[index]]~==~Map[IDJob[index]]~~)~~\\
+\hspace*{4em}\{~schedulable~=~1;~found~=1;~location~=~index;\\
+\hspace*{4.5em}~type~=~ReduceTask;~IDjob$\_$~task~=~IDJob[index];\}~~~~\}\\
+\hspace*{3em} if(Queue[index]~==~3)~~//it~is~a~speculated~map~task~\\
+\hspace*{3.5em} \{ schedulable~=~1;~found~=1;~location~=~index;~type~=~MapTask;\\
+\hspace*{4.5em}~IDjob$\_$~task~=~IDJob[index];~SpeculateTask[location]~=~1;\}~\\
+\hspace*{3em} if(Queue[index]~==~4)~~//it~is~a~speculated~reduce~task~\\
+\hspace*{3.5em}\{ schedulable~=~1;~found~=1;~location~=~index;~type~=~ReduceTask;\\
+\hspace*{4.5em}~IDjob$\_$~task~=~IDJob[index];~SpeculateTask[location]~=~1;\}~\\
+\hspace*{4.5em}...\\
+\hspace*{2.8em}\}~\\
+\hspace*{2.2em}\}\\
+\hspace*{0.7em}\hspace*{1em}\}~$\rightarrow$~~signedtask?i$\rightarrow$~~signedtask$\_$i$\rightarrow$Task$\_$Assignment(location,~type);~
+}} \\
+
+\noindent \textit{``TaskTracker$\_$activate(i)"} presents our proposed process to activate the TaskTracker, after checking that the JobTracker was already activated (\textit{JobTracker~==~ON}) and this TaskTracker was not already activated (\textit{TaskTracker[i]~==~OFF}). Next, it activates this Tasktracker (\textit{TaskTracker[i]~==~ON}) and the number of slots specified to this TaskTracker (\textit{slotsnb}). These activated slots are ready to execute tasks.
+\\
+
+\noindent{\texttt{\footnotesize{
+TaskTracker$\_$activate(i)~=~activate$\_$jt$\_$success $~\rightarrow$~ifa(TaskTracker[i]~==~~\\
+\hspace*{11em} OFF \&\& JobTracker~==~ON) \{activate$\_$tt.i\{\\
+\hspace*{11.5em}TaskTracker[i]~=~ON; trackercount++;\}\\
+\hspace*{11.5em}~$\rightarrow$~atomic\{activate$\_$tt$\_$success.i $\rightarrow$\\
+\hspace*{11.5em}($\parallel$~j:\{1..(slotsnb)\}$@$TaskTracker$\_$sendready(i))\}\};
+}} \\
+
+%\noindent{\texttt{\footnotesize{
+%TaskTracker$\_$sendready(i)~=~[DataNode[i]~==~ON~\&\& TaskTracker[i]~==~ON]\\
+%\hspace*{12em}sendReady!i$\rightarrow$sendReady$\_$~success.i$\rightarrow$ signedtask!i\\
+%\hspace*{12em}$\rightarrow$~received$\_$task.i~$\rightarrow$~TaskTracker$\_$execute(i));
+%}} \\
+
+\noindent The following \textit{``TaskTracker$\_$execute(i)"} process presents an example of executing a task after checking its locality in Hadoop. For instance, it checks the availability of the slot assigned to a given task by the scheduler (if slot is free then \textit{task$\_$running[nbTT][k]} is equal to 0, where \textit{nbTT} is the ID of the TaskTracker and \textit{k} is the ID of the assigned slot). Next, it checks the locality of the task by checking whether the node where to execute the task (\textit{selectedTT}) is the same node where its data is located (\textit{Data-LocalTT[idtask]}).
+\\
+%\newpage
+\vspace{-3pt}
+\noindent{\texttt{\footnotesize{
+TaskTracker$\_$execute(i) =\\
+\hspace*{0.3em}\{\hspace*{0.3em}var~nbTT~=i;~var~found~=~0;~var~k~=~0;~\\
+\hspace*{1em}while((k<slotsnb)~\&\&~(found~==~0)~)\{~\\
+\hspace*{1.5em}if(task$\_$~at$\_$~tasktracker[nbTT][k]==1~\&\&~task$\_$running[nbTT][k]==~0)~\\
+\hspace*{2em}\{selectedslot~=k;~found~=~1;~\}~\\
+\hspace*{1.5em}k++;~\}~...\\
+%\hspace*{1.5em}...\\
+\hspace*{1.5em}if(Data-LocalTT[idtask]~==~selectedTT)~//check~locality~of~the~task~\\
+\hspace*{2em}\{locality~=~locality~+~1;~~Locality[idtask]~=~1;\}~\\
+\hspace*{2.5em}else~\{nonlocality~=~nonlocality~+~1;~~Locality[idtask]~=~0;\hspace*{1.5em}\}~\\
+\hspace*{1em}...\}~\\
+\hspace*{0.3em}~\}~$\rightarrow$~if(pos==~-1)~\{TaskTracker$\_$~execute(i)\}\\
+\hspace*{5.5em}~else~\{execute(i,selectedslot)\};~\\
+}}
+\vspace{-15pt}
+\subsection{Hadoop Scheduler Properties: Model Checking}
+The three selected properties we aim to verify in our work are the schedulability, fairness and resources-deadlock freeness. We select these properties because they represent some of the main critical properties affecting the execution of tasks in real-time systems (\eg{} task outcome, delays, resources utilization)~\cite{Cheng2002}. The three properties can be described as follows: the \textit{schedulability} checks whether a task is scheduled and satisfies its specified deadline when scheduled according to a scheduling algorithm.
+The \textit{fairness} checks whether the submitted tasks are served (\eg{} receiving resources slots that ensure their processing) and there are no tasks that will never be served or will wait in the queue more than expected.
+% for long time \Foutse{how long?}.
+The \textit{resources-deadlock} checks whether two tasks are competing for the same resource or each is waiting for the other to be finished.
+
+To better illustrate the properties to be verified, we explain as an example the schedulability property and its corresponding states in our approach.
+For the schedulability, a task can go from state: \textit{submitted} to \textit{scheduled} to \textit{processed} then to \textit{finished-within-deadline} or \textit{finished-after-deadline} or \textit{failed}.
+Let \textit{X} be the total number of scheduled tasks and \textit{Y} be the number of tasks finished within their expected deadlines. The schedulability rate can be defined as the ratio of \textit{X} over \textit{Y}. The property \textit{``schedulabilityrate $ > $ 80"} means checking whether the scheduler can have a total of 80\% of tasks finished within their deadlines.
+
+To verify above properties in PAT, we need to provide their descriptions in LTL. For example, the following LTL formulas check the schedulability and resource-deadlock freeness of given tasks. The first example checks whether a given task eventually goes from the state submitted to the state finished within the deadline. The second example checks whether a given task should not go to a state of waiting-resources. Here, $\diamondsuit$, $\models$, -$>$, and $ \lnot $ represent \textit{eventually}, \textit{satisfy}, \textit{imply}, and \textit{not}, respectively, in the LTL logic. \\
+
+\noindent{\texttt{\footnotesize{
+\hspace*{-0.6em}$\#$~assert $\diamondsuit$ (task~$\models$~(submitted -$>$ finished-within-deadline) );\\
+%\hspace*{13em}~finished-within-deadline) );\\
+$\#$~assert $ \lnot $ (task~$\models$~(submitted -$>$ waiting-resources) );\\ 
+%\hspace*{13em}~waiting-resources) );\\
+}} 
+\vspace{-15pt}
+\subsection{Quantitative Failures Analysis using Model Checking}
+\Mbarka{Provided the CSP model of the Hadoop scheduler and the properties to be verified, we perform the formal analysis of the scheduler performance using the PAT model checker while simulating different Hadoop workload scenarios.
+Here, we can vary the property requirements to assess the performance of the scheduler under different rates and evaluate their impact on the failures rates of the cluster and the simulated scenarios.}
+For example, we can define \textit{``goal0"} to check whether all the submitted tasks (\textit{``workload"}) are successfully scheduled. Using PAT, we can verify if the modeled cluster, \textit{``cluster1"}, can reach this goal or not. Another example could be to check if \textit{``cluster1"} meets \textit{``goal0"} with a \textit{``schedulabilityrate"} of 80\%. The following examples present some of the properties that can be verified using our approach.\\
+\vspace{-23pt}
+% \Foutse{we should explain these examples...and provide a link to a technical report where there is an extensive description of the properties!}:
+\begin{table}[ht]
+%\centering
+\footnotesize
+\label{my-label}
+\texttt{{
+\begin{tabular}{l}
+$\#$define~goal0~completedscheduled~~==~workload~\&\&~workload~>0;\\
+$\#$assert~cluster1~reaches~goal0;\\
+%$\#$assert~cluster~reaches~goal0~with~min(schedulabilityrate);\\
+%$\#$assert~cluster~reaches~goal0~with~max(schedulabilityrate);\\
+$\#$assert~cluster1~reaches~goal0~~\&\&~schedulabilityrate~>80;\\
+$\#$define~goal1~fairnessrate~==50;\\
+$\#$assert~cluster1~reaches~goal0~~\&\&~goal1;\\
+$\#$define~goal2~resourcedeadlockrate~==50;\\
+$\#$assert~cluster1~reaches~goal0~~\&\&~goal1~~\&\&~goal2;
+\end{tabular}
+}}
+\end{table}
+\vspace{-20pt}
+
+\subsection{Qualitative Failures Analysis using Simulation}
+\Mbarka{The last step in our proposed methodology is to use the traces simulated and generated by the PAT model checker to extract information about the applied scheduling strategies and explore their impact on tasks' failures using simulation.} For instance, we can investigate the states where the scheduler does (not) meet a given property and map these states to the obtained scheduler performance and to the input cluster settings. This step allows us to find a possible correlation between the cluster settings, the applied scheduling strategies, and the failures rate. Next, we use these correlations to suggest scheduling strategies to overcome these failures by either (1) recommending to the Hadoop developers to change the scheduling decisions (\eg{} delay long tasks, wait for a local task execution) or (2) to customers to change and adjust their cluster settings (\eg{} number of nodes, number of allowed speculative executions). In next section, we propose a case study to evaluate and simulate the suggested scheduling strategies on a Hadoop environment and measure their impact on the failure rates and the Hadoop cluster performance. 
+\Mbarka{Generally, our solution could propose new scheduling strategies to adjust the Hadoop cluster settings and hence reduce failures rate when compared to the real-execution simulation results.}
+
+
+
+
+

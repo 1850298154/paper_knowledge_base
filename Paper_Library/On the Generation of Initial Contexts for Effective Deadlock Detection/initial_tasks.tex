@@ -1,0 +1,564 @@
+% ;; -*- coding: iso-latin-1; TeX-PDF-mode: t; TeX-master: "main" -*-%
+
+The systematic generation of initial contexts produces a combinatorial
+explosion and therefore it should be used with small sets of abstract
+tasks (and low cardinalities). However, in the context of deadlock
+detection, in order not to miss any deadlock situation, one has to
+consider in principle all methods in the program, hence producing
+scalability problems. Interestingly, it can happen that many of the
+tasks in the generated initial contexts do not affect in any way
+deadlock executions.  Our challenge is to only generate initial
+contexts from which a deadlock can show up.
+%
+For this, the deadlock analysis provides the possibly conflicting task
+interactions that can lead to deadlock. We propose to use this
+information to help our framework discard initial contexts that cannot
+lead to deadlock from the beginning.
+%
+Section \ref{sec:deadlock-analysis} summarizes the concepts of the
+deadlock analysis used to obtain the deadlock cycles, and Section
+\ref{sec:algorithm} presents the algorithm to generate the set of
+initial tasks $\inittasks$.
+
+\subsection{Deadlock Analysis and Abstract Deadlock Cycles}
+\label{sec:deadlock-analysis}
+The deadlock analysis of~\cite{FloresAG13-short} returns a set of
+abstract deadlock cycles of the form
+$e_1\anndep{\taskpp{p_1}{\abstkid_1}}e_2\anndep{\taskpp{p_2}{\abstkid_2}}...\anndep{\taskpp{p_n}{\abstkid_n}}e_{1}$,
+where $p_1,\ldots, p_n$ are program points,
+$\abstkid_1,\ldots,\abstkid_n$ are \emph{task abstractions}, and nodes
+$e_1,\ldots, e_n$ are either \emph{location abstractions} or task
+abstractions. The abstractions
+for tasks and locations can be performed at different levels of
+accuracy during the analysis: the simple abstraction that we will use
+for our formalization abstracts each concrete location $\objid$ by the
+program point at which it is created $\objid_{pp}$, and each task by the
+method name executing (as in Section~\ref{sec:initialcontexts}). 
+They are abstractions since there could be many
+locations created at the same program point and many tasks executing
+the same method.
+ Points-to analysis \cite{Milanova2005,FloresAG13-short}
+can be used  to infer such
+ abstractions with more precision, for instance, by distinguishing
+ the actions performed by  different location abstractions.
+% \fixme{toMI: es object sensitive? en el ejemplo no lo parece... si no
+ % es, comentar la frase, ademas no se entiende muy bien} 
+ Each arrow $e \anndep{\taskpp{p}{\abstkid}}e'$ should be
+ interpreted like ``abstract location or task $e$ is waiting for the
+ termination of abstract location or task $e'$ due to the synchronization
+ instruction at program point $p$ of abstract task $\abstkid$''.
+Three kinds of arrows can be distinguished, namely, \emph{task-task}
+(an abstract task is awaiting for the termination of another one),
+\emph{task-location} (an abstract task is awaiting for an abstract location to be idle) and
+\emph{location-task} (the abstract location is blocked due the
+abstract task). \emph{Location-location} arrows cannot happen. 
+
+\begin{example}\label{ex:cycle}
+  In our working example there are two abstract locations,
+  $\objid_{\ref{pp:newdb}}$, corresponding to location
+  \textsf{database} created at line \ref{pp:newdb} and
+  $\objid_{\ref{pp:neww}}$, corresponding to the $n$ locations
+  \textsf{worker}, created inside the loop at line \ref{pp:neww}; and
+  four abstract tasks, $register$, $getD$, $work$ and $ping$.
+  % $\objid_{\ref{pp:newb}}{.}sleeps$, $\objid_{\ref{pp:newb}}{.}cuts$,
+  % $\objid_{\ref{pp:newa}}{.}wakeup$, $\objid_{\ref{pp:newa}}{.}sits$,
+  % $\objid_{\ref{pp:newc}}{.}taken$ and
+  % $\objid_{\ref{pp:newc}}{.}isClean$.  
+  % subindeces as they are needed in this example since there is only
+  % one location created per program
+  % point.
+  The following cycle is inferred by the deadlock analysis:
+%
+{\small{$\sf \objid_{\ref{pp:newdb}}\anndep{\ref{pp:register}:register}ping\anndep{\ref{pp:ping}:ping}\objid_{\ref{pp:neww}}\anndep{\ref{pp:work}:work}getD\anndep{\ref{pp:getD}:getD}\objid_{\ref{pp:newdb}}$}}.
+  % {\small{$$\objid_{\ref{pp:newb}}\anndep{\ref{pp:blk3b}:sleeps}taken\anndep{\ref{pp:waitb}:taken}sits\anndep{\ref{pp:sit}:sits}\objid_{\ref{pp:newa}}\anndep{\ref{pp:blk2b}:wakeup}cuts\anndep{\ref{pp:cut}:cuts}\objid_{\ref{pp:newb}}$$}}
+%
+\noindent The first arrow captures that the location created at
+Line \ref{pp:newdb} is blocked waiting for the termination of task
+\lst{ping} because of the synchronization at L\ref{pp:register} of task
+\lst{register}.  Also, a dependency between a task and a location (for
+instance, \lst{ping} and $\sf \objid_{\ref{pp:neww}}$) captures
+that the task is trying to execute on that (possibly) blocked
+location. Abstract deadlock cycles can be provided by the analyzer to
+the user. But, as it can observed, it is complex to figure out from
+them why these dependencies arise, and more importantly the interleavings
+scheduled to lead to this situation. \hfill $\Box$
+\end{example}
+
+\subsection{Generation of initial tasks}\label{sec:algorithm}
+The underlying idea is as follows: we select an abstract cycle
+detected by the deadlock analysis, and extract a set of potential
+abstract tasks which can be involved  in a deadlock.  In a
+naive approximation, we could take those abstract tasks that are
+inside the cycle and contain a blocking instruction. We also need to
+set the maximum cardinality for each task to ensure finiteness (by
+default $1$) and require at least one instance for each task (minimum
+cardinality).
+
+This approach is valid as long as we only have blocking
+synchronization primitives, i.e., when the location state stays
+unchanged until the resumption of a suspended execution. % Therefore, it is
+% always executed from the most general context and we cannot lose any
+% interesting test case.
+However, this kind of concurrent/distributed languages usually
+include some sort of non-blocking synchronization primitive.  
+When a location stops its
+execution due to an \Await instruction, another task can
+interleave its execution with it, i.e., start
+to execute and, thus, modify the location state (i.e., the location
+\emph{fields}). 
+Then, if a call or a
+blocking instruction involved in a deadlock depends on the value of
+one of these fields, and we do not consider all the possible values,
+a deadlock could be missed. As a consequence, we need to consider
+at release points, all possible interleavings with tasks that modify the
+fields in order to capture all deadlocks. 
+
+Let us consider now a simple modification of our working
+example. Line \ref{pp:connected1} is replaced by \lst{connected = 0}.
+%
+Now it is easy to see that if we only consider \lst{register} and
+\lst{work} as input, deadlocks are lost: once \lst{register} is
+executed and the instruction at line \ref{pp:await} is reached, the
+location's queue only contains task \lst{getData} but no \lst{makesConnection} and, therefore, when
+task \lst{register} is resumed, field \lst{connected} stays unchanged and
+the body of the condition is not executed, so we cannot have a
+deadlock situation.
+%
+
+In the following we define the \emph{deadlock-interfering} tasks for a
+given abstract deadlock cycle, i.e., an \emph{over-approximation} of
+the set of tasks that need to be
+considered in initial contexts so that we cannot miss a representative
+of the given deadlock cycle. In our extended example, those would be,
+\textsf{register} and \textsf{work} but also
+\textsf{makesConnection}. % Definition \emph{initialTasks(C)} tries to
+% estimate tasks needed to get a deadlock situation which is
+% representative of the abstract cycle $C$.
+ 
+\begin{definition}[initialTasks(C)]\label{def:initialtasks}\small
+Let C an abstract deadlock cycle. Then, 
+$$initialTasks(C) := \bigcup\limits_{i_{call} \in t \in C}
+\!\!\!initialTasks(t,i_{call},C) ~\cup~ \bigcup\limits_{i_{sync} \in t \in C} \!\!\!initialTasks(t,i_{sync},C)$$
+
+where: 
+\begin{itemize}
+\item $initialTasks(t,i,C) = \emptyset   ~~~~~if~ \objid
+\anndep{t} t_2 \not \in C ~and~ i \neq i_{mod}~and~{\not \exists}~i_{await}~{\in}
+[t_0,i]$
+
+\item $initialTasks(t,i,C) = \{t\}   ~if~ (\objid \anndep{t} t_2 \in C
+~or~ i =  i_{mod}~) ~and~ {\not \exists}~i_{await}~{\in} [t_0,i]$
+
+
+\item $initialTasks(t,i,C) = \{t\} ~\cup \bigcup\limits_{f \in fields(i)}
+\left(\bigcup \limits_{i_{mod} \in t_{mod} \in mods(f)}
+\!\!\!\!\!\!\!\!\!\!initialTasks(t_{mod},i_{mod},C) \right) \\ \text{~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~}~if~ \exists~i_{await}~\in
+  [t_0,i]$
+\end{itemize}
+\end{definition}
+\normalsize
+
+The definition relies on function \textsf{fields(I)} which, given an
+instruction \textsf{I}, returns the set of class fields that have been
+read or written until the execution of instruction \textsf{I}. Let
+\textsf{mods(f)} be the set of instructions that modify field
+\textsf{f}.  We can observe that \emph{initialTasks(C)} is the union
+of initial tasks for each relevant instruction inside the cycle C,
+i.e., asynchronous calls and synchronization primitives. We can
+also observe in the auxiliary function \emph{initialTasks(t,i,C)} that:
+(1) if the instruction $i$ is not producing a \emph{location-task
+  edge} and it is not an instruction modifying a field, then $t$ does
+not  need to be added as initial task, (2) if $i$ produces a
+\emph{location-task edge} or is modifying a field, and we  do not
+have any \Await instruction between the beginning of the task and
+$i$, then $i$ is going to be executed under the most general context,
+so we do not need to add more initial tasks but $t$, and (3) on the
+other hand, if there exists an \Await instruction between the
+beginning of task $t$, namely $t_0$, and instruction $i$, each field $f$ inside the set
+\textsf{fields(i)} could be changed before the resumption of the \Await by
+any task modifying $f$. Thus, tasks containing any of the possible
+$f$-modifying instructions must be considered and, recursively, their
+initial tasks.
+
+It is important to highlight that this definition could be infinite
+depending on the program we are working with. For instance, if we
+apply the definition to the abstract cycle $C$ in Example
+\ref{ex:cycle},
+$initialTasks(\text{\textsf{db.register}},\ref{pp:connected},C)$ will
+be evaluated. It fits well with the conditions on third clause, as
+there exists an \Await~ instruction,
+\textsf{fields(\ref{pp:connected})} = \{\textsf{connected}\} and then
+again \ref{pp:connected} is a modifier instruction of field
+\textsf{connected}, so
+$initialTasks(\text{\textsf{db.register}},\ref{pp:connected},C)$ will
+be evaluated again recursively.
+ 
+
+% %shows how to calculate this definition
+% %and, furthermore, it removes the non-finiteness problem.
+% \begin{algorithm}
+% \caption{Algorithm to infer interfering tasks for a given deadlock cycle}
+% \label{alg:tasks}
+% \KwData{An abstract cycle C}
+% \KwResult{A list with the interfering tasks for C}
+%  $Q = \emptyset$\;
+%  $L = \emptyset$\;
+% \ForAll{  $t \in   C$ }
+% {  $i_{call}$ = receiveCall(t,C)\;
+%    enqueue(Q,($i_{call}$,t))\;
+%    $i_{await}$ = receiveSync(t,C)\;
+%    enqueue(Q,($i_{await}$,t))\;
+%    $i_{get}$ = receiveSync(t,C)\;
+%    \If{ $ \exists \in o \anndep{t} t_2 \in C$}{
+%    insert(L,($i_{get}$,t))\;}
+%    enqueue(Q,($i_{get}$,t))\;}
+
+% \While{!empty(Q)}
+% {   (i,t) = dequeue(Q)\;
+%    \If{$\exists i_{await} \in t$ between the beggining  of   t and
+%        i}
+% {\ForAll{ $f \in fields(i)$}  
+%                 {\ForAll{ $i_{mod} \in t_{mod} \in mods(f)$ }
+%              {\If{!member(L,($i_{mod},t_{mod}$))}
+%                {  insert(L,($i_{mod},t_{mod}$))\;
+%                   enqueue(Q,($i_{mod},t_{mod}$))\;
+%                   }
+%                 }
+%               }
+%             }
+% }
+% \Return [(m,1,1) : m $\in$set(project$_y$(L))]\;
+% \end{algorithm}
+
+% Algorithm~\ref{alg:tasks} shows how to finitely infer the
+% interfering-tasks for a given deadlock cycle as defined by
+% Def~\ref{def:initialtasks}.  Function $receiveCall(t,C)$
+% ($receiveSync(t,C)$) receives the asynchronous call (synchronization
+% instruction) of a task $t$ inside the cycle $C$.  $Q$ is the queue of
+% pending pairs \{instruction, task\}, and $L$ is the list containing
+% all of these pairs, whose tasks are the ones that we have to consider.
+% Finiteness is guaranteed because each instruction is added to $Q$ and
+% $L$ at most once, and the number of instructions is finite.
+% %
+% For each task in the cycle, we take the call and the corresponding
+% synchronization instruction, and we add them to $Q$. Instructions \Get
+% producing a \emph{location-task edge}, are also included to $L$, as
+% they have to be inside the initial context.  The other tasks included
+% in the initial context are the ones which could affect the
+% conditions of the aforementioned instructions.
+% %
+
+% In the second loop, we take a pending instruction inside $Q$ and we
+% check if there exists an \Await instruction where the field values could
+% be changed (third clause in definition \ref{def:initialtasks}). In
+% case it does, we need to include all tasks which contain instructions
+% modifying such field. However, this change could be inside an if-else
+% body and we also need to consider the fields inside such
+% condition. Therefore, we add the modifier instruction to the pending
+% instructions queue $Q$. The algorithm finishes when $Q$ is empty and L
+% is the list of pairs with all interfering instructions and their
+% container tasks. Finally, we only take the tasks, that is, the second
+% component of each pair (project$_y$), remove duplicates (set) and set
+% their minimum and maximum cardinalities.
+
+% \begin{example}
+%   Let us show how the algorithm works for our modified example. For
+%   the sake of clarity, instructions are identified by their line
+%   numbers. After executing the first {\bf forall} loop, the value of
+%   $Q$ and $L$ is $\sf
+%   \{(\ref{pp:fping},DB.register),(\ref{pp:register},DB.register),\\
+%   (\ref{pp:fgetdata},Worker.work),(\ref{pp:work},Worker.work)\}$ and
+%   $\sf [(\ref{pp:register},DB.register),(\ref{pp:work},Worker.work)]$,
+%   respectively.  Let us assume $Q$ uses a LIFO policy, hence $\sf
+%   (\ref{pp:work},Worker.work)$ is taken first. Since
+%   \textsf{fields(\ref{pp:work})} $= \emptyset$ L stays unchanged. The
+%   same happens with $\sf (\ref{pp:fgetdata},Worker.work)$. At the
+%   beginning of the third loop, $Q$ is $\sf
+%   \{(\ref{pp:fping},{DB.register}),$ $\sf
+%   (\ref{pp:register},{DB.register})\}$ and $\sf
+%   (\ref{pp:register},{DB.register})$ is taken. Now,
+%   \textsf{fields(\ref{pp:register})} $= \sf \{connected\} $ and
+%   $\exists inst_{await}$ (line~\ref{pp:await}) between lines
+%   \ref{pp:reginit} and \ref{pp:register}. We find three instructions
+%   modifying the field \lst{connected}: \ref{pp:makestrue} $\in$
+%   \lst{DB.makesConnection}, \ref{pp:connected1} $\in$
+%   \lst{DB.register} and \ref{pp:connected} $\in$
+%   \lst{DB.register}. None of them is a member of $L$ and hence they
+%   are added to both queues. Now, $Q$ is $\sf
+%   \{(\ref{pp:fping},{DB.register}),(\ref{pp:connected1},{DB.register}),
+%   (\ref{pp:connected},{DB.register}),\\
+%   (\ref{pp:makestrue},{DB.makesConnection})\}$ but again
+%   \textsf{fields(\ref{pp:connected})} $=$
+%   \textsf{fields(\ref{pp:makestrue})} = $\emptyset$ and, thus, $L$
+%   stays unchanged.  Finally, both $\sf (\ref{pp:fping},{DB.register})$
+%   and $\sf (\ref{pp:connected1},{DB.register})$ are taken and
+%   \textsf{fields(\ref{pp:fping})}${=}$
+%   \textsf{fields(\ref{pp:connected1})}${=} \sf \{connected\}$, but the
+%   modifier instructions have been previously added to $L$, hence $L$
+%   remains unchanged. At the end of {\bf while}, $L$ is $\sf
+%   \{(\ref{pp:register},{DB.register}), (\ref{pp:work},{Worker.work}),
+%   (\ref{pp:connected1},{DB.register}),
+%   (\ref{pp:connected},{DB.register}),\\
+%   (\ref{pp:makestrue},{DB.makesConnection})\}$. Finally, the algorithm
+%   projects over the second component of each pair in the list, removes
+%   duplicates and returns the set $\inittasks = \sf
+%   \{{(DB.register,1,1)}, {(Worker.work,1,1)},
+%   {{(DB.makesConnection,1,1)}}\}$. Our generation of initial contexts
+%   for this set (see Example~\ref{ex:gen-contexts}) produces
+% \[
+% \begin{array}{lll}
+%   \initcontexts{} &=\{&
+%   {\sf\{[register,makesConnection]_{db_1}[work]_{w_1}\},}\\
+%   &&{\sf\{[register]_{db_1},[makesConnection]_{db_2},[work]_{w_1}\}\}}
+% \end{array}
+% \]
+%   \hfill $\Box$
+% \end{example}
+
+
+% The previous input produces
+% $$\initcontexts{DB} = \sf \{\{[register,makesConnection]_{db_1}\},\{[register]_{db_1},[makesConnection]_{db_2}\}\}$$
+% and $$\initcontexts{Worker} = \sf \{\{[work]_{w_1}\}\}$$ Then, the set input
+% is 
+
+
+
+% \subsection{Integration within the Deadlock Detection Framework}
+% \fxnote{MZ: De poner esto deberia ser una subseccion nueva, aunqnue
+%   no va a dar tiempo...}
+
+% \begin{figure}[t]
+% \begin{center}
+% \begin{tabular}{ll}
+% \begin{lstlisting}[style=PrologStyle]
+% deadlock_guided_system_testing :-
+%    algorithm_initial_tasks([(M,MinC,MaxC)|Methods]),
+%    add_calls(SIn,[(M,0,MinC,MaxC)|Methods],SIn),
+%    symbolic_execution(SIn,SOut),
+%    fail.
+% deadlock_guided_system_testing.
+% \end{lstlisting}
+% \end{tabular}
+% \end{center}
+% \caption{Predicate to perform deadlock-guided system testing}
+% \label{fig:clp-builtins3}
+% \end{figure}
+
+% Predicate \texttt{deadlock\_guided\_system\_testing} uses Algorithm
+% \ref{alg:tasks} to infer the set \texttt{[(M,MinC,MaxC)\textbar
+%   Methods]} and creates a new context where the number of instances
+% for each method is bigger than \texttt{MinC} and minor or equal than
+% \texttt{MaxC}, and finally it selects an enabled task and performs a
+% symbolic execution. It then repeats the process for each generated
+% initial context.
+
+% \begin{figure}
+% \begin{center}
+% \begin{minipage}{7.5cm}
+% {\hspace{-1.25cm}
+% \includegraphics[scale=0.6]{tree2.png} }
+% \label{fig:tree3}\end{minipage}
+% \caption{System testing tree of modified working example}
+% \end{center}
+ 
+% \end{figure}
+
+ 
+% Figure~\ref{fig:tree3} shows the derivation tree computed by the
+% system testing for the initial context $\sf
+% \{[register,makesConnection]_{db_1}[work]_{w_1}\}$, the other one
+% is free of deadlocks because \lst{register} and \lst{makesConnection}
+% are inside different instances of $DB$.  As we can see, there are many
+% derivations for this particular input, but we are focused on the ones
+% leading to a deadlock. Let task \lst{register} be the first task to be
+% executed, then it stops in the \Await instruction at line
+% \ref{pp:await}. Once task \lst{empty} has been executed,
+% \lst{register} can resume its execution at any moment.  However,
+% instead of \lst{register}, \lst{makesConnection} is executed and,
+% thus, \lst{connected} becomes $3$. Once \lst{register} is resumed, it
+% gets blocked at the \Get instruction at line
+% \ref{pp:register}. Now, if worker executes \lst{work} instead of
+% \lst{ping}, it gets blocked waiting for \lst{getData}, but they are
+% awaiting for each other, hence we get a deadlock. On the other hand,
+% if \lst{register} is executed before \lst{makesConnection},
+% \lst{connected} is bound to $0$, the asynchronous call to \lst{ping}
+% is not performed and, thus, we cannot get any deadlock from the green
+% state. 
+
+
+% \section{Getting more precision...}
+% The syntax used to define every abstract task and its maximum
+% cardinality is the following: $($\lst{O.M}$,N)$, where \lst{O} and
+% \lst{M} are the class and task name, respectively and \lst{N} is the
+% maximum. Therefore, the system testing receives as input a pairs set
+% of the tasks which are involved during the process.
+
+
+% \begin{figure}[t]
+% \begin{center}
+% \begin{tabular}{ll}
+% %    retractall(event(_,_)),retractall(answer(_,_)),
+% \begin{lstlisting}[style=PrologStyle]
+% calculate_interfering_tasks(Cycle,Tasks) :-
+%    initialize(Cycle),
+%    fixpoint,
+%    findall((Task,1,1),answer(Task,_),Tasks).
+ 
+% initialize([]).
+% initialize([edge(obj(_O),get(Task,LAsync,LGet),task(_W))|Cycle]) :-
+%    !, assertz(event(Task,LGet)),assertz(event(Task,LAsync)),
+%    assertz(answer(Task,LGet)),
+%    initialize(Cycle).
+% initialize([edge(task(_O),sync(Task,LAsync,LSync),task(_W))|Cycle]) :-
+%    !, assertz(event(Task,LSync)),assertz(event(Task,LAsync)),
+%    initialize(Cycle).
+% initialize([_|Cycle]) :- initialize(Cycle).
+
+% fixpoint :-
+%    retract(event(Task,Inst)),!,
+%    process_event(Task,Inst),
+%    fixpoint.
+% fixpoint.
+
+% process_event(Task,Inst) :-
+%    thereis_await(Task,Inst),
+%    accessed_fields(Task,Inst,Fields),
+%    member(F,Fields),
+%    inst(F,write,T,L),
+%    (\+ answer(T,L) -> assertz(event(T,L)), assertz(answer(T,L))),
+%    fail.
+% process_event.
+% \end{lstlisting}
+% \end{tabular}
+% \end{center}
+% \caption{Prolog predicate to infer interfering tasks for a given
+%   deadlock cycle}
+% \label{alg:tasks}
+% \end{figure}
+
+
+\begin{figure}[t]
+\begin{center}
+\begin{tabular}{ll}
+%    retractall(event(_,_)),retractall(answer(_,_)),
+\begin{lstlisting}[style=PrologStyle]
+calculate_interfering_tasks(Cycle,Tasks) :-
+   init(Cycle,[],Events,[],Ans),
+   process_events(Events,Ans,NoCardinality),
+   findall((Task,1,1),member((Task,_),NoCardinality),Repeated),
+   list_to_set(Repeated,Tasks).
+ 
+init([],Evs,Evs,Ans,Ans).
+init([edge(loc,get(Task,LAsync,LGet),task)|C],Evs,Evs2,Ans,Ans2) :-
+   !, init(C,[(Task,LAsync)$\!$,$\!$(Task,LGet)|Evs]$\!$,Evs2,[(Task,LGet)|Ans],Ans2)$\!$.
+init([edge(task,sync(Task,LAsync,LSync),task)|C],Evs,Evs2,Ans,Ans2) :-
+   !, init(C,[(Task,LAsync),(Task,LSync)|Evs],Evs2,Ans,Ans2).
+init([_|Cycle],Evs,Evs2,Ans,Ans2) :- init(Cycle,Evs,Evs2,Ans,Ans2).
+
+process_events([],Ans,Ans).
+process_events([(Task,Inst)|Evs],Ans,Ans2) :-
+   thereis_await(Task,Inst),
+   accessed_fields(Task,Inst,Fields), !,
+   findall((T,L),(member(F,Fields),
+                    inst(F,write,T,L),
+                    \+ member((T,L),Ans)),Modifiers),
+   append(Modifiers,Evs,Evs2), append(Modifiers,Ans,Ans1),
+   process_events(Evs2,Ans1,Ans2).
+process_events([_|Evs],Ans,Ans2) :- process_events(Evs,Ans,Ans2).
+\end{lstlisting}
+\end{tabular}
+\end{center}
+\caption{Prolog predicate to infer interfering tasks for a given
+  deadlock cycle}
+\label{alg:tasks2}
+\end{figure}
+
+Figure \ref{alg:tasks2} presents predicate
+\texttt{calculate\_interfering\_tasks/2} that finitely infers the
+interfering-tasks for a given deadlock cycle as defined by
+Def~\ref{def:initialtasks}. 
+%
+First, both the list of events and of answers are initialized
+(\texttt{init/5}) according to the type of edge. For each edge in the
+cycle, we take the call and the corresponding synchronization
+instruction, and we add them to the pending events. Moreover, \Get\
+instructions produce \emph{location-task} edges, so they are also
+included in the answers list, as they have to be inside the initial
+context. The other tasks included in the initial context are the ones
+which could affect the conditions of those instructions.
+%
+In predicate \texttt{process\_events/3}, we take a pending event
+\texttt{(Task,Inst)} and we check if there is an \Await
+instruction between the start of \texttt{Task} and \texttt{Inst}, using
+predicate 
+(\texttt{thereis\_await/2}), where the previously accessed field values
+(\texttt{accessed\_fields/3}) could be changed (third clause in
+Def.~\ref{def:initialtasks}. In case it does, we need to include in
+the answer set all tasks which contain instructions modifying such
+field (\texttt{inst/4}). Besides, this change could be inside an
+if-else body and we also need to consider the fields inside such
+condition. Therefore we add the modifier instructions to the pending
+events list. This predicate finishes when this list is empty and \texttt{Ans}
+is the list of pairs with all interfering instructions and their
+container tasks. Finally, we only take the tasks, i.e., the first
+component of each pair, we set their minimum and maximum cardinalities
+and remove duplicates (\texttt{list\_to\_set/2}). Finiteness is
+guaranteed because each instruction is added to the pending events and
+answers lists at most once, and the number of instructions is finite.
+
+\begin{example}
+  Let us show how predicate \texttt{calculate\_interfering\_tasks/2} works for our modified example. For
+  the sake of clarity, instructions are identified by their line
+  numbers. After the \texttt{init/5} predicate, the value of variables
+  $\tt Events$ and $\tt Ans$ is $\sf
+  [(Worker.work,\ref{pp:work}),(Worker.work,\ref{pp:fgetdata}),
+  (DB.register,\ref{pp:register}),(DB.register,\ref{pp:fping})]$ and
+  $\sf [(DB.register,\ref{pp:register}),(Worker.work,\ref{pp:work})]$,
+  respectively. Hence, predicate \texttt{process\_e\-vents/3} takes $\sf
+  (Worker.work,\ref{pp:work})$ first. Since there is not an
+  \Await instruction between the beginning of \lst{work} and line \ref{pp:work},
+  {\tt Ans} stays unchanged.  The
+  same happens with $\sf (Worker.work,\ref{pp:fgetdata})$. Now, the
+  pending events list is $\sf
+  [({DB.register},\ref{pp:register}),$ $\sf
+  ({DB.register},\ref{pp:fping},)]$ and $\sf
+  ({DB.register},\ref{pp:register})$ is processed. Now, there is
+  an \Await between lines \ref{pp:reginit} and \ref{pp:register} and, then,
+  \texttt{fields({\sf DB.register},\ref{pp:register},Fields)} is invoked and
+  $\tt Fields= \sf [connected] $.  We find three instructions
+  modifying the field \lst{connected}: \ref{pp:makestrue} $\in$
+  \lst{DB.makesConnection}, \ref{pp:connected1} $\in$
+  \lst{DB.register} and \ref{pp:connected} $\in$
+  \lst{DB.register}. None of them is a member of the answer set and hence they
+  are added to both lists. Now, $\tt Evs$ is \textsf{
+  [({DB.register},\ref{pp:connected}),
+  ({DB.makesConnection},\ref{pp:makestrue}),
+  ({DB.register},\ref{pp:fping}),({DB.register},\ref{pp:connected1})]}
+  but again there is no \Await between the beginning of
+tasks {\sf DB.register} and {\sf DB.makesConnection} and lines \ref{pp:connected} and \ref{pp:makestrue},
+respectively and, thus, $\tt Ans$
+  stays unchanged.  Finally, both $\sf ({DB.register},\ref{pp:connected1})$
+  and $\sf ({DB.register},\ref{pp:fping})$ are taken and both 
+  \texttt{fields({\sf DB.register},\ref{pp:fping},Fields)} and
+  \texttt{fields({\sf DB.register},\ref{pp:connected1},Fi\-elds)} hold
+  where $\tt
+  Fields {=} \sf [connected]$, but the
+  modifier instructions have been previously added to $\tt Ans$, hence
+  $\tt Ans$
+  remains unchanged, and the pending events list becomes empty.
+  Finally, the algorithm
+  projects over the first component of each pair in the list, sets the
+  minimum and maximum cardinalities to $1$ and removes
+  duplicates, returning the set $\inittasks =$ \textsf{
+  \{{(DB.register,1,1)}, {(Worker.work,1,1)},
+  {{(DB.ma\-kes\-Connection,1,1)}}\}}. Thus, the generation of initial contexts
+  for this set (see Example~\ref{ex:gen-contexts}) produces
+\[
+\begin{array}{lll}
+  \initcontexts{} &=\{&
+  {\sf\{[register,makesConnection]_{db_1}[work]_{w_1}\},}\\
+  &&{\sf\{[register]_{db_1},[makesConnection]_{db_2},[work]_{w_1}\}\}}
+\end{array}
+\]
+  \hfill $\Box$
+\end{example}

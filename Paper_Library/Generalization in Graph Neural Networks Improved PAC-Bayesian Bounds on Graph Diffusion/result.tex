@@ -1,0 +1,351 @@
+\section{Sharp Generalization Bounds for Graph Neural Networks}\label{sec_theory}
+
+We first introduce the problem setup for analyzing graph neural networks.
+Then, we state our generalization bounds for graph neural networks and compare them with the prior art.
+Lastly, we construct an example to argue that our bounds are tight.
+
+\subsection{Problem setup}
+
+Consider a graph-level prediction task.
+Suppose we have $N$ examples in the training set; each example is an independent sample from a distribution denoted as $\cD$, which is jointly  supported on the feature space $\cX$ times the label space $\cY$.
+In each example, we have an undirected graph denoted as $G = (V, E)$, which describes the connection between $n$ entities, represented by nodes in $V$.
+For example, a node could represent a molecule, and an edge between two nodes is a bond between two molecules.
+Each node also has a list of $d$ features. Denote all node features as an $n$ by $d$ matrix $X$.
+For graph-level prediction tasks, the goal is to predict a graph label $y$ for every example. 
+We will describe a few examples of such tasks later in Section \ref{sec_empirical}.
+
+
+\medskip
+\noindent\textbf{Message-passing neural networks (MPNN).} %
+We study a model based on several prior works for graph-level prediction tasks \cite{dai2016discriminative,gilmer2017neural,garg2020generalization,liao2020pac}.
+Let $l$ be the number of layers: the first $l-1$ layers are diffusion layers, and the last layer is a pooling layer.
+Let $d_t$ denote the width of each layer for $t$ from $1$ up to $l$.
+There are several nonlinear mappings in layer $t$, denoted as $\phi_{t}, \rho_{t}$, and $\psi_{t}$; further, they are all centered at zero.
+There is a weight matrix $W^{(t)}$ of dimension $d_{t-1}$ by $d_{t}$ for transforming neighboring features, and another weight matrix $U^{(t)}$ of dimension $d$ by $d_t$ for transforming the anchor node feature.
+
+For the first $l-1$ layers, we recursively compute the node embedding from the input features $H^{(0)} = X$:
+{\begin{align}
+    H^{(t)} = \phi_t\Bigbrace{X U^{(t)} + \rho_t\bigbrace{P_{_G} \psi_t(H^{(t-1)})} W^{(t)}}, \text{ for } t = 1,2,\dots,l. \label{eq_matrix_mpgnn}
+\end{align}}%
+For the last layer $l$, we aggregate the embedding of all nodes: let $\bm{1}_n$ be a vector with $n$ values of one:
+{\begin{align}
+    H^{(l)} &= \frac 1 n \bm{1}_n^{\top} H^{(l-1)} W^{(l)}. \label{eq_mpgnn_readout}
+\end{align}}%
+Note that this setting subsumes many existing GNNs.
+Several common designs for the graph diffusion matrix $P_{_G}$ would be the adjacency matrix of the graph (denoted as $A$).
+$P_{_G}$ can also be the normalized adjacency matrix, $D^{-1}A$, with $D$ being the degree-diagonal matrix.
+Adding an identity matrix in $A$ is equivalent to adding self-loops in $G$.
+For GCN, we set $U^{(t)}$ as zero, $\rho_t$ and $\psi_t$ as identity mappings. %
+
+\medskip
+\noindent\textbf{Notations.}
+For any matrix $X$, let $\bignorms{X}$ denote the largest singular value (or spectral norm) of $X$.
+Let $\bignormFro{X}$ denote the Frobenius norm of $X$.
+We use the notation $f(N) \lesssim g(N)$ to indicate that there exists a fixed constant $c$ that does not grow with $N$ such that $f(N) \le c\cdot g(N)$ for large enough values of $N$.
+Let $\cW$ and $\cU$ denote the union of the $W$ and $U$ matrices in a model $f$, respectively.
+
+\subsection{Main results}
+
+Given a message-passing neural network denoted as $f$, what can we say about its generalization performance, i.e., the gap between population and empirical risks? %
+Let $f(X, G)$ denote the output of $f$, given input with graph $G$, node feature matrix $X$, and label $y$.
+The loss of $f$ for this input example is denoted as $\ell(f(X, G), y)$.
+Let $\hat{\cL}(f)$ denote the empirical loss of $f$ over the training set.
+Let $\cL(f)$ denote the expected loss of $f$ over a random drawn of $\cD$.
+We are interested in the generalization gap of $f$, i.e., $\cL(f) - \hat{\cL}(f)$.
+How would the graph diffusion matrix $P_{_G}$ affect the generalization gap of graph neural networks?
+
+To motivate our result, we examine the effect of incorporating graph diffusion in a one-layer linear neural network.
+That is, we consider $f(X, G)$ to be $\frac 1 n \bm 1_n^{\top} P_{_G} X W^{(1)}$, which does not involve any nonlinear mapping for simplicity of our discussion.
+In this case, by standard spectral norm inequalities for matrices, the Euclidean norm of $f$ (which is a vector) satisfies:
+{\begin{align}
+    \bignorm{f(X, G)} = & \bignorm{\frac 1 n \bm 1_n^{\top} P_{_G} X W^{(1)}} \nonumber \\
+    \le & \bignorms{\frac 1 n \bm 1_n^{\top}} \cdot \bignorms{P_{_G}} \cdot \bignorms{X} \cdot \bignorm{W^{(1)}} \label{eq_one_layer_gcn}
+\end{align}}%
+Thus, provided that the loss function $\ell(\cdot, y)$ is Lipschitz-continuous, standard arguments imply that the generalization gap of $f$ scales with the spectral norm of ${P_{_G}}$ (divided by ${\sqrt N}$) \cite{mohri2018foundations}.
+Let us compare this statement with a fully-connected neural net that averages the node features, i.e., the graph diffusion matrix $P_{_G}$ is the identity matrix.
+The spectral norm of $P_{_G}$ becomes one.
+Together, we conclude that the graph structure affects the generalization bound of a single layer GNN by adding the spectral norm of ${P_{_G}}$.
+
+Our main result is that incorporating the spectral norm of the \emph{graph diffusion matrix} $P_{_G}^{l-1}$ is sufficient for any $l$ layer MPNN.
+We note that the dependence is a power of $l-1$ because there are $l-1$ graph diffusion layers: see equation \eqref{eq_matrix_mpgnn}.
+Let $f$ be an $l$-layer network whose weights $\cW, \cU$ are defined within a hypothesis set $\cH$: For every layer $i$ from $1$ up to $l$, we have that
+{\begin{align}
+     \bignorms{W^{(i)}} \le& s_i, ~~\bignormFro{W^{(i)}} \le s_i r_i, \nonumber\\
+     \bignorms{U^{(i)}} \le& s_i, ~~\bignormFro{U^{(i)}} \,\,\le s_i r_i,\label{eq_cH}
+\end{align}}%
+where  $s_1, s_2, \dots, s_l$ and $r_1, r_2, \dots, r_l$ are bounds on the spectral norm and stable rank and are all greater than or equal to one, without loss of generality.
+We now present the full statement.
+
+\begin{theorem}\label{thm_mpgnn}
+    Suppose all of the nonlinear activations in $\set{\phi_t, \rho_t, \psi_t: \forall\, t}$ and the loss function $\ell(\cdot, y)$ (for any fixed label $y \in \cY$) are twice-differentiable, Lipschitz-continuous and their first-order and second-order derivatives are both Lipschitz-continuous.
+    
+    With probability at least $1 - \delta$ over the randomness of $N$ independent samples from $\cD$, for any $\delta > 0$, and any $\epsilon > 0$ close to zero, any model $f$ with weight matrices in the set $\cH$ satisfies:
+    {\begin{align}
+        \cL(f) \leq (1 + \epsilon) \hat{\cL}(f) %
+        + {\sum_{i=1}^l \sqrt{\frac{ C B d_i \Bigbrace{\max\limits_{(X, G, y) \sim \cD}\bignorms{X}^2 \bignorms{P_G}^{2(l-1)}} \Bigbrace{r_i^2 \prod\limits_{j=1}^l s_j^2} } {N}} }
+        + \bigo{\frac{\log(\delta^{-1})}{N^{3/4}}} \label{eq_thm_mpgnn}, %
+    \end{align}}%
+    where $B$ is an upper bound on the value of the loss function $\ell(x, y)$ for any $(x, y) \sim \cD$, $C$ is a fixed constant depending on the activation, and the loss function (see Eq. \eqref{eq_const}, Appendix \ref{proof_theorem}).
+\end{theorem}
+
+
+As a remark, prior works by \citet{garg2020generalization} and \citet{liao2020pac} consider an MPNN with $W^{(t)}$ and $U^{(t)}$ being the same for $t$ from $1$ up to $l$, motivated by practical designs \cite{gilmer2017neural,jin2018junction}.
+Thus, their analysis is conducted separately for GCN and MPNN with weight tying.
+By contrast, our result allows $W^{(t)}$ and $U^{(t)}$ to be arbitrarily different across different layers.
+This unifies GCN and MPNN without weight tying in the same framework so that we can unify their analysis.
+We defer the proof sketch of our result and a discussion to Section \ref{sec_proff_sketch}.
+
+\subsection{Comparison with prior art}\label{sec_compare}
+
+\begin{table*}[t!]
+    \caption{How does the generalization gap of graph neural networks scale with graph properties? In this work, we show spectrally-normalized bounds on $P_{_G}$ and compare our results with prior results in the following table.
+    We let $A$ denote the adjacency matrix, $D$ be the degree-diagonal matrix of $A$, and $l$ be the depth of the GNN.
+    Previous generalization bounds scale with the graph's maximum degree denoted as $d$.
+    Our result instead scales with the spectral norm of $P_{_G}$ and applies to  graph isomorphism networks (GIN) \cite{xu2018powerful} and GraphSAGE with mean aggregation \cite{hamilton2017inductive}.
+    }\label{table_theory}
+    \centering
+    {\begin{tabular}{@{} | c | c | c | c | c |@{}}
+    \toprule
+         Graph Dependence & {GCN} & {MPNN} & {GIN} & {GraphSAGE-Mean} \\
+    \midrule
+        \citeay{garg2020generalization}  & $d^{l-1}$ & $d^{l-1}$ & - & - \\
+        \citeay{liao2020pac}  & $d^{\frac{l-1} 2}$ & $d^{l-1}$ & - & -\\
+        \textbf{Ours (Theorems \ref{thm_mpgnn} and \ref{thm_gin})} & $1$ & $\bignorms{A}^{l-1}$ & $\sum_{i=1}^{l-1} \frac{\bignorms{A}^i}{l-1}$ & $\bignorms{D^{-1} A}^{l-1}$ \\
+    \bottomrule
+    \end{tabular}}%
+\end{table*}
+
+In Table \ref{table_theory}, we compare our result with prior results.
+We first illustrate the effects of graph properties on the generalization bounds.
+Then we will also show a numerical comparison to incorporate the other components of the bounds. 
+\begin{itemize}[leftmargin=15pt]
+    \item Suppose $P_{_G}$ is the adjacency matrix of $G$.
+    Then, one can show that for any undirected graph $G$, the spectral norm of ${P_{_G}}$ is less than the maximum degree $d$ (cf. Fact \ref{fact_graph}, Appendix \ref{app_proof} for a proof).
+    This explains why our result is strictly less than prior results for MPNN in Table \ref{table_theory}.
+    
+    \item Suppose $P_{_G}$ is the normalized and symmetric adjacency matrix of $G$: $P_{_G} = \tilde D^{-1/2} \tilde A \tilde D^{-1/2}$,  where $\tilde A$ is $A + \id$ and $\tilde D$ is the degree-diagonal matrix of $\tilde A$.
+    Then, the spectral norm of $P_{_G}$ is at most one (cf. Fact \ref{fact_graph}, Appendix \ref{app_proof} for a proof).
+    This fact explains why the graph dependence of our result for GCN is $1$ in Table \ref{table_theory}.
+    Thus, we can see that this provides an exponential improvement compared to the prior results.
+\end{itemize}
+Thus, for the above diffusion matrices, we conclude that the spectral norm of ${P_{_G}}$ is strictly smaller than the maximum degree of graph $G$ (across all graphs in the distribution $\cD$).
+
+Next, we conduct an empirical analysis to compare our results and prior results numerically.
+Following the setting of prior works, we use two types of models that share their weight matrices across different layers, including GCN \cite{kipf2016semi} and the MPNN specified in \citet{liao2020pac}. 
+For both models, we evaluate the generalization bounds by varying the network depth $l$ between $2, 4$, and $6$.
+
+We consider graph prediction tasks on three collaboration networks,  including IMDB-B, IMDB-M, and COLLAB \cite{yanardag2015deep}.
+IMDB-B includes a collection of movie collaboration graphs. In each graph, a node represents an actor or an actress, and an edge denotes a collaboration in the same movie. The task is to classify each graph into the movie genre as Action or Romance.
+The IMDB-M is a multi-class extension with the movie graph label Comedy, Romance, or Sci-Fi.
+COLLAB includes a list of ego-networks of scientific researchers. Each graph includes a researcher and her collaborators as nodes. An edge in the graph indicates a collaboration between two researchers. The task is to classify each ego-network into the field of the researcher, including High Energy, Condensed Matter, and Astro Physics.
+
+We report the numerical comparison in Figure \ref{fig_bound_measurement}, averaged over three random seeds.
+Our results are consistently smaller than previous results.
+As explained in Table \ref{table_theory}, the improvement comes from the spectral norm bounds on graphs compared with the max degree bounds.
+
+\begin{figure*}[t!]
+	\begin{subfigure}[b]{0.33\textwidth}
+		\centering
+		\includegraphics[width=0.8\textwidth]{./figures/gcn_bounds_layer_2.pdf}
+		\caption{Two-layer GCN}
+	\end{subfigure}\hfill%
+	\begin{subfigure}[b]{0.33\textwidth}
+		\centering
+		\includegraphics[width=0.8\textwidth]{figures/gcn_bounds_layer_4.pdf}
+		\caption{Four-layer GCN}
+	\end{subfigure}\hfill%
+	\begin{subfigure}[b]{0.33\textwidth}
+		\centering
+		\includegraphics[width=0.8\textwidth]{figures/gcn_bounds_layer_6.pdf}
+		\caption{Six-layer GCN}
+	\end{subfigure}\hfill%
+    \begin{subfigure}[b]{0.33\textwidth}
+		\centering
+		\includegraphics[width=0.8\textwidth]{./figures/mpgnn_bounds_layer_2.pdf}
+		\caption{Two-layer MPNN}
+	\end{subfigure}\hfill%
+	\begin{subfigure}[b]{0.33\textwidth}
+		\centering
+		\includegraphics[width=0.8\textwidth]{figures/mpgnn_bounds_layer_4.pdf}
+		\caption{Four-layer MPNN}
+	\end{subfigure}\hfill%
+	\begin{subfigure}[b]{0.33\textwidth}
+		\centering
+		\includegraphics[width=0.8\textwidth]{figures/mpgnn_bounds_layer_6.pdf}
+		\caption{Six-layer MPNN}
+	\end{subfigure}
+    \caption{Comparing our result and prior results \cite{garg2020generalization, liao2020pac} on three graph classification tasks conducted on GCNs and MPNNs, respectively.}
+    \label{fig_bound_measurement}
+\end{figure*}
+
+
+\subsection{A matching lower bound}
+
+Next, we show an instance with the same dependence on the graph diffusion matrix as our upper bound.
+In our example:
+\begin{itemize}[leftmargin=15pt] 
+    \item The graph is the complete graph with self-loops inserted in each node.
+    Thus, the adjacency matrix of $G$ is a square matrix with all ones.
+    We will set $P_{_G}$ as the adjacency matrix of $G$.
+
+    \item In the first $l-1$ graph diffusion layers, the activation functions $\phi, \rho, \psi$ are all linear functions.
+    Further, we fix all the parameters of $\cU$ as zero.
+    
+    \item The loss function $\ell$ is the logistic loss.
+\end{itemize}
+Then, we demonstrate a data distribution such that there always exists some weight matrices within $\cH$ whose generalization gap must increase in proportion to the spectral norm of $P_{_G}^{l-1}$ and the product of the spectral norm of every layer $s_1, s_2, \dots, s_l$.
+
+\begin{theorem}\label{prop_lb}
+    Let $N_0$ be a sufficiently large value.
+    For any norms $s_1, s_2, \dots, s_n$, there exists a data distribution $\cD$ on which with probability at least $0.1$ over the randomness of $N$ independent samples from $\cD$, for any $N \ge N_0$, the generalization gap of $f$ is greater than the following:
+    {\begin{align}
+        \bigabs{\cL(f) - \hat\cL(f)}  
+        \gtrsim\sqrt \frac{\Bigbrace{\max\limits_{(X, G, y) \sim \cD}\bignorms{P_{_G}}^{2(l-1)}} \Bigbrace{\prod\limits_{i=1}^l s_i^2} }{N}. \label{eq_lb}
+    \end{align}}%
+\end{theorem}
+Notice that the lower bound in \eqref{eq_lb} exhibits the same scaling in terms of $G$---$\bignorms{P_{_G}}^{l-1}$---as our upper bound from equation \eqref{eq_thm_mpgnn}.
+Therefore, we conclude that our spectral norm bound is tight for multilayer MPNN.
+The proof of the lower bound can be found in Appendix \ref{app_lb}.
+
+
+\begin{remark}\normalfont
+    Our results from Theorem \ref{thm_mpgnn} and \ref{prop_lb} together suggest the generalization error bound scales linearly in $l$.
+    To verify whether this is the case, we conducted an empirical study on three architectures (GCN, GIN-Mean, and GIN-Sum) that measured the growth of generalization errors as the network depth $l$ varies.
+    We find that the generalization error grows sublinearly with $l$ to $\bignorms{P_{_G}}$. We also note that this sublinear growth trend has been captured by our Hessian-based generalization bound (cf. Figure \ref{fig_intro_gcn}). It would be interesting to understand better why the sublinear trend happens and further provide insight into the behavior of GNN.
+\end{remark}
+
+\begin{remark}\normalfont
+    Theorem \ref{prop_lb} suggests that in the worst case, the generalization bound would have to scale with the spectral norms of the graph and the weight matrices. 
+    Although this is vacuous for large $l$, later in Lemma \ref{lemma_gen_error}, we show a data-dependent bound using the trace of the Hessians, which is non-vacuous. As shown in Figure \ref{fig_intro_gcn}, Hessian-based measurements match the scale of actual generalization errors: the green line, calculated based on the trace of the loss Hessian matrix (cf. equation \eqref{eq_main_1}), matches the scale of actual generalization gaps plotted in the yellow line.
+\end{remark}
+
+
+\section{Proof Techniques and Extensions}\label{sec_proff_sketch}
+
+Our analysis for dealing with the graph structure seems fundamentally different from the existing analysis.
+In the margin analysis of \citet{liao2020pac}, the authors also incorporate the graph structure in the perturbation error.
+For bounding the perturbation error, the authors use a triangle inequality that results in a $(1, \infty)$ norm of the matrix ${P_{_G}}$ (see Lemma 3.1 of \citet{liao2020pac} for GCN).
+We note that this norm can be larger than the spectral norm by a factor of $\sqrt{n}$, where $n$ is the number of nodes in $G$: in the case of a star graph, this norm for the graph diffusion matrix of GCN is $\sqrt n$.
+By comparison, the spectral norm of the same matrix is less than one (see Fact \ref{fact_graph}, Appendix \ref{app_proof}).
+
+How can we tighten the perturbation error analysis and the dependence on $P_{_G}$ in the generalization bounds, then?
+Our proof involves two parts:
+\begin{itemize}[leftmargin=15pt]
+    \item {\bf Part I:} By expanding the perturbed loss of a GNN, we prove a bound on the generalization gap using the trace of the Hessian matrix associated with the loss.
+    \item {\bf Part II:} Then, we explicitly bound the trace of the Hessian matrix with the spectral norm of the graph using the Lipschitzness of the activation functions.
+\end{itemize}
+
+\medskip
+\noindent\textbf{Part I:} {\itshape Measuring noise stability using the Hessian.} We first state an implicit generalization bound that measures the trace of the Hessian matrix.
+Let $\bH^{(i)}$ denote the Hessian matrix of the loss $\ell(f(X, G), y)$ with respect to layer $i$'s parameters, for each $i$ from $1$ up to $l$. Particularly, $\bH^{(i)}$ is a square matrix whose dimension depends on the number of variables within layer $i$.
+Let $\bH$ denote the Hessian matrix of the loss $\ell(f(X, G), y)$ over all parameters of $f$.
+
+\begin{lemma}\label{lemma_gen_error}
+    In the setting of Theorem \ref{thm_mpgnn}, with probability at least $1 - \delta$ over the randomness of the $N$ training examples, for any $\delta > 0$ and $\epsilon$ close to $0$, we get:
+    {\small\begin{align}
+        \cL(f) \leq (1 + \epsilon) \hat{\cL}(f) 
+        + (1 + \epsilon) \sum_{i=1}^l\sqrt{\frac{B\cdot \left(\max\limits_{(X, G, y)\sim\cD}\tr\big[\bH^{(i)}[\ell(f(X, G), y)]\big]\right) s_i^2 r_i^2}{N}}
+        + \bigo{\frac{\log(\delta^{-1})}{N^{3/4}}}.\label{eq_main_1} 
+    \end{align}}%
+\end{lemma}
+
+\paragraph{Proof Sketch.} At a high level, the above result follows from Taylor's expansion of the perturbed loss.
+Suppose each parameter of $f$ is perturbed by an independent noise drawn from a Gaussian distribution with mean zero and variance $\sigma^2$.
+Let $\tilde \ell(f(X, G), y)$ be the perturbed loss value of an input example $X, G$ with label $y$.
+Let $\cE$ denote the noise injections organized in a vector.
+Using Taylor's expansion of the perturbed loss $\tilde \ell$, we get:
+{ 
+\begin{align}
+         \tilde \ell(f(X, G), y) - \ell(f(X, G), y) \label{eq_perturb} 
+    =   \cE^{\top} \nabla \ell(f(X, G), y) + \frac 1 2 {\cE}^{\top} \bH\big[\ell(f(X, G), y)\big] {\cE} + \order{\sigma^3}. 
+\end{align}}%
+Notice that the expectation of the first-order expansion term above equals zero.
+The expectation of the second-order expansion term becomes $\sigma^2$ times the trace of the loss Hessian.
+To derive equation \eqref{eq_main_1}, we use a PAC-Bayes bound of \citet[Theorem 2]{mcallester2013pac}.
+There are two parts to this PAC-Bayes bound:
+\begin{itemize}[leftmargin=15pt]
+    \item The expectation of the noise perturbation in equation \eqref{eq_perturb}, taken over the injected noise $\cE$;
+    \item The KL divergence between the prior and the posterior, which is at most $s_i^2 r_i^2$ for layer $i$, for $i$ from $1$ up to $l$, within the hypothesis set $\cH$.
+\end{itemize}
+Thus, one can balance the two parts by adjusting the noise variance at each layer---this leads to the layerwise Hessian decomposition in equation \eqref{eq_main_1}.
+
+A critical step is showing the uniform convergence of the Hessian matrix.
+We achieve this based on the Lipschitz-continuity of the first and twice derivatives of the nonlinear activation mappings.
+With these conditions, we prove the uniform convergence with a standard $\epsilon$-cover argument.
+The complete proof can be found in Appendix \ref{proof_trace}.
+
+\begin{remark}\label{remark_node}\normalfont
+Our argument in Lemma \ref{lemma_gen_error} applies to graph-level prediction tasks, which assume an unknown distribution of graphs.
+A natural question is whether the analysis applies to node-level prediction tasks, which are often treated as semi-supervised learning problems.
+The issue with directly applying our analysis to semi-supervised learning is that the size of a graph is only finite.
+Instead, a natural extension would be to think about our graph as a random sample from some population and then argue about generalization in expectation of the random sample.
+It is conceivable that one can prove a similar spectral norm bound for node prediction in this extension. %
+This would be an interesting question for future work.
+\end{remark}
+
+\medskip
+\noindent\textbf{Part II:} {\itshape Spectral norm bounds of the trace of the Hessian.} Next, we explicitly analyze the trace of the Hessian at each layer.
+We bound the trace of the Hessian using the spectral norm of the weight matrices and the graph based on the Lipschitz-continuity conditions from Theorem \ref{thm_mpgnn}.
+Notice that the last layer is a linear pooling layer, which can be deduced from layer $l-1$. Hence, we consider the first $l-1$ layers below.
+
+\begin{lemma}\label{lemma_trace_hess}
+    In the setting of Theorem \ref{thm_mpgnn}, 
+    the trace of the loss Hessian matrix $\bH^{(i)}$ taken over $W^{(i)}$ and $U^{(i)}$ satisfies the following, for any $i = 1,2,\cdots,l-1$,
+    {\begin{align}
+         & \bigabs{\bigtr{\bH^{(i)}\bigbracket{\ell\bigbrace{f(X, G), y}}}} \nonumber \\ 
+    \lesssim ~ & s_l^2 \Bigg(\sum_{p=1}^{d_{i-1}}\sum_{q=1}^{d_i} \bignormFro{\frac{\partial^2 H^{(l-1)}}{\partial \big(W^{(i)}_{p,q}\big)^2}} + \sum_{p=1}^{d_0}\sum_{q=1}^{d_i} \bignormFro{\frac{\partial^2 H^{(l-1)}}{\partial\bigbrace{U_{p,q}^{(i)}}^2}}   
+        + \bignormFro{\frac{\partial H^{(l-1)}}{\partial W^{(i)}}}^2 + \bignormFro{\frac{\partial H^{(l-1)}}{\partial U^{(i)}}}^2 \Bigg) \label{eq_loss_3} \\
+    \lesssim ~ & {\bignorms{X}^2\bignorms{P_{_G}}^{2(l-1)}}  {\prod\nolimits_{j=1:\,j\neq i}^{l} s_j^2}. \label{eq_loss_4}
+    \end{align}}%
+\end{lemma}
+
+\paragraph{Proof Sketch.} Equation \eqref{eq_loss_3} uses the chain rule to expand out the trace of the Hessian and then applies the Lipschitzness of the loss function. Based on this result, equation \eqref{eq_loss_4} then bounds the first and second derivatives of $H^{(l-1)}$.
+This step is achieved via an induction of $\partial H^{(j)}$ and $\partial^2 H^{(j)}$ over $W^{(i)}$ and $U^{(i)}$, for $j = 1,\dots,l-1$ and $i = 1,\dots, j$.
+The induction relies on the feedforward architecture and the Lipschitzness of the first and second derivatives.
+We leave out a few details, such as the constants in equations \eqref{eq_loss_3} and \eqref{eq_loss_4} that can be found in Appendix \ref{proof_first} and \ref{proof_second}.
+Combining both parts together, we get equation \eqref{eq_matrix_mpgnn}.
+
+\smallskip
+\begin{remark}\label{remark_tech}\normalfont
+We compare our analysis with the approach of \citet{liao2020pac}.
+Both our analysis and \citet{liao2020pac} follow the PAC-Bayesian framework.
+But additionally, we explore Lipschitz-continuity properties of the first and second derivatives of the activation functions (e.g., examples of such activations include tanh and sigmoid).
+This allows us to measure the perturbation loss with Hessians, which captures data-dependent properties much more accurately than the margin analysis of \citet{liao2020pac}. 
+It would be interesting to understand if one could still achieve spectral norm bounds on graphs under weaker smoothness conditions. This is left for future work.
+\end{remark}
+
+\subsection{Extensions}\label{sec_extension}
+
+\textbf{Graph isomorphism networks.} This architecture concatenates every layer's embedding together for more expressiveness \cite{xu2018powerful}.
+A classification layer is used after the layers.
+Let $V^{(i)}$ denote a $d_i$ by $k$ matrix (recall $k$ is the output dimension).
+Denote the set of these matrices by $\cV$.
+We average the loss of all of the classification layers.
+Let $\hat\cL_{_{GIN}}(f)$ denote the average loss of $f$ over $N$ independent samples of $\cD$.
+Let ${\cL}_{_{GIN}}(f)$ denote the expected loss of $f$ over a random sample of $\cD$.
+See also equation \eqref{eq_loss_gin} in Appendix \ref{app_gin} for their precise definitions.
+
+Next, we state a generalization bound for graph isomorphism networks.
+Let $f$ be any $l$-layer MPNN with weights defined in a hypothesis space $\cH$: the parameters of $f$ reside within the constraints from equation \eqref{eq_cH};
+further, for every $i$ from $1$ up to $l$, the spectral norm of $V^{(i)}$ is less than $s_l$. %
+Building on Lemma \ref{lemma_trace_hess}, we show a bound that scales with the spectral norm generalization of the averaged graph diffusion matrices.
+Let $P_{_{GIN}}$ denote the average of $l-1$ matrices: $P_{_G}, P_{_G}^2, \dots, P_{_G}^{l-1}$.
+We state the result below.
+
+\begin{corollary}\label{thm_gin}
+    Suppose the nonlinear activation mappings and the loss function satisfy the conditions stated in Theorem \ref{thm_mpgnn}.    
+    With probability at least $1- \delta$ for any $\delta \ge 0$, and any $\epsilon$ close to zero, any $f$ in $\cH$ satisfies:
+    {\small\begin{align}
+         {L}_{_{GIN}}(f) \le (1+\epsilon)\hat\cL_{_{GIN}}(f) \label{eq_gin_result} 
+         + {\sum_{i=1}^{l} \sqrt {\frac { {BC  d_i \cdot \left({\max\limits_{(X, G, y) \sim \cD} \bignorms{X}^2 \bignorms{ P_{_{GIN}}}^2}\right) \Bigbrace{r_i^2 \prod\limits_{j=1}^{l} s_j^2}}} {N}}} + \bigo{\frac{\log(\delta^{-1})}{N^{3/4}}}, 
+    \end{align}}%
+    where $B$ is an upper bound on the value of the loss function $\ell$ across the data distribution $\cD$, $C$ is a fixed constant that only depends on the Lipschitz-continuity of the activation mappings and the loss.
+\end{corollary}
+
+The proof can be found in Appendix \ref{app_gin}.
+In particular, we apply the trace norm bound over the model output of every layer.
+The classification layer, which only uses a linear transformation, can also be incorporated. 
+
+\medskip
+\noindent\textbf{Fine-tuning Graph Neural Networks.} We note that all of our bounds can be applied to the fine-tuning setting, where a graph neural network is initialized with pretrained weights and then fine-tuned on the target task.
+The results can be extended to this setting by setting the norm bounds within equation \eqref{eq_cH} as the distance between the pretrained and fine-tuned model.

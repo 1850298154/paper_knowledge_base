@@ -1,0 +1,706 @@
+\documentclass[]{fairmeta}
+% Option "twocolumn" available, but please prioritize single-column
+\DeclareMathOperator*{\argmin}{arg\,min}
+
+\title{Scaling Small Agents Through Strategy Auctions}
+
+\author[\dagger, 2]{Lisa Alazraki}
+\author[\dagger, 3]{William F. Shen}
+\author[1]{Yoram Bachrach}
+\author[1]{Akhil Mathur}
+
+\affiliation[1]{Meta Superintelligence Labs}
+% \affiliation[2]{FAIR}
+\affiliation[2]{Imperial College London}
+\affiliation[3]{University of Cambridge}
+
+
+\contribution[\dagger]{Work done at Meta}
+
+\abstract{Small language models are increasingly viewed as a promising, cost-effective approach to agentic AI, with proponents claiming they are sufficiently capable for agentic workflows. However, while smaller agents can closely match larger ones on simple tasks, it remains unclear how their performance scales with task complexity, when large models become necessary, and how to better leverage small agents for long-horizon workloads. In this work, we empirically show that small agents' performance fails to scale with task complexity on deep search and coding tasks, and we introduce \textit{Strategy Auctions for Workload Efficiency} (\textit{\textsc{sale}}), an agent framework inspired by freelancer marketplaces. In \textsc{sale}, agents bid with short strategic plans, which are scored by a systematic cost–value mechanism and refined via a shared auction memory, enabling per-task routing and continual self-improvement without training a separate router or running all models to completion. Across deep search and coding tasks of varying complexity, \textsc{sale} reduces reliance on the largest agent by 53\%, lowers overall cost by 35\%, and consistently improves upon the largest agent's pass@1 with only a negligible overhead beyond executing the final trace. In contrast, established routers that rely on task descriptions either underperform the largest agent or fail to reduce cost---often both---underscoring their poor fit for agentic workflows. These results suggest that while small agents may be insufficient for complex workloads, they can be effectively “scaled up” through coordinated task allocation and test-time self-improvement. More broadly, they motivate a systems-level view of agentic AI in which performance gains come less from ever-larger individual models and more from market-inspired coordination mechanisms that organize heterogeneous agents into efficient, adaptive ecosystems.}
+
+\date{\today}
+\correspondence{ \email{lisa.alazraki20@imperial.ac.uk},
+\email{akhilm@meta.com}}
+
+\begin{document}
+
+\maketitle
+
+\section{Introduction}
+\label{section:intro}
+
+Recent work on tool-augmented AI agents has led to growing optimism that small language models may be sufficient for many real-world applications. By offloading computation and knowledge to external tools and environments, small agents are argued to need less parametric capacity while still supporting complex, multi-step behavior~\citep{houliston2025provablebenefitsintoollearning}. Combined with advances that narrow the performance gap between small and large language models~\citep{sarahooker2025deathofscaling}, this has led to claims that small, inexpensive agents can replace large ones as the foundation of agentic AI~\citep{belcak2025smalllanguagemodelsfuture}.
+
+Yet much of the current optimism around small agents is framed in terms of model size and agentic capabilities, with comparatively little attention to how these interact with the structure and complexity of the tasks they are meant to solve. In practice, agentic workloads span a wide spectrum: from short, well-specified tasks with simple evaluation criteria to open-ended, long-horizon problems that require extended reasoning, integrating different types of information, and maintaining coherence over many steps~\citep{wang2025odysseybenchevaluatingllmagents}. It is not obvious that the same small agent that performs well on the former regime will also succeed on the latter, especially as demands on reasoning, planning, and context management grow with task complexity.
+
+This perspective raises two central questions for the design of agentic AI systems. First, \emph{how does task complexity mediate the relative effectiveness of small and large agents?} Second, given an increasingly heterogeneous landscape of models with different capabilities and costs, \emph{how should we route tasks across agents to balance accuracy and cost---maximizing the workload handled by small, cheap agents without degrading performance on complex tasks?} Existing routing approaches provide only a partial answer. Non-predictive strategies that generate full outputs from all candidate models are tractable for single-shot QA but become infeasible for agents, whose trajectories can span tens of thousands to millions of tokens. Predictive routers, in turn, require training separate routing models that are costly to fit, do not generalize well to new models, and have been shown to degrade as task difficulty increases~\citep{dhrif2025reasoningawarepromptorchestrationfoundation}. It remains unclear how to design routing mechanisms for agentic systems that incur minimal additional inference cost, apply directly to off-the-shelf agents, remain effective on complex, long-horizon tasks, and ideally also help smaller agents shoulder more of the workload over time, effectively ``scaling them up'' without sacrificing accuracy.
+
+To study how task complexity shapes the relative usefulness of small and large agents, we empirically evaluate deep search and coding tasks across multiple horizons. We choose these domains as they typify agentic workflows: deep search requires extended reasoning and information integration~\citep{zhang2025websearchagenticdeep}, while coding demands multi-step planning and precise execution~\citep{wang2025aiagenticprogrammingsurvey}. Both domains span short, well-specified tasks as well as open-ended, long-horizon problems, making them ideal for probing how agent capabilities scale with complexity. Following~\cite{kwa2025measuring}, we operationalize \textbfrm{task complexity} via human solution time: the average time expert annotators need to complete each task, from a few seconds to one hour. We apply this annotation protocol primarily to tasks from existing public benchmarks, with a small number of ad hoc tasks.
+% , and release the resulting dataset, \textsc{HST-Bench}. 
+Using off-the-shelf models from the Qwen3 series ranging from 4B to 32B parameters, and the Agent Research Environment (ARE)~\citep{froger2025arescalingagentenvironments}, we find that on the simplest tasks the smallest agent attains $\sim$87\% of the pass@1 performance of the largest agent, but on the most complex tasks this relative performance drops to only $\sim$21\% (ref. Figure~\ref{fig:plots} and Section \ref{sec:performance-complexity}). Thus, while small agents can closely match larger ones on simple tasks, their performance fails to scale with task complexity. This suggests that small agents alone are unlikely to be sufficient for many high-value applications and that model size should be treated as a \emph{per-task} decision rather than a global choice about whether small agents can \emph{replace} large ones.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{figure*}[t]
+     \centering
+     \hspace{0.05cm}
+     \begin{subfigure}[b]{0.48\textwidth}
+         \centering
+         \includegraphics[height=4.7cm]{assets/plot_scaling.pdf}
+         \caption{Pass@1 as a function of $\tau(t)$ and agent price.}
+         \label{fig:plots:a}
+     \end{subfigure}
+     \hfill
+     \begin{subfigure}[b]{0.48\textwidth}
+        \hspace{1.4cm}
+         \centering
+         \includegraphics[height=4.7cm]{assets/plot_tokens.pdf}
+         \caption{Trace length by $\tau(t)$ for agents of different prices.}
+         \label{fig:plots:b}
+     \end{subfigure}
+     \caption{Pass@1 accuracy on deep search and coding tasks (a) and average trace length in million tokens (b). We show the effective price per million tokens $\pi(a_d)$ for Qwen3 agents from smallest to largest ($d =$ \{4B, 8B, 14B, 32B\}).}
+     \label{fig:plots}
+\end{figure*}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{figure*}[!t]
+    \centering
+    \includegraphics[width=\linewidth]{assets/main.pdf}
+    \caption{An illustration of the \textsc{sale} pipeline. Given a task $t$, each agent $a_i$ proposes a strategic plan $s_{t,i}$ as its bid. Bids are evaluated by cost $C_{t,i}$ and value $V_{t,i}$, and a provisional winner is selected by minimizing cost-minus-value. Agents cheaper than the provisional winner may then refine their strategies using similar past successes and failures retrieved from the auction memory, after which a final winner is selected and its strategy is executed.}
+    \label{fig:main}
+\end{figure*}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+In response, we develop a routing mechanism that is compute-efficient, applicable to off-the-shelf agents, and preserves performance on complex, long-horizon tasks. Inspired by human freelance marketplaces and virtual agent economies~\citep{tomasev2025virtualagenteconomies}, we introduce \textbfrm{S}trategy \textbfrm{A}uctions for Work\textbfrm{l}oad \textbfrm{E}fficiency (\textsc{sale}), a test-time auction framework that leverages a well-established correlation between plan quality and execution quality~\citep{sun-etal-2024-enhancing-code}. For each task, candidate agents propose strategic solution plans that are scored by predicted value and cost via peer assessment and heuristic predictors. The winning agent is selected based on this cost–value trade-off and its plan is executed, yielding an adaptive allocation of work across the agent pool. Crucially, this process is not static: plan refinement using the outcomes of past auctions can overturn the initial ranking before any strategy is executed---a self-improvement process analogous to how freelancers upskill over time to secure more work. In this way, \textsc{sale} functions not only as a router but also as a mechanism that systematically increases the share of work handled by smaller, cheaper agents where possible, effectively ``scaling up'' small models via market-like coordination.
+
+We find that \textsc{sale} not only matches but even exceeds the largest agent's pass@1 ($+3.5\%$ on deep search and $+2.7\%$ on coding) while offloading much of its workload ($-65\%$ and $-40\%$, respectively) and reducing total spend ($-42\%$ on deep search and $-25\%$ on coding). These gains come with only a negligible increase in inference tokens. In contrast, established routers that rely on task descriptions either underperform the largest agent or fail to meaningfully reduce spend---often both. This underscores their poor fit for agentic workflows, where complex trajectories decouple task inputs from downstream success and strategic planning proves a more reliable routing signal. We also observe that, as the auction memory grows, the smallest agents are selected increasingly often, suggesting that they progressively capitalize on accumulated experience. Overall, \textsc{sale} extends the performance–cost Pareto frontier beyond any single agent: it reduces reliance on large agents and total inference cost while improving accuracy across task complexities.
+ 
+In summary, our contributions are:%\vspace{-2pt}
+\begin{enumerate}
+\item We empirically study how task complexity affects the performance gap between small and large agents on deep search and coding tasks, finding that small agents nearly match large ones on simple tasks but diverge sharply as complexity increases. To the best of our knowledge, this is the first such investigation on realistic workloads; prior literature has examined agentic scaling behavior only on synthetic tasks.%\vspace{-2pt}
+\item We develop \textsc{HST-Bench}, a benchmark that pairs agentic tasks with human solution times as a proxy for task complexity, enabling fine-grained evaluation of agent scaling behavior.
+\item We introduce \textsc{sale}, a marketplace-inspired framework in which heterogeneous AI agents bid with solution plans, are selected based on predicted value and cost, and use auction feedback to refine subsequent bids, yielding a unified mechanism that couples per-task model routing with test-time self-improvement.%\vspace{-2pt}
+\item We show that \textsc{sale} achieves a better performance–cost Pareto frontier than any individual agent in the pool or existing routers on deep search and coding tasks. This demonstrates that strategy-based routing with continual agent self-improvement outperforms single-model and conventional routing baselines.%\vspace{-2pt}
+\item More broadly, by providing \textsc{sale} as a marketplace-inspired framework, we illustrate how auction-based coordination can structure competition and collaboration among heterogeneous agents at test time, contributing to emerging discussions about how labor-like market dynamics and adaptive orchestration may shape future ecosystems of interacting AI agents.
+\end{enumerate}
+
+\section{Related Work}
+
+\para{Agent Performance Under Task Complexity.} 
+Scaling AI agents to handle increasingly long and difficult tasks has become a central focus of recent work~\citep{chan2025mlebench, chen2025mlrbench, froger2025arescalingagentenvironments, wang2025odysseybenchevaluatingllmagents}. \cite{kwa2025measuring} address this by tying capability to task duration, defining a 50\%-success time horizon in terms of human solution time and studying how it scales on research and software-engineering tasks. \cite{sinha2025illusiondiminishingreturnsmeasuring} instead examine how performance degrades as tasks are extended, using synthetic, controlled multi-step tasks with explicit plans to argue that small per-step accuracy gains can yield much longer executable sequences and that many long-horizon failures reflect compounding execution errors as models condition on their own past outputs. We build on both perspectives by analyzing these scaling phenomena on real-world deep search and coding workloads and by shifting from isolated model behavior to system-level performance in a marketplace that allocates tasks across heterogeneous agents.
+
+\para{Multi-Agent Routing.} Routing has emerged as a key strategy for harnessing the diversity of heterogeneous AI systems. There are two main approaches to routing: non-predictive routing, which selects outputs after running multiple models, and predictive routing, which chooses a model in advance based on input features or learned decision policies~\citep{hu2024routerbench}. Non-predictive methods~\citep{chen2024frugalgpt} can be prohibitively expensive in agentic settings, where trajectories involve extended tool use and long interaction histories~\citep{tsiourvas2025causal}. Predictive approaches~\citep{hu2024routerbench, stripelis-etal-2024-tensoropera, somerstep2025carrotcostawarerate} mitigate this cost by learning separate routing models, but these are themselves costly to fit, tightly coupled to specific model sets, and have been shown to degrade as task difficulty increases~\citep{dhrif2025reasoningawarepromptorchestrationfoundation}. Moreover, existing routers are typically static: once trained, their routing policies do not incorporate test-time feedback, and thus do not improve with experience. In contrast, our framework, \textsc{sale}, implements a lightweight, strategy-based, partially predictive routing mechanism in which agents bid with short plans rather than full solutions, leveraging empirical evidence that plan quality correlates with downstream task success~\citep{sun-etal-2024-enhancing-code, kang2025distillingllmagentsmall, xiong-etal-2025-mpo}. Auction feedback and shared memory refine future bids, progressively shifting more work onto smaller agents. Thus, \textsc{sale} couples routing with continual adaptation, turning agent selection from a purely passive assignment into a mechanism that actively improves small agents' effective capabilities under compute constraints.
+
+\para{Memory-Driven Adaptation.} Memory systems help agents improve by reusing past behavior. Existing work typically uses memory to improve an agent's reasoning, either by extracting reusable routines from successful trajectories to guide future actions~\citep{cao2025remembermerefineme, wang2025agent}, or by maintaining structured records of past interactions that provide richer context and user-specific knowledge~\citep{salama2025meminsightautonomousmemoryaugmentation, wang2025mirixmultiagentmemoryllmbased, xu2025amem}. In contrast, \textsc{sale} differs both in what is stored and in how that information is used: rather than logging answers, execution traces, or user histories, we treat bidding strategies and their auction outcomes (wins and losses) as the primary memory signal. This makes memory an explicit mechanism for reallocating work and upgrading the effective capabilities of smaller agents, as feedback from past auctions is used to refine future bids and adjust the division of labor in the marketplace.
+
+\para{Agent Systems as Virtual Economies.} Prior work has argued that as autonomous agents become economically significant, they should be coordinated through explicit market mechanisms, including auction-based interaction~\citep{duetting2024mechanism, zhu2024evidence, jiang2025harborexploringpersonadynamics,yang2025agentexchangeshapingfuture}, virtual sandbox economies with controlled links to human markets~\citep{tomasev2025virtualagenteconomies}, and settings in which assistant and service agents transact directly on behalf of users and firms~\citep{rothschild2025agenticeconomy}. Building on this perspective, where AI agents increasingly resemble digital workers, we instantiate a labor-focused framework: \textsc{sale} treats agents as freelancers in a job marketplace, where auctions over strategic plans allocate work and learning opportunities, illustrating how labor-like dynamics can shape future agent ecosystems.
+
+\section{Experimental Setup}
+To evaluate agentic performance across task complexities and model scales, we run all experiments within the Agent Research Environment (ARE) framework~\citep{froger2025arescalingagentenvironments}. ARE provides a standardized platform for benchmarking agent behavior, enabling consistent measurement and comparison across domains.
+
+\subsection{Data}\label{sec:datasets}
+We evaluate agentic performance on two domains: deep search and coding, as they broadly represent agentic workflows requiring extended reasoning and multi-step planning. For deep search, we sample from SimpleQA~\citep{wei2024measuringshortformfactualitylarge}, PopQA~\citep{mallen-etal-2023-trust}, HotpotQA \citep{yang-etal-2018-hotpotqa}, GAIA \citep{mialon2024gaia}, and an expert-validated portion of Humanity's Last Exam~\citep{phan2025humanitysexam, white2025hlewrong}. Coding tasks are drawn from MBPP~\citep{austin2021programsynthesislargelanguage} and LeetCode~\citep{xia2025leetcodedatasettemporaldatasetrobust}, supplemented with custom multiple-choice questions to cover lower-complexity cases. We select these datasets because they span a wide range of task horizons and require genuinely agentic capabilities---deep search demands dynamic tool use, iterative retrieval, and cross-source synthesis, while coding involves iterative debugging and test-driven refinement. These benchmarks have been widely adopted for evaluating agentic AI systems, ensuring both breadth and comparability with prior work~\citep{Coignion_2024,  labruna2024retrieveteachingllmsutilize, liu2024bolaa, amini2025openagentspecificationagent, gan-etal-2025-master, zoom2025hle, xie2025profileawaremaneuveringdynamicmultiagent}.
+
+\citet{kwa2025measuring} validate human solution time as the primary metric for agentic task complexity, showing that it naturally integrates reasoning, planning and execution into a single scale. We adopt this measure and define the \emph{task complexity} of $t \in \mathcal{D}$ as
+$\tau(t)$, the average time (in minutes) required by expert annotators to solve $t$. Human solution times are annotated by three expert annotators, yielding reliably reproducible estimates (Krippendorff's $\alpha = 0.86$; details in Appendix~\ref{appendix:data-annotation}). 
+To enable fine-grained analysis of complexity effects, we group tasks into five non-overlapping bins according to $\tau(t)$, corresponding to average human solution times of up to 6 seconds ($0 < \tau(t) \le 0.1$), 30 seconds ($0.1 < \tau(t) \le 0.5$), 2.5 minutes ($0.5 < \tau(t) \le 2.5$), 12.5 minutes ($2.5 < \tau(t) \le 12.5$), and 60 minutes ($12.5 < \tau(t) \le 60$). Bin boundaries follow a geometric progression (5× between adjacent bins), yielding equal spacing on a log scale. This is appropriate given that human solution times span nearly three orders of magnitude, and produces approximately balanced sample sizes across bins. A breakdown of the data composition for each time bin is provided in Appendix~\ref{appendix:data}. In total, the resulting human-timed dataset \textsc{HST-Bench}, contains 753 tasks.
+%In total, the resulting human-timed benchmark, \textsc{HST-Bench}, contains 753 tasks, and we release it for use in future studies of complexity-conditioned agent performance.
+
+
+\subsection{Models}
+For all experiments, we utilize the Qwen3 family of language models~\citep{yang2025qwen3technicalreport}, chosen for their open-weight availability and broad range of sizes. Qwen3 provides checkpoints at 4B, 8B, 14B, and 32B parameters, which prior work has treated as a matched set for studying scaling behavior~\citep{sinha2025illusiondiminishingreturnsmeasuring}. To support cost-aware evaluation, we define an effective price per million tokens $\pi(a_d)$ for each agent of size $d$, based on published API rates (see Appendix~\ref{appendix:cost}) and an observed average input-to-output token ratio of $4{:}1$. Under this convention, we obtain $\pi(a_{\text{4B}}) = \$0.05$, $\pi(a_{\text{8B}}) = \$0.09$, $\pi(a_{\text{14B}}) = \$0.16$, and $\pi(a_{\text{32B}}) = \$0.36$. Because model size and $\pi$ are monotonically aligned, we use \textit{smaller/cheaper} and \textit{larger/more expensive} interchangeably when discussing these particular agents. However, in figures we plot `price per million tokens' on the $x$-axis to emphasize the cost dimension explicitly. Note that we run all models with greedy decoding.
+
+
+\section{Agent Performance vs. Task Complexity}\label{sec:performance-complexity}
+
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% \begin{figure*}[t]
+%      \centering
+%      \hspace{0.05cm}
+%      \begin{subfigure}[b]{0.48\textwidth}
+%          \centering
+%          \includegraphics[height=4.7cm]{assets/plot_scaling.pdf}
+%          \caption{Pass@1 as a function of $\tau(t)$ and agent price.}
+%          \label{fig:plots:a}
+%      \end{subfigure}
+%      \hfill
+%      \begin{subfigure}[b]{0.48\textwidth}
+%         \hspace{1.4cm}
+%          \centering
+%          \includegraphics[height=4.7cm]{assets/plot_tokens.pdf}
+%          \caption{Trace length by $\tau(t)$ for agents of different prices.}
+%          \label{fig:plots:b}
+%      \end{subfigure}
+%      \caption{Pass@1 accuracy on deep search and coding tasks (a) and trace length in tokens (b). We show the effective price per million tokens $\pi(a_d)$ for Qwen3 agents from smallest to largest ($d =$ \{4B, 8B, 14B, 32B\}).}
+%      \label{fig:plots}
+% \end{figure*}
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+We systematically evaluate Qwen3 agents of different sizes and costs on deep search and coding tasks, conditioning performance on task complexity as measured by $\tau(t)$ (Section~\ref{sec:datasets}). This setup enables direct comparison of agent performance as task demands increase. We measure performance via pass@1, scored via LLM-as-a-judge evaluation against ground-truth answers (see Appendix~\ref{appendix:are_setup}).
+
+Across both domains, agents perform very similarly on the simplest tasks, as shown in Figure~\ref{fig:plots:a}. For deep search, the cheapest agent achieves about 87\% of the most expensive agent's pass@1 on tasks with $\tau(t) \le 0.1$; for coding, this relative performance is about 92\%. In this regime, the scaling curves are nearly flat: moving from cheaper/smaller to more expensive/larger agents yields only modest gains. As task complexity increases, the scaling curves gradually become steeper, and by the most complex tasks ($\tau(t)  \le 60$), the separation between agents is sharp. For deep search, the cheapest agent attains only 25\% of the most expensive agent's pass@1 on these tasks; for coding, it reaches just 17\%. In this long-horizon regime, performance is strongly stratified by model size and cost.
+
+One might hope that, although larger agents are more expensive per token, they implicitly ``pay for themselves'' by solving tasks with shorter trajectories---for instance, by requiring fewer reasoning steps, tool calls, or revisions. In practice, as shown in Figure~\ref{fig:plots:b}, we observe this pattern only for low-complexity tasks. As $\tau(t)$ increases, total token usage grows across all models, and larger agents do not consistently achieve shorter traces than smaller ones. Indeed, on many long-horizon instances, they incur comparable or greater token counts. Thus, increased parametric capacity does not generally yield more token-efficient solutions on complex workloads, and higher per-token costs for larger agents are not naturally offset by reduced test-time compute.
+
+In sum, cheaper agents are effective for tasks with low $\tau(t)$, but their limitations become starkly apparent as task demands intensify. More expensive agents appear indispensable for complex problems---yet deploying them universally squanders resources on tasks that do not require their power. The challenge, therefore, is to build systems that can dynamically allocate tasks to the right agent, achieving a better balance between resource efficiency and capability. 
+
+
+\section{Strategy Auctions}\label{sec:strategy-auctions}
+
+Agentic pipelines commonly include a planning phase in which agents outline their intended approach before acting. These strategic plans encode task-relevant information such as decomposition strategies, tool selection, anticipated challenges, yet they are rarely leveraged beyond the agent that produced them. Our framework, \textsc{sale} (Figure~\ref{fig:main}), exploits this observation by casting strategic plans as bids in an auction framework. Specifically, given an environment $E$, a task $t$, and a heterogeneous group of agents $\mathcal{A} = \{a_i\}_{i=1}^{|\mathcal{A}|}$, each agent $a_i$ generates a strategy $s_{t,i}$ conditioned on $t$ and $E$ (we omit $E$ from the notation for brevity). We interpret $s_{t,i}$ as the ``bid'' of agent $a_i$ for task $t$, which is then used to compute both the cost and value of $a_i$ with respect to $t$, enabling model selection based on strategic intent rather than task description alone. Please see Appendix~\ref{appendix:are_setup} for the prompts used to obtain $s_{t,i}$. 
+
+\textbf{Cost and Value Assignment.} \ \ Let $C_{t, i}$ and $V_{t, i}$ denote the cost and value, respectively, of deploying agent $a_i$ on task $t$. We estimate the \emph{cost} as
+% \begingroup
+% \setlength{\abovedisplayskip}{0pt}
+% \setlength{\belowdisplayskip}{2pt}
+\[
+C_{t, i} = w_c \cdot \pi(a_i) \cdot |s_{t,i}|,
+\]
+% \endgroup
+where $\pi(a_i)$ is the price per million tokens for agent $a_i$, $|s_{t,i}|$ is the length of $s_{t,i}$ in tokens, and $w_c$ is a tuned weight. We use strategy length as a cost signal motivated by two prior works. First, \citet{goebel2025llmreasoningmodelsreplaceclassical} show that plan (or strategy) length is correlated with final trace length, hence serving as a proxy for total inference cost. Second, execution reliability degrades with plan length: prior work finds that success rates decline as plans grow longer \citep{xiong2025deliberate}. Because failed executions nonetheless consume compute, longer plans entail higher expected cost---both through greater token usage and increased risk of wasted computation. We also show thorough ablations in Appendix~\ref{appendix:ablations} to validate this design choice.
+
+We estimate the \emph{value} of agent $a_i$ for task $t$ as
+\begingroup
+\setlength{\abovedisplayskip}{5pt}
+\setlength{\belowdisplayskip}{2pt}
+\[
+V_{t, i} = w_h \cdot H(s_{t,i}) + \sum_{a_j \in \mathcal{A}} w_j \cdot \gamma_j(s_{t,i}),
+\]
+\endgroup
+where $H(s_{t,i})$ is the normalized entropy of $s_{t,i}$, each $\gamma_j(s_{t,i})$ is a judgment score assigned by agent $a_j$ in $\mathcal{A}$ to $s_{t,i}$, and the weights $w_h$ and $w_j$ are tunable weights. Value thus combines two signals: intrinsic quality, captured by entropy, and extrinsic quality, captured by self-and-peer assessment.
+
+The choice of entropy as a proxy for strategy value is motivated by extensive prior literature linking higher-entropy intermediate reasoning to greater informational content and reduced redundancy~\citep{chen2025aresmultimodaladaptivereasoning, cheng2025reasoningexplorationentropyperspective, li2025compressingchainofthoughtllmsstep, wang2025beyond}, and by work suggesting that prioritizing higher-entropy trajectories can be beneficial for planning~\citep{liu2024entropyreinforced} (validated by our ablations in Appendix~\ref{appendix:ablations}). 
+
+The second term aggregates peer assessments on the strategy by a jury of agents. Each strategy is scored by the full set of bidding agents $\mathcal{A}$,  including the agent that proposed it. This mixed self-and-peer design is supported by literature on LLM juries \citep{badshah-sajjad-2025-reference, verga2024replacingjudgesjuriesevaluating} and by evidence that combining self- and peer-evaluation yields more reliable judgments than peer-only approaches \citep{mousavi2023ncritics}. Ablations (Appendix~\ref{appendix:ablations}) confirm that excluding self-evaluation or reducing jury size degrades performance. 
+
+The judge prompt is provided in Appendix~\ref{appendix:are_setup}; further details of the cost–value estimation appear in Appendix~\ref{appendix:minmax}.
+
+\textbf{Winning Bid Selection.} \ \ Given the cost and value assignments described above, \textsc{sale} aims to select the agent whose strategy achieves the optimal trade-off between resource efficiency and expected performance. Our goal is thus to learn scoring weights that minimize the worst-case cost-minus-value over a training set of tasks. The cost-minus-value serves as a unified measure of an agent's desirability for a given task: lower costs improve resource efficiency, while higher values reflect stronger expected performance. By minimizing $C - V$, we favor agents that deliver high value at low cost.
+
+Formally, we pose a min--max optimization over both the assignment variables $x$ and the scoring weights $w = (w_c, w_h, \{w_j\}_{a_j \in \mathcal{A}})$. Let $Q$ denote the maximum cost-minus-value over all tasks. The objective is
+% \begingroup
+% \setlength{\abovedisplayskip}{6pt}
+% \setlength{\belowdisplayskip}{4pt}
+\[
+\min_{w, x, Q} \; Q \quad \text{s.t.} \quad
+z_t \le Q \;\; \forall t, \quad
+\sum_{a_i \in \mathcal{A}} x_{t,i} = 1 \;\; \forall t, \quad
+w \in \mathbb{R}^{2 + |\mathcal{A}|},
+\]
+% \endgroup
+where $z_t$ is the cost-minus-value of the chosen strategy for task $t$, and additional big-$M$ constraints are imposed (see Appendix~\ref{appendix:minmax} for details of the tuning process). The min–max formulation ensures robustness across the training distribution: by optimizing against the worst-case task, we guard against any single task receiving a disproportionately poor assignment.
+
+At inference time, given the learned weights $w$, \textsc{sale} then applies the resulting scoring rule to route new tasks. For each task $t$, we introduce binary assignment variables $x_{t,i} \in \{0,1\}$ indicating whether $a_i$ is selected for task $t$, and define
+% \begingroup
+% \setlength{\abovedisplayskip}{0pt}
+% \setlength{\belowdisplayskip}{2pt}
+\[
+z_t = \sum_{a_i \in \mathcal{A}} x_{t,i} \left( C_{t,i} - V_{t,i} \right).
+\]
+% \endgroup
+Since exactly one agent is assigned per task, this reduces to $z_t = C_{t,\hat{i}(t)} - V_{t,\hat{i}(t)}$, where $\hat{i}(t) = \arg\max_i x_{t,i}$, thus assigning each task to the agent with the lowest cost-minus-value.
+
+\textbf{Strategy Refinement from Auction Memory.} \ \ After each auction, we store all proposed strategies---both winning and losing bids---in a long-term memory bank $\mathcal{M}$. This enables a self-improvement mechanism in which cost-efficient agents that are not selected in the initial auction round can learn from $\mathcal{M}$, refine their initial strategies, and submit improved bids. Importantly, this refinement is \emph{opportunistic}: we do not use memory for all agents by default. Doing so would require every agent to produce both an initial and a memory-informed bid, increasing latency and token usage. Instead, we first collect baseline strategies without memory. If a cheap agent already wins the auction, no refinement is needed; otherwise, only agents cheaper than the provisional winner output a refined, memory-informed bid, preserving the cost-efficiency goals of \textsc{sale}.
+
+Concretely, for each past task $t'$, we store a record $\mathcal{M}(t') = (t', \{s_{t', i}\}_{a_i \in \mathcal{A}}, y_{t'})$ where $\{s_{t', i}\}_{a_i \in \mathcal{A}}$ are the strategies proposed by all agents for $t'$ and $y_{t'}$ encodes the auction outcome, indicating which strategy won and which ones failed. Let $\mathcal{T}_\mathcal{M}$ denote the set of tasks for which we have stored memory records, i.e.\ $\mathcal{T}_\mathcal{M} = \{t' : \mathcal{M}(t') \in \mathcal{M}\}$. This memory accumulates a diverse set of strategic plans and outcomes, providing a rich resource for agents to learn from past experience. Given a new task $t$, the refinement procedure operates as follows (see Appendix~\ref{appendix:strategy_refinement} for a full algorithmic description):
+
+\begin{enumerate}
+    \item \textit{Initial bids.} Each agent $a_i \in \mathcal{A}$ submits an initial strategy $s_{t,i}$, and a provisional winner $\hat{i}(t) = \arg\min_i (C_{t,i} - V_{t,i})$ is selected.
+    
+    \item \textit{Shared memory retrieval.} For each agent $a_i$ cheaper than the provisional winner (i.e., $\pi(a_i) < \pi(a_{\hat{i}(t)})$), we retrieve a subset $\mathcal{M}_{t,i}$ of relevant past strategy pairs:
+    % \begingroup
+    % \setlength{\abovedisplayskip}{7pt}
+    % \setlength{\belowdisplayskip}{7pt}
+    \[
+    \mathcal{M}_{t,i} = \Bigl\{
+    \bigl(s^{\text{lose}}_{t'},\, s^{\text{win}}_{t'}\bigr)_i
+    \;\Big|\;
+    t' \in \
+    \operatorname*{top\text{-}\mathit{\tilde{k}}}_{t' \in \mathcal{T}_{\mathcal{M}}} \
+    \mathrm{sim}\bigl(t, t'\bigr)
+    \Bigr\}, 
+    \quad \tilde{k} = \text{min}(k, |\mathcal{T}_{\mathcal{M}}|),
+    \]
+    % \endgroup
+    where $\mathrm{sim}$ denotes cosine similarity over text embeddings (see Appendix~\ref{sec:retrieval_hyperparams} for details) and each pair $\bigl(s^{\text{lose}}_{t'},\, s^{\text{win}}_{t'}\bigr)_i$ contains a losing and winning strategy for $t'$, with at least one proposed by $a_i$.
+    % This encourages agents to learn from past auction outcomes in a targeted way, by contrasting their own bids with those of other agents.
+    
+    \item \textit{Contrastive prompting.} Retrieved pairs are formatted using a contrastive prompt template (Appendix~\ref{appendix:prompts}) that encourages agents to learn from past auction outcomes.
+    
+    \item \textit{Reassignment.} Each eligible agent produces a refined bid $s^r_{t,i}$, which is scored to obtain updated cost $C^r_{t,i}$ and value $V^r_{t,i}$. If any refined bid improves upon the provisional winner's cost-value trade-off, the best such bid wins; otherwise, the provisional winner is retained:
+    \begingroup
+    \setlength{\abovedisplayskip}{6pt}
+    \setlength{\belowdisplayskip}{1pt}
+    \[
+    i^*(t) = 
+    \begin{cases}
+    \displaystyle\argmin_{i:\, \pi(a_i) < \pi(a_{\hat{i}(t)})} \left( C^r_{t,i} - V^r_{t,i} \right) & \text{if any refined bid satisfies } C^r_{t,i} - V^r_{t,i} < C_{t,\hat{i}(t)} - V_{t,\hat{i}(t)}, \\[8pt]
+    \hat{i}(t) & \text{otherwise.}
+    \end{cases}
+    \]
+    \endgroup
+    \item \textit{Execution.} After selecting $i^{*}(t)$, we execute agent $a_{i^{*}(t)}$ conditioned on $t$ and its winning strategy.
+\end{enumerate}
+
+It is worth noting that both jury scoring and strategy refinement incur only a small additional inference cost, on the order of a few hundred tokens\footnote{On average, \textsc{sale} requires generating 669 additional \emph{total} tokens per task for deep search, and 1042 for coding. Here, ``total tokens'' denotes the sum of the initial strategy-generation, strategy-refinement and jury-vote tokens across all agents in the pool.}, whereas executing the final agentic trace typically consumes tens of thousands to millions of tokens (see Figure~\ref{fig:plots:b}), depending on task complexity. \emph{Thus, the overhead introduced by the auction mechanism is negligible relative to the overall test-time compute.}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{figure}[!t]
+    \centering
+    \includegraphics[width=\linewidth]{assets/main_results.pdf}
+    \caption{Performance–cost trade-offs for deep search (top row) and coding (bottom row) across task-complexity bins. At a given price per million tokens $\pi$, the \textsc{sale} auction ensemble consistently attains substantially higher pass@1 than would be predicted by the approximate linear scaling trend observed for individual Qwen3 agents, showing that it systematically exceeds the expected performance–cost curve.}
+    \label{fig:results}
+\end{figure}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Results}\label{sec:results}
+
+\input{tabs/results}
+
+We run \textsc{sale} on the full \textsc{HST-Bench} test set, containing tasks from all complexity levels interleaved in random order, and only partition results into complexity bins for analysis. We use greedy decoding in all runs. For the single-model baselines we report results from a single run. For \textsc{sale}, however, task order matters because its auction memory for strategy refinement evolves online. Following established practice for order-sensitive evaluation~\citep{dash-etal-2022-permutation, wang2025recent}, we thus report all \textsc{sale} metrics as averages over five independent random permutations of the full test set.
+
+Figure \ref{fig:results} summarizes the performance–cost trade-offs for deep search (top row) and coding (bottom row) across all five task-complexity bins, plotting pass@1 against price per million tokens for individual Qwen3 agents and for the \textsc{sale} ensemble. Detailed numerical results for each bin, along with additional baselines described below, appear in Table~\ref{tab:results}. For deep search, \textsc{sale} exceeds the best single agent's pass@1 on the lowest-complexity tasks while operating at a lower effective price per million tokens (39\% cost reduction, 3.8 pass@1 gain). On medium-complexity tasks, it improves pass@1 by between 1 and 4.7 percentage points over the best single agent, while reducing cost by 36–53\%. On the most complex tasks, it still outperforms the best agent by 3.8 points while lowering cost by 36\%. For coding, \textsc{sale} likewise beats the best single agent on the simplest tasks (50\% cost reduction, 3.3 pass@1 gain), and on medium-complexity tasks it achieves 1.5–3.2 pass@1 improvement over the best single agent while achieving cost reductions of 17–25\%. On the most complex coding tasks, it improves pass@1 by 3.3 points at 19\% lower cost than the best single agent. Across both domains and all complexity levels, the auction ensemble dominates the single-agent Pareto frontier---no fixed model attains higher pass@1 at equal or lower price per million tokens---indicating that strategy-based routing with self-improvement yields strictly better performance–cost trade-offs than any single model size. All reported improvements are statistically significant even accounting for run-to-run variance (see Appendix~\ref{appendix:tests}), confirming that these gains are robust across random orderings.
+
+\para{Comparison with Existing Routers.}
+\textsc{sale} is deliberately lightweight: it leverages agents' existing strategic-planning abilities through a simple, low-dimensional scoring function with few global weights, rather than learning a separate high-capacity routing model. This design makes \textsc{sale} directly applicable to off-the-shelf agents with minimal tuning, while explicitly accounting for agent cost rather than optimizing for performance alone. We compare against four baseline routers. Willingness-to-Pay (WTP)~\citep{hu2024routerbench} uses nearest-neighbor retrieval over pretrained sentence embeddings to predict the model with the best cost-performance tradeoff given a task description. \textsc{CARROT}~\citep{somerstep2025carrotcostawarerate} fine-tunes an encoder to jointly estimate per-query cost and accuracy, routing to the model that minimizes a weighted combination of both. TensorOpera Router (TO-Router)~\citep{stripelis-etal-2024-tensoropera} trains a learned task classifier---a language model encoder fine-tuned on soft performance labels---to predict the best-performing model from the task description alone, without explicitly modeling cost. All three are \emph{predictive} routers that select an agent before execution. FrugalGPT~\citep{chen2024frugalgpt}, by contrast, is a \emph{non-predictive} cascade that executes agent trajectories sequentially until a fine-tuned encoder model accepts a response, potentially running multiple traces per task. For fair comparison, we train all baselines on the same training split used to set \textsc{sale}'s scoring weights (hyperparameters in Appendix~\ref{appendix:baselines}). Unlike the baselines, \textsc{sale} requires no learned predictor---only a fixed scoring form with a small number of tunable weights. 
+
+As shown in Table~\ref{tab:results}, WTP yields modest cost reductions on deep-search tasks (11\% on average) but slightly underperforms the best single agent at most complexity levels. On coding, WTP achieves large savings but increasingly sacrifices pass@1 as complexity rises, dropping to 6.3\% at the highest complexity versus 22.8\% for the best single agent. CARROT strikes a better balance, reducing cost by 22\% on deep search and 14\% on coding while incurring only small accuracy drops overall, though it still underperforms \textsc{sale} on both metrics. TO-Router tends to default to the strongest agent, so both performance and cost remain close to the single-agent baseline. FrugalGPT matches or slightly exceeds the best single agent on low-complexity tasks (e.g., 97.5\% vs.\ 95.0\% on simple coding), but as complexity grows, its pass@1 declines sharply while its average spend increases---rising to 0.61\$/Mt on coding versus the 0.36\$/Mt of the best agent. This exposes a limitation of non-predictive routing in agentic settings: not only does the cascade potentially incur the cost of multiple full traces, but the scoring model also struggles to assess answer reliability when the mapping from task to solution is indirect and mediated by long, complex trajectories. In contrast, \textsc{sale} maintains or improves pass@1 relative to the best single agent across all complexity levels while reducing cost by 33--53\% on deep search and 17--50\% on coding, thereby advancing the performance--cost Pareto frontier more consistently than any alternative router (Figure~\ref{fig:pareto-scatter}). Comparisons to an oracle router are provided in Appendix~\ref{appendix:oracle}.
+
+
+\para{Ablation.}
+To isolate the contribution of self-refinement, we ablate the memory-based stage and evaluate a variant of \textsc{sale} that performs only a single auction: agents bid with strategic plans, and tasks are assigned by minimizing cost-minus-value over these bids. Even without memory, this router either matches or improves the average pass@1 of the best single agent while always reducing effective cost across all task-complexity bins, indicating that strategy-based routing provides a clear benefit. Comparing this ablated variant to the full \textsc{sale} system (Table~\ref{tab:results}) shows that the memory mechanism consistently improves the trade-off: incorporating past auction outcomes either reduces cost at similar accuracy or jointly improves pass@1 and cost, thereby pushing the Pareto frontier further outward. Further ablations (Appendix~\ref{appendix:ablations}) study the effect of removing each term from the cost–value function, finding that all contribute meaningfully to performance, and show that the jury's diversity provides a regularizing effect that no single judge or smaller jury subset can replicate.
+
+\section{Analysis}
+
+\subsection{Agent Allocation}\label{sec:alloc} 
+Figure~\ref{fig:alloc} shows how \textsc{sale} allocates workload across agents of different sizes and task-complexity bins for both deep search and coding tasks. For deep search, across all bins the 32B agent's share ranges from 20\% to 44\%, with the remaining workload routed to smaller agents. The 14B agent handles 29--55\% of tasks, while the 4B and 8B agents together account for approximately 12--37\%. Even in the highest-complexity bin, smaller agents (4B and 8B) still process nearly 30\% of tasks, indicating that \textsc{sale} substantially reduces reliance on the largest model while matching or exceeding its accuracy. For coding tasks, the 32B agent is still used for a substantial proportion of the workload in all but the easiest complexity bin, where its share is only 22\%. The smaller 4B and 8B agents together account for between 7\% and 32\% of coding queries across bins, again demonstrating that a substantial fraction of work can be offloaded from the largest model.
+
+\subsection{Agent Contributions via Shapley Values}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{figure}[t]
+    \centering
+    \begin{minipage}[!b]{0.4975\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{assets/allocation.pdf}
+        \caption{\textsc{sale}'s average workload allocation across the 4B, 8B, 14B, and 32B agents for deep search (top) and coding (bottom) tasks, stratified by task complexity $\tau(t)$. Bar labels indicate the share of all tasks assigned to each agent.}
+        \label{fig:alloc}
+    \end{minipage}%
+    \hfill
+    \begin{minipage}[!b]{0.489\textwidth}
+        \centering
+        \input{tabs/shapley}
+        \captionof{table}{Average Shapley values of each agent's marginal contribution to the overall system, with and without memory-based self-refinement, across task types and complexity bins. Values are normalized to sum to 100 and reported as each agent's percentage share of the total contribution.}
+        \label{tab:shapley_results}
+    \end{minipage}
+\end{figure}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+Given the cooperative nature of \textsc{sale}, where agents propose solution strategies and influence one another through jury votes and shared memory, it is important to quantify each agent's overall contribution to the system, both when selected for final inference and through indirect effects on other agents. Formally, we define a cooperative game $(\mathcal{A}, \nu)$ in which the players are agents and the value of a coalition $\mathcal{A}' \subseteq \mathcal{A}$ is the performance achieved by running \textsc{sale} with participation restricted to $\mathcal{A}'$. We then quantify each agent's average marginal contribution using Shapley values~\citep{10.5555/3295222.3295230}, where $\phi_i$ denotes agent $i$'s average marginal contribution to ensemble accuracy across all possible coalitions:
+% \begingroup
+% \setlength{\abovedisplayskip}{8pt}
+% \setlength{\belowdisplayskip}{6pt}
+\[
+\phi_i = \sum_{
+\mathcal{A}' \subseteq \mathcal{A} \setminus \{i\}} \frac{|\mathcal{A}'|!\,(|\mathcal{A}|-|
+\mathcal{A}'|-1)!}{|\mathcal{A}|!} \left[ \nu(
+\mathcal{A}' \cup \{i\}) - \nu(
+\mathcal{A}') \right].
+\]
+% \endgroup
+Here, $\mathcal{A}$ is the set of agents, $\nu(\mathcal{A}')$ is the expected utility induced by our cost--value selection mechanism when only agents in $\mathcal{A}'$ participate in all roles (bidding, jury scoring, and memory-based refinement). The weighting is the probability that coalition $\mathcal{A}'$ precedes agent $i$ in a random ordering. Table~\ref{tab:shapley_results} reports these values with and without memory-based self-refinement. We observe that in the without-memory setting, the largest agent has the highest Shapley values across all complexity bins and task domains, even though it is not the most-selected agent in all settings (Figure~\ref{fig:alloc}). This indicates that \textsc{sale} benefits from the largest agent's contribution in jury scoring, and yet saves inference costs by choosing smaller agents for solving the task. Further, we observe that introducing memory consistently lowers the 32B agent's Shapley value across task domains and complexity bins, while the smaller 4B and 8B agents generally gain marginal contribution, especially on higher-complexity coding tasks. 
+
+It is worth noting that, when computing Shapley values, we remove the target agent from all roles in \textsc{sale}, including the candidate pool, the jury, and the memory bank. Thus, an agent's Shapley value captures its total contribution to the system---its ability to contribute effective strategies directly as well as its indirect impact. This explains, for example, why the 4B model can attain a relatively high Shapley value on coding tasks despite being selected infrequently for final inference: it still improves the ensemble through judgement and memory contributions. Hence the distributions in Figure~\ref{fig:alloc} and Table~\ref{tab:shapley_results} need not correlate.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\linewidth]{assets/time.pdf}
+    \caption{Cumulative share of tasks routed to the smallest agent over time. Solid lines show the mean across 5 runs with randomized task orderings; shading denote ±1 standard deviation. An upward trend indicates that the local selection rate exceeds the historical average, reflecting increased delegation to the smallest agent as auction history accumulates.}
+    \label{fig:time}
+\end{figure}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\subsection{Smallest Agent Selection Over Time}
+Beyond static routing, \textsc{SALE} enables smaller agents to progressively "scale up" by learning from auction feedback, effectively expanding their competitiveness over time. We test this by tracking how often the smallest (4B) agent is selected as the final executor over time. Figure~\ref{fig:time} plots the cumulative selection rate of the 4B agent: the running fraction of all tasks processed so far that were ultimately routed to this agent. For deep search, this cumulative share increases from 3.7\% in the early portion of the evaluation to 11.1\% by the final tasks, approximately a threefold increase. For coding, the cumulative share grows from 1.4\% to 5.3\%, nearly a fourfold increase, with a marked rise over the first $\sim$150 tasks followed by a plateau and a slight decline near the end. Overall, the proportion of workload handled by the smallest agent increases over time as a growing memory bank yields increasingly relevant auction feedback that progressively scales up the practical contribution of small agents. This temporal dynamic distinguishes \textsc{SALE} from conventional routers, which treat model selection as a stationary mapping from task features to agents. Similar plots for all agents are shown in Appendix~\ref{appendix:time}.
+
+\subsection{Qualitative Analysis of Refined Strategies}
+Consistent with recent observations on reusable behaviors in LLM reasoning~\citep{didolkar2025metacognitivereuseturningrecurring}, we find that memory-guided refinement systematically grounds strategies in auction feedback by reusing recurrent structural elements from past winning bids on similar tasks. For search tasks, refined strategies more frequently (i) explicitly mention tools and their arguments, (ii) impose tighter search-space constraints to specified reputable sources, and (iii) add intermediate cross-reference checks for ambiguity or inconsistencies. For coding tasks, refinement more often (i) specifies function and helper-function names and arguments precisely, (ii) maintains stronger alignment with the final objective (e.g., returning code rather than its runtime output), and (iii) performs systematic testing, including both the use of provided tests and the construction of additional test cases and edge-case checks. Across both domains, refined strategies also adopt a clearer layout and step organization. Table~\ref{tab:refinement_patterns} reports the proportion of selected refined strategies in which each pattern appears, and Appendix~\ref{appendix:examples} shows representative examples illustrating all behaviors.
+
+\subsection{Complementary Failure Modes}
+For \textsc{sale} to outperform any single agent (as shown in Table~\ref{tab:results}), there must exist tasks where smaller agents succeed and the largest agent fails, including cases where smaller agents have improved through prior auction feedback. If the largest agent's errors were a strict subset of smaller agents' errors, routing would offer no accuracy benefit and only cost savings. In Appendix~\ref{appendix:failure_modes}, we investigate such complementary failure modes, providing qualitative grounding for the quantitative improvements observed in Section~\ref{sec:results}. 
+
+Across task types and complexity levels, we find that failures of the largest agent often stem less from a lack of underlying capability and more from how that capability is exercised. In particular, the largest agent is more prone to overconfident behavior: it sometimes bypasses available tools in favor of parametric recall, over-engineers straightforward problems, or skips basic verification steps. Smaller agents, by contrast, more often adhere to simpler strategies, lean more heavily on tools, and perform explicit checks. Crucially, these tendencies are visible in the initial strategic plans agents submit before any trajectory is executed, implying that the auction has access to a reliable signal for predicting failure-mode divergence at bid time, without needing to run trajectories to completion. That said, these patterns do not mean that smaller agents are generally more accurate---the largest agent remains superior on aggregate, especially at higher complexities (Section~\ref{sec:performance-complexity}). They do, however, suggest a consistent complementarity in failure modes: some tasks are handled better by simpler, tool-centric strategies than by the largest agent's approach. \textsc{sale} is designed to exploit this by using these early differences in strategy as the main signal for how work should be divided.
+
+
+\section{Conclusion}
+We investigated how task complexity affects the relative performance of small and large language-model agents, and how to allocate work across them efficiently. On deep search and coding tasks spanning multiple horizons, smaller agents perform comparably to larger ones on simple instances but fall substantially behind on more complex ones. This suggests that small agents alone are insufficient for complex workloads, whereas always defaulting to the largest model ignores substantial opportunities for efficiency.
+
+To address this, we proposed \textsc{sale}, a strategy-auction framework where heterogeneous agents bid with short strategic plans, are scored by a cost–value objective, and refine bids using shared auction memory. \textsc{sale} runs entirely at test time on off-the-shelf models, without training a separate router, and introduces only a negligible additional inference overhead beyond executing the final trajectory. Empirically, across both deep search and coding domains, it improves the pass@1 of the strongest single agent while reducing cost and shifting a substantial fraction of workload away from the largest model, adaptively improving smaller agents over time so they can shoulder more of the work and maintaining these gains even on the most complex tasks. Our findings indicate that scaling individual models is only one axis of progress, and that \emph{how} we structure and coordinate agents can be an equally powerful lever. Rather than treating capability as a property of a single, ever-larger model, \textsc{sale} treats it as an emergent property of a system that allocates work, prices compute, and lets agents learn from each other and adapt their strategies over time. This points toward a view of agentic AI where advances are driven not just by stronger models, but by the coordination mechanisms and division of labor that bind them into effective and adaptive systems.
+
+
+
+\section*{Limitations}
+We study two domains---deep search and coding---that are canonical benchmarks in the agentic AI literature and exercise complementary capabilities: search emphasizes retrieval and multi-step exploration, while coding emphasizes generation and logical reasoning. Together they cover diverse agentic patterns with distinct tool-use profiles and offer objective, automatable evaluation metrics. That said, they do not span all applications of agentic systems; future work can apply \textsc{sale} to additional task families (e.g., data analysis or long-form report writing) to test how broadly our findings generalize.
+
+On the modeling side, we work with Qwen3 models from 4B to 32B parameters. We focus on a single model family for our complexity-scaling analysis because cross-family comparisons would confound scale effects with architecture, tokenizer, and training recipe differences, making it impossible to isolate how model size mediates performance as task complexity grows. Qwen3 is the only contemporary open-weight suite offering a dense, consistently-trained ladder (4B $\rightarrow$ 8B $\rightarrow$ 14B $\rightarrow$ 32B) suitable for this methodology; in contrast, other open-weight families offer narrower size ranges, larger gaps between sizes, or mix architectures across scales, and closed-source models do not disclose parameter counts. Importantly, \textsc{sale} is model-agnostic: the auction mechanism and cost--value objectives do not depend on model-specific properties, so our findings about when to route to larger versus smaller models should transfer qualitatively to other families. The 4B-32B range already yields a clear task--complexity-dependent performance gap and a roughly 8$\times$ cost spread, but it still sits below the largest frontier models. That said, much of the empirical literature on scaling behavior draws inferences from trends observed across multiple smaller, systematically spaced model sizes; our controlled size ladder is designed to support that style of analysis by isolating scale while holding other factors as constant as possible. Evaluating \textsc{sale} with substantially larger models (e.g., 70B+) would be a useful extension to assess how the cost--value trade-offs behave when agents are even more capable and more expensive.
+
+Additionally, our auction memory bank grows linearly with the number of tasks. In our experiments, memory size remained tractable and did not affect performance; however, extended deployment over thousands of tasks may benefit from memory management strategies such as sliding windows, importance-weighted sampling, or summarization. These are standard techniques in memory-augmented systems and can be integrated without modifying the core auction mechanism.
+
+Finally, our cost accounting focuses on language-model tokens and does not explicitly price tool calls. This reflects standard practice in agentic benchmarks and is appropriate for our experimental setup, where token costs dominate overall spend. The \textsc{sale} cost function is modular: extending it to incorporate tool pricing (e.g., commercial APIs, simulators, or human-in-the-loop services) requires only adding corresponding cost terms without modifying the auction mechanism. We leave this extension to future work targeting deployments where tool costs are non-negligible.
+
+\section*{Broader Impacts}
+This work contributes to the understanding of how task complexity mediates the effectiveness of language-model agents and proposes a coordination mechanism for efficiently allocating work across heterogeneous models. We discuss several dimensions of potential impact.
+\vspace{-5pt}
+\paragraph{On the marketplace metaphor.} We employ auction-based coordination and freelancer-marketplace terminology as conceptual tools for organizing AI agents, not as prescriptions for labor markets. The analogy is strictly methodological: it motivates a mechanism design perspective on multi-agent systems in which bids, competition, and learning from feedback govern allocation among software components. Our framework neither models human workers nor recommends substituting them with AI. We emphasize that the ``agents'' in our system are language models executing computational tasks within sandboxed research environments, and the ``marketplace'' is a metaphor for principled resource allocation—distinct from, and not intended to inform, policies regarding human employment.
+\vspace{-5pt}
+\paragraph{Efficiency and environmental considerations.} By reducing reliance on the largest agent by approximately 53\% and lowering overall inference cost by 35\%, \textsc{sale} promotes more efficient use of computational resources. Given the substantial energy footprint of large-scale language-model inference, mechanisms that route simpler tasks to smaller models—without degrading performance—can contribute to more sustainable AI deployment. We view this as a modest but positive externality of our work.
+\vspace{-5pt}
+\paragraph{Democratizing access to capable AI.} Our findings suggest that carefully coordinated ensembles of smaller, less expensive models can match or exceed the performance of larger models on heterogeneous workloads. If such coordination mechanisms become practical, they may lower the cost barrier to deploying capable agentic systems, potentially broadening access beyond well-resourced institutions. However, we acknowledge that the benefits of efficiency gains are not automatically equitably distributed, and deployment contexts will shape who ultimately benefits.
+\vspace{-5pt}
+\paragraph{Dual-use considerations.} As with most advances in AI capabilities and efficiency, our contributions are dual-use. More efficient agentic systems could be applied to beneficial domains (e.g., scientific research, accessibility tools) or to applications with negative societal consequences. We do not foresee unique risks introduced by \textsc{sale} beyond those already present in the underlying language models and agentic frameworks; our contribution is to coordination, not to novel capabilities. Nonetheless, we encourage practitioners to consider deployment contexts carefully.
+
+\section*{Acknowledgments}
+We would like to thank Enrique Alfonseca, Misha Bilenko, Cheng Zhang, Yue Zhang, Igor Tufanov, Virginie Do, Emilien Garreau, Amine Benhalloum, Mathieu Rita, Romain Froger, Lovish Madaan, Anirudh Goyal, Iva Simon-Bubalo, Cindy Lee, Derek George Chan, Jordan Ward, and Joshua Lim for their valuable technical guidance and support in the development of this work. We are also grateful to Parag Jain, Amar Budhiraja, Graeme Nail, Thomas Scialom, Grégoire Mialon, Marin Vlastelica, Jenny Zhang, Md Rifat Arefin, Ulyana Piterbarg, Shashwat Goel, Philipp Mondorf, and Dulhan Jayalath for insightful discussions that helped shape and refine this research.
+
+% \section{References and citations}
+
+% Take a look at~\cref{table:demo}, appearing on~\cref{section:intro}.
+% %
+% Some citation of previous work~\citep{goodman}.
+
+% \clearpage
+% \newpage
+
+\bibliographystyle{assets/plainnat}
+\bibliography{paper}
+
+\clearpage
+\newpage
+\beginappendix
+
+\section{Dataset}\label{appendix:data}
+We describe here how we construct \textsc{HST-Bench}, its composition across source datasets and complexity bins, and the details of the human solution–time annotation protocol.
+
+\subsection{Data Composition}
+\textsc{HST-Bench} is built from existing open-source benchmarks spanning deep search and coding. Concretely, we draw from SimpleQA~\citep{wei2024measuringshortformfactualitylarge}, PopQA~\citep{mallen-etal-2023-trust}, HotpotQA~\citep{yang-etal-2018-hotpotqa}, GAIA~\citep{mialon2024gaia}, Humanity's Last Exam (HLE)~\citep{phan2025humanitysexam}, MBPP~\citep{austin2021programsynthesislargelanguage}, and LeetCode~\citep{xia2025leetcodedatasettemporaldatasetrobust}. In addition, we construct a small corpus of multiple-choice coding questions, which we refer to as Coding-MCQ (see example questions in Appendix~\ref{appendix:cmcq}, to better populate the lowest-complexity bin for coding tasks. We randomly sample instances from the official test splits of each benchmark. In order to ensure label quality, we validate all samples, discarding and replacing those for which it is not possible to derive the provided ground-truth answer from the question. For HLE, we restrict to chemistry and biology questions that have been validated by domain experts~\citep{white2025hlewrong}. For GAIA, we sample from the validation split, which includes human solution times collected under comparable experimental conditions (timed, independent problem-solving by proficient users) and verified by the original authors; we directly reuse these annotations. After sampling, we annotate and aggregate human solution times for each instance and assign it to one of the five non-overlapping complexity bins defined in Section~\ref{sec:datasets}, based on its average human solution time. Table~\ref{tab:data_origin} reports, for each complexity bin, how many \textsc{HST-Bench} instances originate from each source dataset. This reveals a shift from short-form factual QA and \textsc{Coding-MCQ} in the lower-complexity bins toward tasks demanding extended agentic workflows: multi-source information retrieval, cross-referencing, and synthesis for reasoning benchmarks (e.g., HotpotQA, GAIA, HLE), and iterative implementation with intermediate testing and debugging for coding problems (e.g., LeetCode `Hard') in the higher-complexity bins.
+
+\input{tabs/data_composition}
+
+The distribution of source datasets across complexity bins reflects the design intent of existing benchmarks, many of which target specific difficulty ranges. This naturally results in a greater proportion of certain datasets within specific bins.
+
+In addition to the test split, we construct separate development sets for both domains. For deep search, the development set contains 68 instances sampled from SimpleQA; for coding, it comprises 88 instances drawn from 40 Coding-MCQ questions and 48 LeetCode `Easy' problems. These development sets are disjoint from the test data and reflect the need for instances on which models exhibit a balanced mix of successes and failures to enable effective validation and tuning.
+
+\subsection{Data Annotation}
+\label{appendix:data-annotation}
+
+To obtain human solution times for \textsc{HST-Bench}, we recruited a pool of paid annotators who are graduates in computer science or closely related fields, with demonstrated expertise in programming and familiarity with the types of deep search and coding problems we study. This helps ensure that the reported solution times reflect the behavior of reasonably proficient users rather than novices. For each task, we collect solution-time annotations from at least three distinct annotators, who work independently and use only tools permitted by the task guidelines (e.g., a web browser and search engine for search tasks, or a local editor/IDE for coding), while refraining from language models or other assistants that could directly solve the task. Annotators are given written task-specific guidelines (Section~\ref{sec:guidelines}), read each task once in full, then start a stopwatch, solve the task as quickly as possible while maintaining accuracy, and finally submit both their measured solution time and final answer (or code). For LeetCode `Hard' tasks, due to annotation cost constraints, we do not collect new human timings and instead rely on published human time estimates reported by~\cite{siroš2024githubcopilotperfectcode}. To verify consistency, we independently annotate a random subset of 8 tasks ($\sim$10\%) and confirm that all measured times fall within the published ranges.
+
+All collected annotations undergo a subsequent quality-control pass. First, submitted solutions are checked for correctness. Once a minimum of three correct solution times has been collected for a given task, we lightly filter for outliers to reduce the influence of anomalous timings (e.g., due to interruptions or misunderstandings), and collect further annotations if necessary. Concretely, solution times associated with incorrect answers or that deviate by more than two standard deviations from the task-wise mean are removed from the dataset. Once quality control and any necessary data re-collection have concluded, the times for each task are averaged together. We find good inter-annotator agreement across \textsc{HST-Bench} (CCI $= 0.83$, 95\% CI $[0.81, 0.85]$; Krippendorff's $\alpha = 0.86$, 95\% CI $[0.84, 0.87]$, $p < 0.001$), indicating that human solution times are reliably reproducible.
+
+\subsection{Annotators' Guidelines}\label{sec:guidelines}
+Below we reproduce the instructions provided to annotators for both deep search and coding tasks. These guidelines specify the allowed tools, what constitutes a correct solution in each domain, and how annotators should measure and report their solution times, ensuring consistency across annotators and task types.
+
+\para{Deep Search Guidelines.}\input{tabs/guidelines_search}
+
+\para{Coding Guidelines.}\input{tabs/guidelines_coding}
+
+
+\subsection{Coding-MCQ Examples}\label{appendix:cmcq}
+
+Below are representative multiple-choice questions from the Coding-MCQ dataset, designed to assess performance on short, low-complexity coding tasks that target core programming concepts.
+
+\input{tabs/coding_mcq}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage\section{Estimated Cost of Running Models}\label{appendix:cost}
+Inference prices for Qwen3 models vary substantially across providers and deployment settings, reflecting differences in supported context length, geographical region, and commercial factors such as traffic volume and competition.\footnote{\url{https://huggingface.co/datasets/reach-vb/inference-provider-pricing}} To obtain a simple, reproducible cost model for our experiments, we adopt an empirically calibrated pricing schedule. Our approach is grounded in recent empirical analyses of inference markets demonstrating that, for dense models, per-token prices scale approximately linearly with the number of parameters~\citep{scher2025observations}.
+
+Following this established relationship, we model cost as proportional to the number of parameters and anchor our schedule using publicly advertised prices from established inference providers. Specifically, at the time of writing Groq reports separate prices for input and output tokens for Qwen3 32B,\footnote{\url{https://groq.com/pricing}} listing
+\[
+\$0.29 / \text{Mt} \ \text{for input tokens} \quad+\quad \$0.59 / \text{Mt} \ \text{for output tokens},
+\]
+where \textit{Mt} denotes one million tokens. We use these figures as a reference anchor for a high-capacity Qwen3 model and scale costs for other sizes in proportion to their parameter counts.
+
+In our agentic runs we consistently observe an average input-to-output token ratio of about 4:1 across task domains and horizons. Under this assumption, we take the expected cost per million \emph{total} tokens for an agent instantiated with Qwen3 32B to be
+\[
+\pi(a_{\text{32B}}) 
+\;=\;
+\frac{4 \cdot 0.29 + 1 \cdot 0.59}{5}
+\;\approx\;
+\$0.36 / \text{Mt}.
+\]
+Applying the same linear scaling in parameter count yields the effective prices per million total tokens used in our experiments:
+\[
+\pi(a_{\text{4B}}) = \$0.05,\quad
+\pi(a_{\text{8B}}) = \$0.09,\quad
+\pi(a_{\text{14B}}) = \$0.16,\quad
+\]
+
+where $\pi(a_{\text{4B}}) \approx 0.045$ is rounded to \$0.05. 
+
+\para{Empirical Validation.} To verify that the linear scaling assumption in practice for the other Qwen3 sizes in our experiments, we compare our derived prices against independently advertised rates from major inference providers at the time of writing.\footnote{\url{https://nebius.com/token-factory/prices}}\footnote{\url{https://novita.ai/pricing}}\footnote{\url{https://www.alibabacloud.com/help/en/model-studio/models}} Since providers list separate prices for input and output tokens, we compute comparable per-million-total-token rates by applying the same 4:1 input-to-output weighting used in our estimates. Table~\ref{tab:price_validation} reports this comparison. The mean absolute deviation between our estimates and observed provider averages is within 6\%, confirming that the linear approximation is well-supported for this model family.
+
+\input{tabs/costs}
+
+\para{Scope of the Cost Model.} Our cost model assumes access via third-party inference APIs, where infrastructure overhead---including hardware provisioning, energy consumption, and maintenance---is fully absorbed into the provider's per-token pricing. Under usage-based API billing, the user incurs costs only for tokens consumed, making \$/Mt the appropriate metric for our analysis. We note that latency and throughput vary substantially across providers, regions, and time of day, making them difficult to model consistently (though smaller models are typically also faster); we therefore leave them outside the scope of our study. Per-token pricing, by contrast, is publicly advertised and stable, providing a reproducible basis for cost comparison.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage\section{Environment, Prompts and Hyperparameters}\label{appendix:are_setup}
+
+All experiments are conducted within the open-source Agent Research Environment (ARE), which provides a standardized, tool-augmented interface for evaluating heterogeneous language-model agents on real-world tasks. Unless otherwise noted, agents, tools, and evaluation protocols follow the default ARE configuration. In the subsections below, we describe the exact model hyperparameters, environment prompts, and other implementation details needed to fully reproduce our setup.
+
+\subsection{Model Hyperparameters}
+All experiments were run on NVIDIA A100 and H100 GPU clusters with 40--80\,GB of HBM per accelerator. We use the same decoding configuration across all agents. The full set of model- and decoding-related hyperparameters used in our experiments is summarized in Table~\ref{tab:hyperparams}.
+
+\input{tabs/model_hyperparams}
+
+\subsection{Environment Hyperparameters}
+We run all experiments under the default configuration of ARE. Each episode is terminated as soon as either the time or iteration budget is exhausted, and agents must return a single final solution (i.e., we report pass@1 under the environment's LLM-as-a-judge evaluation). Notably, the LLM-as-a-judge evaluation is straightforward in our setup: search outputs are directly matched against ground truth, while coding outputs---though potentially differing lexically---can be reliably compared for functional equivalence by models like GPT-4o. We refer readers to the ARE default configuration for LLM-as-a-judge prompts and other standard hyperparameters not explicitly mentioned here. We report environment hyperparameters in Table~\ref{tab:env_hyperparams}.
+
+\input{tabs/env_hyperparams}
+
+\input{tabs/tools}
+
+For deep search tasks, each episode begins with a \emph{fact extraction} pre-step, followed by a \emph{strategy planning} step. For coding tasks, the agent performs only a strategic planning step without explicit fact extraction. Table~\ref{tab:tools} summarizes the tools and Python execution environment available to the agent in each domain and provides brief descriptions of their functionality. For all remaining environment details (e.g., the exact tool interfaces, the format of observations returned to the agent, and error handling), we refer the reader to the original ARE paper~\citep{froger2025arescalingagentenvironments}.
+
+\subsection{Retrieval Hyperparameters}\label{sec:retrieval_hyperparams}
+We use embedding-based retrieval over the shared auction memory: at each episode, the agent retrieves strategies that both won and lost past auctions for the $k$ most similar tasks to the current one. Following established practice, we set $k = 8$, which prior studies commonly find to be a strong practical trade-off between coverage/diversity and context/latency overhead~\citep{dai2023promptagator, wang-etal-2024-learning, rashid-hakak-2025-fathom}. Table~\ref{tab:mem_hyperparams} summarizes the retrieval hyperparameters used in all experiments.
+
+\input{tabs/memory_hyperparams}
+
+\subsection{Prompts}\label{appendix:prompts}
+We detail here the \emph{judge} prompt for scoring candidate strategies, the \emph{strategy} prompts used to generate $s_{t,i}$ for a task $t$, and the \emph{refinement} prompts to produce $s^{r}_{t,i}$. For coding tasks, we omit fact extraction before planning as the task specification is self-contained. Strategy refinement uses a template similar to that introduced by~\citet{alazraki-etal-2025-need} to facilitate contrastive learning from prior outcomes. For all remaining prompts used to interact with the environment, tools, and task wrappers, refer to the standard ARE configuration.
+
+\input{tabs/prompts}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage\section{Cost--Value Optimization}
+\label{appendix:minmax}
+
+\vspace{10pt}
+\subsection{Cost and Value Function Design}
+\label{appendix:cost-value-design}
+
+\para{Strategy Length in Cost Function.} In our setting, strategy length correlates with realized trajectory length (Spearman's $\rho=0.39$, Pearson's $r=0.36$, both $p<0.001$), consistent with \citet{goebel2025llmreasoningmodelsreplaceclassical}. The close alignment between rank-based and linear correlation measures indicates a stable monotonic relationship rather than an artifact driven by outliers, reinforcing that longer strategies generally yield longer trajectories. In agentic planning, such a stable and consistent proxy signal provides meaningful guidance for cost estimation. Although the correlation is moderate in absolute magnitude, this level of predictive strength is sufficient in practice: prior work on agentic orchestration demonstrates that proxies of relatively moderate strength can meaningfully inform decision-making, even in the presence of systematic over- or underestimation \citep{amin2026bayesianorchestrationmultillmagents}. Crucially, including $|s_{t,i}|$ in $C_{t,i}$ improves development set accuracy, and removing it degrades performance in ablations (Appendix~\ref{appendix:ablations}).
+
+\para{Entropy and Jury in Value Function.} We use normalized entropy $H(s_{t,i})$, computed as the mean per-token entropy from generation log-probabilities, as a lightweight signal of informational content/non-redundancy. In addition to being motivated by prior work linking higher-entropy planning to better outcomes (see Section~\ref{sec:strategy-auctions}); this term is also validated by development set performance and confirmed by ablations. Finally, we score each strategy with a full jury (including self-judgment): this configuration performs best on validation, learned weights calibrate each judge’s influence, and ablations show that removing any judge reduces accuracy (Appendix~\ref{appendix:ablations}).
+
+\vspace{7.5pt}
+\subsection{Min-Max Formulation}
+In Mathematical Program~\ref{prog:minmax}, we provide the full mixed-integer linear program (MILP) for learning the scoring weights $w = (w_c, w_h, \{w_j\}_{a_j \in \mathcal{A}})$. Let $\mathcal{T}$ denote the training set of tasks. 
+
+\input{tabs/minmax_program}
+
+\vspace{5pt}
+The big-$M$ constraints ensure that $z_t = C_{t,i} - V_{t,i}$ only for the selected agent (i.e., when $x_{t,i} = 1$), while remaining inactive otherwise. We set $M = 10^4$ to exceed the observed range of $C_{t,i} - V_{t,i}$ scores across all task-agent pairs in the training set. Specifically, $M$ exceeds $\max_{t,i} |C_{t,i} - V_{t,i}|$ by at least two orders of magnitude, ensuring numerical stability without introducing solver issues.
+
+\subsection{Implementation Details}
+We solve the MILP using PuLP~\citep{mitchell2011pulp} with the CBC solver. Weights are unconstrained. The optimization is performed separately on the development sets for deep search and coding tasks (see Appendix~\ref{appendix:data} for details), with $|\mathcal{A}| = 4$ agents.
+
+The learned weights exhibit consistent patterns across both domains. Entropy receives the highest weight in both cases, suggesting that information density in the generated strategy is a strong indicator of expected performance. This aligns with prior findings on the informativeness of high-entropy reasoning~\citep{li2025compressingchainofthoughtllmsstep} and is further supported by our ablation study in Appendix~\ref{appendix:ablations}. The relative importance of individual judge models varies by domain: for deep search tasks, smaller model judgments receive higher weight, whereas for coding tasks, the largest agent (32B) contributes most to the value estimate.
+
+\subsection{Alternative Formulations}
+\label{appendix:alternative-formulations}
+
+\para{Rationale for the Optimization Objective.} The difference $C_{t,i} - V_{t,i}$ can be interpreted as a \emph{negative net utility}: lower cost and higher value both reduce this quantity, so minimizing it naturally favors agents that are both efficient and effective. This formulation mirrors classical economic frameworks where profit is defined as revenue minus cost. Crucially, because the weights $(w_c, w_h, \{w_j\})$ are learned jointly and left unconstrained, the optimization implicitly calibrates the relative scales of cost and value components without requiring manual normalization or threshold selection.
+
+\para{Normalized Features.} An alternative approach is to normalize $C$ and $V$ before combining them, for instance by Z-score, standardizing all input features prior to learning the weights. While this ensures that cost and value terms are on comparable scales a priori, it discards meaningful structural information. In our setting, cost and value features operate on different scales---entropy in particular is orders of magnitude smaller than cost, while judge scores fall in between. These differences are not arbitrary; they reflect the heterogeneous nature of the signals: token-based costs, normalized entropy, and Likert-scale judgments each carry information at their natural scale. Our learned weights implicitly calibrate these differences, ensuring that smaller-scale features (particularly entropy, which receives the largest weight magnitude) contribute meaningfully to routing decisions.
+
+To validate this intuition empirically, we evaluated a variant in which all input features are Z-score normalized using training-set statistics before weight optimization. This variant achieves lower accuracy while disproportionately selecting cheaper models. Inspection of the learned weights reveals the cause: under normalization, the optimizer discovers a degenerate solution in which several value-related weights become negative (e.g., $w_h < 0$, $w_{32B} < 0$), effectively \emph{penalizing} quality signals rather than rewarding them. This occurs because, once all features are rescaled to comparable magnitudes, the optimizer can minimize $C - V$ simply by selecting cheap models—there is no structural pressure to preserve value contributions. In contrast, our unnormalized formulation forces the learned weights to jointly encode both relative importance and scale calibration, preventing such degenerate solutions.
+
+\para{Constrained Optimization.} Another alternative is constrained optimization, for example minimizing cost subject to $V > \eta$ for some threshold $\eta$. However, this formulation requires choosing $\eta$ a priori, which is difficult in practice: the appropriate threshold may vary across task distributions, agent pools, and deployment settings. Setting $\eta$ too high excludes cost-efficient agents that would have succeeded on easier tasks, while setting it too low allows poor-quality assignments to slip through on harder ones. Our unconstrained formulation sidesteps this problem altogether. The learned weights end up implicitly encoding the right cost–value trade-off for the training distribution, and because the min–max objective optimizes against worst-case tasks, we do not need to hand-pick thresholds for robustness.
+
+\vspace{5pt}
+In conclusion, normalization and constrained optimization both introduce additional design choices (normalization statistics, threshold values) that need to be tuned and often do not transfer well across settings. By minimizing $C - V$ with unconstrained, jointly learned weights, we avoid this overhead, while still obtaining strong empirical results. The natural scale differences between cost and value features are informative on their own, and the learned weights can exploit this, as confirmed by ablation experiments showing that adding explicit normalization hurts routing quality.
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage\section{Strategy Refinement}\label{appendix:strategy_refinement}
+
+\subsection{Algorithm}
+In Algorithm~\ref{alg:refinement}, we provide a complete description of the strategy refinement procedure outlined in Section~\ref{sec:strategy-auctions}. The algorithm details how initial bids are collected, how the provisional winner is selected, and how cheaper agents refine their strategies using retrieved contrastive examples from the auction memory $\mathcal{M}$.
+
+\input{tabs/refinement_program}
+\subsection{Contrastive Example Selection}
+The refinement step exposes agents to contrastive pairs of winning and losing strategies from past auctions. Since the auction objective minimizes cost-minus-value, winning strategies tend to originate from cost-efficient agents—typically smaller models achieving competitive value. This aligns naturally with our refinement setting, where only cheaper agents refine: the positive examples shown to a refining agent come from models of comparable capability. Prior work has shown that smaller models can benefit from exposure to high-quality plans~\citep{sun-etal-2024-enhancing-code, kang2025distillingllmagentsmall, xiong-etal-2025-mpo}, yet often struggle to execute strategies designed by much larger models when the required reasoning exceeds their capacity~\citep{chen-etal-2025-unveiling-key, lee2025efficientllmcollaborationplanning}. By using auction winners—which inherently balance quality with executability—as positive examples, our approach provides smaller models with effective yet feasible strategies to learn from.
+
+An alternative design would label contrastive examples by downstream task success rather than auction selection. However, this assumes access to a reliable automated evaluator---an assumption that often fails in practice, where ground-truth feedback may be sparse, noisy, or available only through human assessment or ground truth labels. The auction selection signal, by contrast, emerges naturally from the mechanism itself and requires no external oracle, making our refinement procedure broadly applicable.
+
+\subsection{Refinement Patterns}
+Table~\ref{tab:refinement_patterns} reports, for both search and coding tasks, how often each refinement pattern appears in selected winning strategies. These statistics show that the observed structural elements recur consistently across tasks.
+\input{tabs/refinement_patterns}
+
+\subsection{Representative Examples}\label{appendix:examples}
+Below we show side-by-side representative examples of initial and refined strategies for individual tasks, together with the refinement patterns (see Table~\ref{tab:refinement_patterns}) identified in each. These examples illustrate how refinement turns loosely specified or linear strategies into more constrained, check-pointed procedures that score higher in the auction. In all examples, the unrefined strategy is rejected and the refined one is selected, yielding a successful downstream answer.
+
+\subsubsection{Deep Search Examples}
+\input{tabs/examples_search}
+
+\subsubsection{Coding Examples}
+\input{tabs/examples_code}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage\section{Significance Tests}\label{appendix:tests}
+
+Methods with memory are sensitive to test-set ordering, so we evaluate memory-based methods across five runs with different random permutations; baselines without memory use a single run. To assess significance, we employ two-tailed one-sample $t$-tests and bootstrap confidence intervals (CIs), which provide robustness against distributional assumptions.
+
+We compare against five baselines: the best single agent, \textsc{wtp}, \textsc{carrot}, TO-Router, and FrugalGPT (Tables~\ref{tab:t-tests} and~\ref{tab:bootstrap-ci}). On the full test set, \textsc{sale} achieves significantly higher pass@1 than all baselines across both task types, with large effect sizes (all $|t| > 5$, $p < .005$); bootstrap CIs confirm these results. Within individual bins, a few comparisons yield mixed results across the two tests, potentially reflecting reduced power in relatively smaller samples; where they diverge, at least one test typically remains significant: FrugalGPT on coding $\tau(t) \le 0.1$ ($p = .208$ for pass@1, though \$/Mt remains highly significant); best single agent and TO-Router on coding $\tau(t) \le 60$ (borderline $p \approx .057$, with \$/Mt strongly significant); and \textsc{carrot} on coding $\tau(t) \le 0.5$ ($p = .339$), where \textsc{carrot}'s marginal advantage over \textsc{sale} is not statistically significant. For cost, \textsc{sale} significantly reduces \$/Mt versus the best single agent, \textsc{carrot}, TO-Router, and FrugalGPT across all conditions. Compared to \textsc{wtp}, \textsc{sale} dominates on deep search (both higher pass@1 and lower \$/Mt); on coding, \textsc{wtp} achieves lower cost but at substantially degraded performance.
+
+\input{tabs/ttests}
+
+\input{tabs/bootstrap_ci}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage\section{Baselines}\label{appendix:baselines}
+
+\subsection{Baseline Implementation Details}
+We provide implementation details and hyperparameter configurations for the baseline routing methods evaluated in Section~\ref{sec:results}.
+
+\vspace{15pt}
+\para{WTP Router.} The WTP router predicts model performance using a $K$-Nearest Neighbors classifier, then selects models based on a cost-performance trade-off controlled by the willingness-to-pay parameter. Following~\citet{hu2024routerbench}, we use $k=50$ neighbors with cosine distance over sentence embeddings. We tune the willingness-to-pay parameter on the deep search and coding training sets. Table~\ref{tab:wtp-hyperparams} presents the hyperparameter configuration.
+\input{tabs/wtp_hyperparams}
+
+\vspace{15pt}
+\para{CARROT Router.} \textsc{CARROT}~\citep{somerstep2025carrotcostawarerate} fine-tunes a RoBERTa encoder as a multi-label classifier to predict the probability of success for each candidate model given an input query. At inference time, routing decisions are made by selecting the model that maximizes a cost-performance tradeoff score: $(1 - \mu) \cdot p_i - \mu \cdot c_i$, where $p_i$ is the predicted success probability and $c_i$ is the normalized cost of model $i$. The hyperparameter $\mu \in [0, 1]$ controls the tradeoff between performance ($\mu = 0$) and cost ($\mu = 1$). Due to the limited size of our training set, we freeze the RoBERTa backbone and only train the classification head, which we found to yield more stable predictions. We set $\mu = 0.0$ based on development set performance; higher values of $\mu$ caused the router to route almost exclusively to the smallest agent, degrading task performance without meaningful cost savings. Table~\ref{tab:carrot-hyperparams} presents the hyperparameter configuration.
+
+\input{tabs/carrot_hyperparams}
+
+\para{TO-Router.} The TO-Router baseline fine-tunes a BERT encoder to predict model performance scores, using soft labels and inverse class frequency weighting to handle imbalanced performance distributions. We follow the implementation of \citet{stripelis-etal-2024-tensoropera}. Table~\ref{tab:torouter-hyperparams} presents the hyperparameter configuration.
+\input{tabs/to_hyperparams}
+
+
+\para{FrugalGPT.} For the FrugalGPT baseline, we follow the implementation of \citet{chen2024frugalgpt}, which consists of two components: (i) a scoring function that predicts answer correctness, and (ii) a cascade optimizer that determines the optimal model ordering and acceptance thresholds. Table~\ref{tab:frugalgpt-hyperparams} presents the hyperparameter configuration.
+\input{tabs/frugal_hyperparams}
+
+
+\subsection{Pareto Frontier vs. Baseline Routers}
+Figure~\ref{fig:pareto-scatter} visualizes the accuracy--cost trade-offs reported in Section~\ref{sec:results} (Table~\ref{tab:results}). On deep search tasks, \textsc{sale} shifts the Pareto frontier outward for every value of $\tau$. On coding, \textsc{sale} improves the frontier in all bins except $\tau \le 0.5$, where \textsc{CARROT} attains a comparable trade-off. We also note that \textsc{WTP} can achieve lower cost on coding tasks, but only with substantial accuracy degradation.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.99\linewidth]{assets/pareto_baselines.pdf}
+    \caption{\textsc{sale} vs. baselines on the accuracy–cost trade-off. The upper-left envelope is Pareto-optimal.}
+    \label{fig:pareto-scatter}
+\end{figure}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage\section{Oracle Results and Agent Selection Analysis}\label{appendix:oracle}
+
+\subsection{Oracle Router}\label{appendix:oracle-router}
+Table~\ref{tab:oracle} reports the oracle router results on \textsc{HST-Bench}, as an upper bound on what is achievable from per-task model selection alone. For each task $t$ we run all candidate agents and select the smallest agent that produces a correct final answer. If all answers are incorrect, we select the smallest agent in the pool. This yields the minimum possible spend subject to achieving correctness whenever any agent in the pool can solve the task. We note, however, that in complexity bins where no agent solves a large fraction of instances, the oracle's effective cost can be artificially low: on those unsolved tasks the choice of agent does not affect accuracy, and our definition defaults to the cheapest model, thereby minimizing expenditure in a regime where additional compute would not change outcomes. As a result, oracle cost in low-accuracy bins should be interpreted cautiously, primarily as a lower bound on spend rather than a representative operating point.
+
+Relative to this hindsight upper bound, \textsc{sale} captures a substantial fraction of the available routing gains on easier tasks, but the gap to oracle performance grows with task complexity. For deep search, at $\tau(t) \le 0.1$ the oracle attains 97.5 pass@1 versus 91.3 for \textsc{sale} (Table~\ref{tab:results}), while for coding the gap is only 0.5 points (98.8 vs. 98.3). At higher complexity, the oracle–\textsc{sale} gap widens (deep search $\tau(t) \le 60$: 25.0 vs. 16.3; coding $\tau(t) \le 60$: 34.2 vs. 26.1). We also observe a growing gap between the oracle and the best single agent as task complexity increases, peaking in the medium–high complexity bins. This implies increased opportunity for routing in these instances.
+
+While a gap between \textsc{sale} and the oracle remains, \textsc{sale} consistently exhibits the smallest accuracy gap to the oracle among all methods. On deep search, \textsc{sale}'s gap to the oracle is 10.6 points (67.3 vs. 77.9), compared to 14.1–16.9 points for the baselines (WTP: 15.5; \textsc{CARROT}: 16.6; TO-Router: 14.9; FrugalGPT: 16.9; best single agent: 14.1). On coding, \textsc{sale}'s accuracy gap is 7.3 points (61.1 vs. 68.4), whereas baselines range from 10.0 to 18.3 points behind the oracle (WTP: 18.3; FrugalGPT: 18.0; \textsc{CARROT}: 11.3; TO-Router and best single agent: 10.0). In cost, \textsc{sale} also closes more of the gap on deep search ($0.21$ vs. oracle $0.07$) than any baseline ($0.28$–$0.51$); on coding, WTP achieves lower cost (\$0.11) but at the expense of a substantially larger accuracy gap (18.3 points vs. \textsc{sale}'s 7.3 points). In short, the oracle–\textsc{sale} gap should be interpreted relative to the considerably wider oracle–baseline gaps: \textsc{sale} captures more of the available routing gains than any existing method, and the residual headroom reflects the inherent difficulty of task-complexity prediction rather than a limitation unique to our approach.
+
+\input{tabs/oracle_results}
+
+\subsection{Routing Diagnostics}
+To better understand \textsc{sale}'s routing behavior and identify opportunities for improvement, we conduct a systematic error analysis comparing \textsc{sale}'s agent selections over a single run against the oracle router described in Appendix~\ref{appendix:oracle-router}. We categorize each routing decision into one of four outcomes:
+
+\begin{enumerate}
+    \item \textit{Correct:} SALE selects the same agent as the oracle.
+    \item \textit{Over-escalation:} SALE selects a larger (more expensive) agent than necessary.
+    \item \textit{Under-escalation}: SALE selects a smaller agent that fails when a larger one would succeed.
+    \item \textit{Unavoidable:} No agent in the pool produces a correct answer.
+\end{enumerate}
+
+\vspace{10pt}
+\para{Deep Search Diagnostics.} Figure~\ref{fig:error_ds} presents row-normalized confusion matrices comparing \textsc{sale}'s agent selections against the oracle router described in Appendix~\ref{appendix:oracle-router}, both overall and stratified by complexity bin. Each cell shows the percentage of tasks where \textsc{sale} selected a given agent (row) and the oracle selected another (column), annotated as: correct ($\checkmark$, diagonal), over-escalation ($\uparrow$, \textsc{sale} selects larger than necessary), under-escalation ($\downarrow$, \textsc{sale} selects an agent that fails when a larger one succeeds), or unavoidable (---, no agent succeeds).
+
+In the aggregate matrix ($n=354$), the dominant off-diagonal mass lies in the leftmost column, indicating frequent over-escalation: when \textsc{sale} selects the 14B or 32B agents, 65.1\% and 61.0\% of those cases could have been handled by the 4B agent. Under-escalation (↓) appears infrequently across all rows, confirming that \textsc{sale} rarely sacrifices accuracy by selecting an insufficiently capable agent. Notably, when \textsc{sale} does route to the 4B agent, it achieves the highest diagonal accuracy---54.0\% overall, and even higher within individual bins (100\% at $\tau \le 0.1$, 75.0\% at $\tau \le 2.5$)---suggesting the system correctly identifies 4B-suitable tasks but triggers such routing too conservatively. 
+
+Across complexity bins, over-escalation decreases systematically: at $\tau \le 0.1$, over-escalation from 32B selections to the 4B oracle accounts for 86.2\%, dropping to 16.7\% at $\tau \le 12.5$ and near-zero at $\tau \le 60$. This shift reflects a structural change in the error landscape: as complexity grows, the ``none'' column increasingly dominates (reaching 73–100\% at $\tau \le 60$), indicating that most failures become unavoidable regardless of routing.
+
+\vspace{10pt}
+\para{Coding Diagnostics.} Figure~\ref{fig:error_co} shows row-normalized confusion matrices for coding-agent selections. Mirroring the deep-search pattern, over-escalation dominates the aggregate matrix ($n=399$): when \textsc{sale} selects 14B or 32B, the oracle often prefers smaller agents---55.2\% of 14B selections could have been handled by 4B, and 31.5\% of 32B selections map to 4B (with an additional 25.0\% mapping to 8B). Under-escalation remains similarly limited: \textsc{sale}'s 4B selections are predominantly correct (69.6\% diagonal), with most remaining errors unavoidable (21.7\%). This asymmetry---\textsc{sale} prioritizing accuracy via conservative routing at the cost of compute---closely matches the deep-search behavior.
+
+Stratifying by complexity reveals a parallel transition. At $\tau \le 0.1$, small-agent routing is perfect (4B achieves 100\%), but over-escalation is extreme: all 14B and 32B selections could have been routed to 4B (100\% in both rows). As complexity increases ($\tau \le 0.5$, $\tau \le 2.5$), over-escalation persists while the ``none'' column grows. However, the hardest bin ($\tau \le 60$) diverges from deep search: rather than collapsing to near-total unavoidable outcomes, coding shows more heterogeneous behavior---the ``none'' column reaches 50--78\% across rows, but under-escalation also emerges (e.g., 4B shows 25\% under-escalation to 8B). This indicates that high-complexity coding tasks retain meaningful variation in required agent capability, whereas deep-search tasks become predominantly unsolvable.
+
+\vspace{10pt}
+Overall, while \textsc{sale} already achieves the smallest oracle gap among all evaluated routers (Section~\ref{sec:results}), the error analysis reveals that further improvements require further reducing over-escalation on low-complexity tasks where the oracle favors 4B yet \textsc{sale} triggers larger agents. Importantly, this failure mode is conservative: \textsc{sale} errs toward preserving accuracy rather than sacrificing correctness, and under-escalation remains rare across both domains. Moreover, when \textsc{sale} does route to 4B, diagonal accuracy is high (54.0\% for deep search, 69.6\% for coding), suggesting the system can correctly identify easy tasks but currently triggers such routing too infrequently.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{figure}
+    \centering
+    \includegraphics[width=\linewidth]{assets/error_analysis_deep_search.pdf}
+    \caption{Deep search routing confusion matrices (SALE vs.\ oracle). Cells show row-normalized percentages.}
+    \label{fig:error_ds}
+\end{figure}
+
+\begin{figure}
+    \centering
+    \includegraphics[width=\linewidth]{assets/error_analysis_coding.pdf}
+    \caption{Coding routing confusion matrices (SALE vs.\ oracle). Cells show row-normalized percentages.}
+    \label{fig:error_co}
+\end{figure}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage\section{Further Ablations}\label{appendix:ablations}
+\vspace{10pt}
+
+\subsection{Cost--Value Function Ablations}
+Table~\ref{tab:cv_ablations} reports the results of ablating individual terms in the cost--value function. We separately remove the price per million tokens $\pi(a_i)$, the strategy length $|s_{t,i}|$, the normalized entropy $H(s_{t,i})$, and the entire jury term $\sum w_j \cdot \gamma(s_{t,i})$. For each ablated configuration, we re-optimize the remaining weights to best fit that specific setup.
+
+Across both deep search and coding tasks, ablating any of the four terms leads to lower pass@1 scores, indicating that each component contributes meaningfully to \textsc{sale}'s overall performance. For deep search, all ablations also result in higher average cost per million tokens, suggesting that the full cost–value function more effectively balances accuracy and efficiency. In contrast, for coding tasks, ablating $\pi(a_i)$ and $H(s_{t,i})$ yields slightly lower costs, reflecting an increased selection of smaller models, though this comes at the expense of accuracy. This pattern is consistent with the findings in Section~\ref{sec:alloc}, where we show that \textsc{sale} already favors larger models for coding tasks even in its full form, whereas model selection is more varied for deep search.
+
+The impact of each ablation also differs by task type and complexity. Removing the jury assessment causes the largest performance drop for deep search ($-3.6$ pass@1 on average), with the gap widening substantially on more complex tasks ($-7.6$ at $\tau \le 12.5$; $-6.3$ at $\tau \le 60$), underscoring the importance of jury-based scoring in challenging settings. For coding, \textsc{sale} is more robust to jury removal; instead, ablating any of the cost terms (price and strategy length) results in the steepest decline, particularly at mid-complexity levels ($-4.2$ and $-5.5$, respectively, at $\tau \le 2.5$), reflecting their role in routing beyond cost alone. Entropy ablation presents a nuanced trade-off: at $\tau \le 0.1$ for deep search, it achieves the lowest cost but sacrifices accuracy, suggesting entropy helps prevent under-spending on deceptively simple tasks. We note that a few ablated configurations marginally outperform \textsc{sale} in isolated bins, though these gains are offset by larger losses in other bins.
+
+\input{tabs/cv_ablations}
+
+\newpage\subsection{Jury Ablations}
+Table~\ref{tab:ablations} reports results when the full jury (comprising the 4B, 8B, 14B, and 32B agents) is replaced by a single judge. Across both task types, all single-judge configurations underperform the full jury: for deep search, overall Pass@1 drops from 67.3 to 65.0–66.4, while for coding it falls from 61.1 to 59.0–60.5. Notably, no single judge is consistently superior---the 8B achieves the highest deep search accuracy (66.4), while the 14B leads on coding (60.5)---and larger judges do not reliably outperform smaller ones. Single judges also incur substantially higher costs for deep search (0.25–0.32 vs.\ 0.21 \$/Mt), suggesting the jury enables more efficient model selection. These results indicate that the jury's strength lies not in any individual member but in the diversity of perspectives: combining judges of varying capacity produces a regularizing effect that yields more robust and cost-effective decisions than any single judge alone. Crucially, this ensemble incurs negligible overhead---each judge produces only a single token (a 1–5 discrete score) and we reuse the same agents already loaded in memory as part of the pool $\mathcal{A}$---making the jury's benefits effectively free.
+
+Given that individual judges underperform the full jury, we further ask whether each member is necessary by removing one judge at a time (Table~\ref{tab:judge_ablations}). Indeed, every ablation leads to a decline in pass@1, confirming that each judge contributes unique signal. For coding, removing the 4B judge causes the largest drop ($-2.9$ pass@1), despite the 4B not being the strongest individual judge, highlighting its complementary role within the ensemble. For deep search, removing the 14B has the smallest impact (66.9 vs.\ 67.3), though performance still decreases. Interestingly, removing the 4B also substantially increases deep search cost (0.28 vs.\ 0.21 \$/Mt), suggesting the smaller judge helps steer the system toward more economical selections. Overall, these results reinforce that jury diversity is not redundant: even the smallest judge provides information that improves both accuracy and efficiency.
+
+Finally, we ablate agent self-judgment (retaining only peer-judgment) and peer-judgment (retaining only self-judgment) from \textsc{sale} (Table~\ref{tab:judgment_ablations}). Without self-judgment, the system approaches and occasionally slightly exceeds the best single agent baseline (64.1 vs.\ 63.8 for deep search; 58.8 vs.\ 58.4 for coding), though it remains below the full \textsc{sale} (67.3 and 61.1, respectively). In contrast, removing peer-judgment causes a larger drop, especially for coding, where overall pass@1 falls to 48.7. Notably, this configuration yields markedly lower costs (0.07 \$/Mt for deep search vs.\ 0.21), suggesting that smaller agents tend to be more confident self-scorers, leading the system to favor them when peer signals are unavailable. At low task complexity, relying solely on self-judgment still matches or even slightly exceeds the best single agent (e.g., 97.5 vs.\ 95.0 at $\tau \le 0.1$ for coding); yet as complexity increases, performance degrades sharply (5.6 vs.\ 12.5 at $\tau \le 60$ for deep search), indicating that self-judgment alone does not scale to harder tasks. These results underscore the complementary nature of both feedback types: peer-judgment provides the external calibration necessary for difficult problems, while self-judgment contributes efficient, low-cost signal on simpler ones.
+
+\input{tabs/jury_ablations}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage\section{Agent Selection Over Time}\label{appendix:time}
+In Figure \ref{fig:time_all}, we show the cumulative selection rate over time, defined as the running fraction of tasks ultimately delegated to each agent, for all agents that can refine their strategies during \textsc{sale}'s auction mechanism (4B, 8B, and 32B). Recall that an agent only enters the memory-based self-refinement stage when a more expensive agent is the provisional winner, so cheaper agents have more opportunities to refine their strategies than more expensive ones. As a result, the 4B agent generates a refined strategy on 92\% of samples for deep search and 93\% for coding, the 8B agent on 91\% for deep search and 92\% for coding, and the 14B agent on 62\% for deep search and 77\% for coding, leading to different patterns in how their cumulative selection rates evolve as auction memory accumulates.
+
+Across both domains, the 4B agent's cumulative selection share (also reported in Figure~\ref{fig:time}) shows a clear upward trend, indicating that it is increasingly chosen as auction memory grows. The 8B agent's share is also broadly increasing for deep search, albeit with higher variance, but remains relatively flat for coding. In contrast, the 14B agent's cumulative share exhibits a mild downward drift in both domains, consistent with workload being gradually reallocated toward the cheaper agents. Because each curve at time step $t$ reflects the average selection rate computed over all tasks up to $t$, the trajectories are naturally more volatile at the beginning, when this average is based on few samples, and become smoother as more tasks accumulate.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{assets/time_all.pdf}
+    \caption{Cumulative selection rates over time for the 4B, 8B, and 14B agents on deep search and coding tasks, showing increasing delegation to cheaper agents while the 14B share gradually declines as auction memory accumulates.}
+    \label{fig:time_all}
+\end{figure}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage\section{Qualitative Performance Comparison}
+\label{appendix:failure_modes}
+This section presents examples, spanning task complexity levels, where the largest agent (32B) fails and a smaller agent succeeds. As these examples originate from the test set, we omit the agents' final answers. Given that full traces span tens of thousands to millions of tokens, we present only the agent's solution strategy and indicate whether the final answer is correct. In many cases, the strategy alone exhibits telltale signs of failure: misunderstanding of the task, excessive complexity, or hallucinated details that ultimately lead to an incorrect answer.
+
+
+\subsection{Performance Comparison on Deep Search Tasks}
+For deep search tasks, we identify three recurring failure modes in the 32B agent. First, the agent occasionally bypasses tool use entirely and provides an answer from parametric memory, often incorrect. This tendency is sometimes visible in the initial strategy itself, where the eventual answer is already present despite a search plan having been outlined (Example~\hyperref[ex:1]{\ref*{ex:1}}). Second, the agent may over-engineer its approach to straightforward questions, pursuing tangential information---such as a musician's date of death (Example~\hyperref[ex:2]{\ref*{ex:2}})---or issuing excessive sequential queries that lead it further from the answer (Example~\hyperref[ex:5]{\ref*{ex:5}}). Third, the agent retrieves partial or related information from parametric knowledge that interferes with the search process: in Example~\hyperref[ex:3]{\ref*{ex:3}}, a legal case is conflated with an unrelated one, while in Example~\hyperref[ex:4]{\ref*{ex:4}}, parametric recall of an intermediate fact introduces ambiguity between a television series and its sequel.
+
+\input{tabs/failure_modes_search}
+
+\subsection{Performance Comparison on Coding Tasks}
+For coding tasks, we observe analogous failure modes in the 32B agent. First, the agent over-engineers straightforward problems: in Example~\hyperref[ex:1_coding]{\ref*{ex:1_coding}}, it plans a recursive solution for what is explicitly fixed two-level nesting, whereas the 4B correctly identifies the specific structure. Such unnecessary complexity increases the surface area for errors. Second, the agent draws on parametric knowledge at the expense of task constraints: Example~\hyperref[ex:2_coding]{\ref*{ex:2_coding}} shows the 32B planning to import a library function not in the available import list, while the 14B opts for a simpler, more robust approach. This overconfidence extends to skipping the planning phase entirely: in Examples~\hyperref[ex:3_coding]{\ref*{ex:3_coding}} and~\hyperref[ex:4]{\ref*{ex:4_coding}}, the 32B produces code directly in place of a high-level strategy, without using the Python shell for verification and pursuing over-optimized solutions that introduce subtle errors---ignoring intermediate computation steps or applying mathematically incorrect shortcuts---where simpler approaches would have fewer failure points. Third, the agent neglects edge cases: in Example~\hyperref[ex:5_coding]{\ref*{ex:5_coding}}, the 32B fails to handle the "no duplicate found" case, resulting in an incorrect return type that breaks hidden tests.
+
+\input{tabs/failure_modes_code}
+
+\end{document}

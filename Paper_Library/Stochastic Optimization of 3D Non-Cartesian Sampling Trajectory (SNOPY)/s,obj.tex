@@ -1,0 +1,187 @@
+\subsection{Optimization objectives}
+\label{subsec:obj}
+
+This section describes the
+optimization objectives. 
+Since we propose to use a stochastic gradient descent-type
+optimization algorithm,
+the objective function, or loss function,
+is by default defined on a mini-batch of data.
+The final loss function can be a linear combination
+of the following loss terms
+to ensure the optimized trajectory
+has multiple desired properties.
+
+
+\subsubsection{Image quality}
+
+For many MRI applications,
+efficient acquisition and reconstruction aim to produce high-quality images.
+Consequently, the learning objective should encourage
+images reconstructed
+from sampled \kspace signals to be close to the reference image.
+We formulate this similarity objective
+as the following image quality training loss:
+\begin{equation}
+    \label{eqn:image}
+\Lrecon = 
+\|f_{\thta, \om}(\A(\om)\x+\vveps) - \x\|.
+\end{equation}
+Here,
+$\om(\cc) \in \reals^{\Nfe \times \Ns \times \Nd}$
+denotes the trajectory to be optimized,
+with \Ns shots, \Nfe sampling points in each shot, and \Nd image dimensions.
+\cc denotes the parameterization coefficients introduced in \ref{subsec:param}.
+For 3D MRI, $\Nd=3$.
+\x is a mini-batch of data from the training set $\mathcal{X}$.
+\vveps is simulated complex Gaussian noise.
+$\A(\om)$ is the forward system matrix for sampling trajectory \om \cite{fessler:03:nff}.
+\A can also incorporate multi-coil sensitivity information \cite{pruessmann:2001:AdvancesSensitivityEncoding}
+and field inhomogeneity \cite{fessler:05:tbi}.
+\thta denotes the reconstruction algorithm's parameters.
+It can be kernel weights in a convolutional neural network (CNN),
+or the regularizer coefficient in a model-based reconstruction method.
+The term $\|\cdot\|$ can be $\ell_1$ norm,
+$\ell_2$ norm,
+or a combination of both.
+There are also other ways to measure the distance between $\x$ and
+$f_{\thta, \om}(\A(\om)\x+\vveps)$,
+such as the structural similarity index (SSIM \cite{wang:2004:ssim}).
+For simplicity,
+this work used a linear combination of $\ell_1$ norm and square-of-$\ell_2$ norm.
+
+
+\subsubsection{Hardware limits}
+
+The gradient system of MR scanners
+has physical constraints,
+namely maximum gradient strength and slew rate.
+Ideally, we would like to enforce
+a set of constraints of the form
+\[
+\| \gi[j,:] \|_2 \leq g_{\mathrm{max}}
+,\quad
+\gi = \D_1 \om[:,i,:] / (\gamma \dt) \in \reals^{(\Nfe-1) \times \Nd}
+,\]
+for every shot $i = 1,\ldots,\Ns$
+and time sample $j = 1,\ldots,\Nfe$,
+where $\gi$ denotes the gradient strength
+of the $i$ shot
+and
+\gmax
+denotes the desired gradient upper bound.
+We use a Euclidean norm along the spatial axis
+so that any 3D rotation of the sampling trajectory 
+still obeys the constraint.
+A similar constraint is enforced
+on the Euclidean norm
+of the slew rate
+\(
+\si = \D_2 \om[:,i,:] / (\gamma \dt^2)
+,\)
+where
+$\D_1$ and $\D_2$
+denote first-order and second-order
+finite difference operators applied along the readout dimension,
+and
+\dt is the raster time interval
+and $\gamma$ is the gyromagnetic ratio.
+
+To make the optimization more practical,
+we follow previous studies
+\cite{wang:22:bjork-tmi,pilot},
+and formulate the hardware constraint as a soft penalty term:
+\begin{equation}
+    \label{eqn:grad}
+    \Lg=
+    \sum_{i=1}^{\Ns} \sum_{j=1}^{\Nfe-1} 
+    \phi_{\gmax}(\| \gi[j,:] \|_2)
+\end{equation}
+\begin{equation}
+    \label{eqn:slew}
+    \Ls=
+    \sum_{i=1}^{\Ns} \sum_{j=1}^{\Nfe-2} 
+    \phi_{\smax}(\| \si[j,:] \|_2)
+.\end{equation}
+Here
+$\phi$ is a penalty function,
+and we use a soft-thresholding function
+$\phi_\lambda(x)
+= \max(|x|-\lambda, 0).$
+Since $\phi$ here is a soft penalty
+and the optimization results may exceed \smax and \gmax,
+\smax and \gmax can be slightly lower than
+the scanner's physical limits
+to make the optimization results feasible on the scanner.
+
+\subsubsection{Suppression of PNS effect}
+
+3D imaging often
+leads to stronger PNS
+effects than 2D imaging
+because of the additional gradient
+axis.
+To quantify possible PNS effects
+of candidate gradient waveforms,
+we used the convolution model in
+\citestd{schulte:2015:PNS}:
+\begin{equation}
+    R_{id}(t)=\frac{1}{\smin} \int_0^t \frac{\sid(\theta) c}{(c+t-\theta)^2} d \theta,
+\end{equation}
+where $R_{id}$ denotes the PNS effect of the gradient waveform from the $i$th shot and the $d$th dimension.
+$\sid$ is the slew rate of the $i$th shot in the $d$th dimension.
+\xmath{c} (chronaxie) and \smin (minimum stimulation slew rate)
+are scanner parameters.
+
+Likewise, we discretize the convolution model
+and formulate a soft penalty term 
+as the following loss function:
+\begin{equation} 
+\pid[j] = \sum_{k=1}^{j}\frac{\sid[j] c  \dt}{\smin(c + j \dt - k \dt)^2},
+\nonumber
+\end{equation}
+\begin{equation}
+    \label{eqn:pns}
+    \Lpns=
+    \sum_{i=1}^{\Ns} \sum_{j=1}^{\Nfe} \phi_{\pmax}((\sum_{d=1}^{\Nd}\pid[j]^2)^{\frac{1}{2}}).
+\end{equation}
+
+Again, $\phi$ denotes the soft-thresholding function,
+with PNS threshold \pmax (usually $\leq 80\%$\cite{schulte:2015:PNS}). 
+This model combines the 3 spatial axes via the sum-of-squares manner, 
+and does not consider the anisotropic response of PNS \cite{davids2019prediction}.
+The implementation may use an FFT (with zero padding)
+to implement this convolution efficiently.
+
+
+\subsubsection{Image contrast}
+
+In many applications,
+the optimized sampling trajectory should 
+maintain certain parameter-weighted contrasts.
+For example,
+ideally the (gradient) echo time (TE)
+should be identical for each shot.
+Again
+we replace this hard constraint 
+with an echo time penalty.
+Other parameters, like repetition time (TR)
+and inversion time (TI),
+can be predetermined in the RF pulse design.
+Specifically, the corresponding loss function
+encourages the sampling trajectory to cross
+the \kspace center at certain time points:
+\begin{equation}
+    \label{eqn:contrast}
+    \Loss_c =
+    \sum_{\{i,j,d\} \in C}
+    \phi_{0}(|\om[i,j,d]|), 
+\end{equation}
+
+where $C$ is a collection of gradient 
+time points that are constrained 
+to cross k-space zero point.
+$\phi$ is still a
+soft-thresholding function,
+with threshold 0.
+

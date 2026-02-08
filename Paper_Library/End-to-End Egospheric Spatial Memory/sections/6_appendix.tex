@@ -1,0 +1,271 @@
+\appendix
+\section{Appendix}
+
+\subsection{Multi-DOF Imitation Learning}
+\label{app:imitation_learning}
+
+\subsubsection{Offline Datasets}
+
+The image sequences for the offline datasets are captured following random motion of the agent in both the DR and MR tasks, but known expert actions for each of the three possible targets in the scene are stored at every timestep. The drone reacher is initialized in random locations at the start of each episode, whereas the manipulator reacher is always started in the same robot configuration overlooking the workspace, as in the original RLBench reacher task.
+
+For the scene-centric acquisition, we instantiate three separate scene-centric cameras in the scene. In order to maximise variation in the dataset to encourage network generalization to arbitrary motions at test-time, we reset the pose of each of these scene-centric cameras at every step of the episode, rather than having each camera follow smooth motions. Each new random pose has a rotational bias to face towards the scene-centre, to ensure objects are likely to be seen frequently. By resetting the cameras poses on every time-step, we encourage the networks to learn to make sense of the pose information given to the network, rather than learning policies which fully rely on smoothly and slowly varying images.
+
+Both tasks use ego-centric cameras with a wider field of view (FOV) than the scene-centric cameras. This is a common choice in robotics, where wide angle perception is especially necessary for body-mounted cameras. RLBench by default uses ego-centric FOV of $60$ degrees and scene-centric FOV of $40$ degrees, and we use the same values for our RLBench-derived MR task. For the drone reacher task, we use ego-centric FOV of $90$ degrees and scene-centric FOV of $55$ degrees, to enable all methods to more quickly explore the perceptual ego-sphere.
+
+For the manipulator reacher dataset, we also store a robot mask image, which shows the pixels corresponding to the robot for all ego-centric and scene-centric images acquired. Known robot forward kinematics are used for generating the masking image. All images in the offline dataset are $32\times 32$ resolution.
+
+\subsubsection{Training}
+
+To maximize the diversity from the offline datasets, a new target is randomly chosen from each of the three possible targets for each successive step in the unrolled time dimension in the training batch. This ensures maximum variation in sequences at train-time, despite a relatively small number of 100k 16-frame sequences stored in the offline dataset. This also strongly encourages each of the networks to learn to remember the location of every target seen so far, because any target can effectively be requested from the training loss at any time.
+
+Similarly, for the scene-centric cameras we randomly choose one of the three scene cameras at each successive time-step in the unrolled time dimension for maximum variation. Again this forces the networks to make use of the camera pose information to make sense of the scene, and prevents overfitting on particular repeated sequences in the training set, instead encouraging generalization to fully arbitrary motions. For these experiments, the baseline methods of Mono, LSTM, LSTM-Aux and NTM also receive the full absolute camera pose at each step rather than just incremental poses received by ESM, as we found this to improve the performance of the baselines.
+
+For training the manipulator reacher policies, we additionally use the robot mask images to set high variance pixel values before feeding to the ESM module. This prevents the motion of the robot from breaking the static-scene assumption adopted by ESM during re-projections. We also provide the mask image as input to the baselines.
+
+All networks use a batch size of 16, an unroll size of 16, and are trained for 250k steps using an ADAM optimizer with $1e-4$ learning rate. None of the memory baselines cache the the internal state between training batches, and so the networks must learn to utilize the memory during the 16-frame unroll. 16 frames is on average enough steps to reach all 3 of the targets for both tasks.
+
+\subsubsection{Network Architectures}
+
+The network architectures used in the imitation learning experiments are provided in Fig \ref{fig:IL_networks}. Both LSTM baselines use dual stacked architectures with hidden and cell state sizes of $1024$. For NTM we use a similar variant to that used by \cite{wayne2018unsupervised}, namely, we use sequential writing to the memory, and retroactive updates. Regarding the 16-frame unroll, we again emphasize that 16 steps is on average enough time to reach all targets once. In order to encourage generalization to longer sequences than only 16-steps, we limit the writable memory size to 10, and track the usage of these 10 memory cells with a \textit{usage indicator} such that subsequent writes can preferentially overwrite the least used of the 10 cells. This again is the same approach used by \cite{wayne2018unsupervised}, which is one of very few works to successfully apply NTM-style architectures to image-to-action domains. It's important to note that the use of retroactive updates makes the \textit{total} memory size actually 20, as half of the cells are always reserved for the retroactive memory updates. Regarding image padding at the borders for input to the convolutions, the Mono and LSTM/NTM baselines use standard zero padding, whereas ESMN-RGB and ESMN pad the outer borders with the wrapped omni-directional image.
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=\textwidth]{figures/IL_networks.png}
+  \caption{Image-to-action imitation learning network architectures for Mono, LSTM/NTM, ESMN-RGB and ESMN.}
+  \label{fig:IL_networks}
+\end{figure}
+
+\subsubsection{Auxiliary Losses}
+
+\begin{wrapfigure}[14]{R}{0.7\textwidth}
+    \centering
+    \includegraphics[width=1.0\linewidth]{figures/LSTM_aux_network.png}
+      \caption{Network architecture for the LSTM-Aux baseline.}
+      \label{fig:lstm_aux_network}
+\end{wrapfigure}
+
+Motivated by the fact that many successful applications of LSTMs to image-to-actions learning involve the use of spatial auxiliary losses \citep{jaderberg2016reinforcement, james2017transferring, sadeghi2017sim2real, mirowski2018learning}, we also compare to an LSTM which uses two such auxiliary proposals, namely the attention loss proposed in \citep{sadeghi2017sim2real} and a 3-dimensional Euler-based variant of the heading loss proposed in \citep{mirowski2018learning}, which itself only considers 1D rotations normal to the plane of navigation. Our heading loss does not compute the 1D rotational offset from North, as this is not detectable from the image input. Instead, the networks are trained to predict the 3D Euler offset from the orientation of the first frame in the sequence. The modified LSTM network architecture is presented in Fig \ref{fig:lstm_aux_network}, and example images and classification targets for the auxiliary attention loss are presented in Fig \ref{fig:attention_losses}. We emphasize that we did not attempt to tune these auxiliary losses, and applied them unmodified to the total loss function, taking the mean of the cross entropy loss for each, and linearly scaling so that the total auxiliary loss is roughly the same magnitude as the imitation loss at the start of training. Tuning auxiliary losses on different tasks is known to be challenging, and the losses can worsen performance without time-consuming manual tuning, as evidenced in the performance of the UNREAL agent \citep{jaderberg2016reinforcement} compared to a vanilla RL-LSTM network demonstrated in \citep{wayne2018unsupervised}. We reproduce this general finding, and see that the untuned auxiliary losses do not improve performance on our reacher tasks. To further investigate the failure mechanism, we plot the two auxiliary losses on the validation set during training for each task in Fig \ref{fig:auxiliary_curves}. We find that the heading loss over-fits on the training set in all tasks, without learning any useful notion of incremental agent orientation. This is particularly evidenced in the DR tasks, which start each sequence with random agent orientations. In contrast, predicting orientation relative to the first frame on the MR task is much simpler because the starting pose is always constant in the scene, and so cues for the relative orientation are available from individual frames. This is why we observe a lower heading loss for the MR task variants in Fig \ref{fig:auxiliary_curves}. We do however still observe overfitting in the MR task. This overfitting on all tasks helps to explain why LSTM-Aux performs worse than the vanilla LSTM baseline for some of the tasks in Table \ref{table:main_results}. In contrast, the ESM module embeds strong spatial inductive bias into the computation graph itself, requires no tuning at all, and consistently leads to successful policies on the different tasks, with no sign of overfitting on any of the datasets, as we further discuss in Section \ref{sec:further_discussion}.
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=\textwidth]{figures/attention_losses.png}
+  \caption{Top: pixel-wise attention classification targets for the LSTM-Aux network on DR (left) and MR (right) tasks. Bottom: the corresponding monocular images from the DR (left) and MR (right) tasks.}
+  \label{fig:attention_losses}
+\end{figure}
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=\textwidth]{figures/auxiliary_curves.png}
+  \caption{Auxiliary attention (left) and heading (right) losses on the validation set during training for each of the different imitation learning reacher tasks.}
+  \label{fig:auxiliary_curves}
+\end{figure}
+
+\subsubsection{Further Discussion of Results}
+\label{sec:further_discussion}
+The losses for each network evaluated on the training set and validation set during the course of training are presented in Fig \ref{fig:combined_curves}. We first consider the results for the drone reacher task. Firstly, we can clearly see from the DR-ego-rgb and DR-freeform-rgb tasks that the baselines struggle to interpret the stream of incremental pose measurements and depth, in order to select optimal actions in the training set, and this is replicated in the validation set, and in the final task performance in Tab \ref{table:main_results}. We can also see that ESMN is able to achieve lower training and validation losses than ESMN-RGB when conditioned on shape in the DR-ego-shape and DR-freeform-shape tasks, and also expectedly achieves higher policy performance, shown in in Tab \ref{table:main_results}. What we also observe is that the baselines have a higher propensity to over-fit on training data. Both the LSTM and NTM baselines achieve lower training set error than ESMN on the DR-ego-shape task, but not lower validation error. In contrast, all curves for ESM-integrated networks are very similar between the training and validation set. The ESM module by design performs principled spatial computation, and so these networks are inherently much more robust to overfitting.
+
+Looking to the manipulator reacher task, we first notice that the LSTM and NTM baselines are actually able to achieve lower losses than the ESM-integrated networks on both the training set and validation set for the MR-ego-rgb and MR-ego-shape tasks. However, this does not translate to higher policy performance in Table \ref{table:main_results}. The reason for this is that the RLBench reacher task always initializes the robot in the same configuration, and so the diversity in the offline dataset is less than that of the drone reacher offline dataset. The scope of possible robot configurations in each 16-step window in the dataset is more limited. In essence, the baselines are achieving well in both training and validation sets as a result of overfitting to the limited data distributions observed. What these curves again highlight is the strong generalization power of ESM-integrated networks. Despite seeing relatively limited robot configurations in the dataset, the ESM policies do not overfit on these, and are still able to use this data to learn general policies which succeed from unseen out-of-distribution images at test-time. We also again observe the same superiority of ESMN over ESMN-RGB when conditioned on shape input in the training and validation losses for the MR-ego-shape task. 
+
+A final observation is that all methods fail to perform well on the MR-freeform-shape task. We investigated this, and the weak performance is a combined result of low-resolution $32\times32$ images acquired in the training set and the large distance between the scene-centric cameras and the targets in the scene. The shapes are often difficult to discern from the monocular images acquired, and so little information is available for the methods to successfully learn a policy. We expect that with higher resolution images, or with an average lower distance between the scene-cameras and workspace in the offline dataset, we would again observe the ESM superiority observed for all other tasks.
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=\textwidth]{figures/combined_curves.png}
+  \caption{Network losses on the training set (top 8) and validation set (bottom 8) during the course of training for imitation learning from the offline datasets, for the different reacher task.}
+  \label{fig:combined_curves}
+\end{figure}
+
+\subsubsection{Implicit Feature Analysis}
+\label{app:implicit}
+
+Here we briefly explore the nature of the the features which the end-to-end ESM module learns to store in memory for the different reacher tasks. For each task, we perform a Principal Component Analysis (PCA) on the features encoded by the pre-ESM encoders in the ESMN networks. We compute the principal components (PCs) using encoded features from all monocular images in the training dataset. We present example activations for each of the 6 principal components for a sample of monocular images taken from each of the shape conditioned task variations in in Fig \ref{fig:pca_images}, with the most dominate principal components shown on the left in green, going through to the least dominant principal component on the right in purple. Each principal component is projected to a different color-space for better visualization, with plus or minus one standard deviation of the principal component mapping to the full color-space. Lighter colors correspond to higher PC activations.
+
+We can see that most dominant PC (shown in green) for the drone reacher tasks predominantly activate for the background, and the third PC (blue) appears to activate most strongly for edges. The principal components also behave similarly on the MR-Ego-Shape task. However, on the MR-Freeform-Shape task, which neither ESMN nor any of the baselines are able to succeed on, the first PC appears to activate strongly on both the arm and the target shapes.
+
+The main conclusion which we can draw from Fig \ref{fig:pca_images} is that the pre-ESM encoder does not directly encode shape classes as might be expected. Instead, the encoder learns to store other lower level features into ESM. However, as evidenced in the results in Table \ref{table:main_results}, the combination of these lower level features in ESM is clearly sufficient for the post-ESM convolutions to infer the shape id for selecting the correct actions in the policy, at least by using a collection of the encoded features within a small receptive field, which is not possible when using pure RGB features.
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=\textwidth]{figures/pca_images.png}
+  \caption{Principal Components (PCs) of the features from the pre-ESM encoder of the ESMN architecture on some example images for each of the four shape-conditioned reacher tasks, with each of the six the principal components mapped to different colors to maximise clarity. PCs go from most dominant on the left (green) to least dominant on the right (purple). Lighter values correspond to higher PC activation, with black indicating low activation.}
+  \label{fig:pca_images}
+\end{figure}
+
+\subsection{Obstacle Avoidance}
+\label{app:obstacle_avoidance}
+
+For this experiment, we increase the drone reacher environment by $2\times$ in all directions, resulting in an $8\times$ increase in volume. We then also add 20 spherical obstacles into the scene with radius $r=0.1m$. For the avoidance, we consider a bubble around the agent with radius $R=0.2$, and flag a collision whenever any part of an obstacle enters this bubble. Given the closest depth measurement available $d_{closest}$, the avoidance algorithm simply computes an avoidant velocity vector $v_a$ whose magnitude is inversely proportional to the distance from collision, clipped to the maximum velocity $|v|_{max}$. Equation \ref{eq:obstacle_avoidance_mag} shows the calculation for the avoidance vector magnitude. We run the avoidance controller at $10\times$ the rate of the ESM updates.
+
+\begin{equation}\label{eq:obstacle_avoidance_mag}
+|v_a| = min \left[ \frac{10^{-3}}{max\left[d_{closest} - R, 10^{-12}\right]^2}, |v|_{max} \right]
+\end{equation}
+
+In order to prevent avoidant motion away from the targets to reach, we retrain the ESMN-RGB networks on the drone reacher task, but we train the network to also predict the full relative target location as an additional auxiliary loss. When evaluating on the obstacle avoidance task, we prevent depth values within a fixed distance of this predicted target location from influencing the obstacle avoidance. This has the negative effect of causing extra collisions when the agent erroneously predicts that the target is close, but it enables the agent to approach and reach the target without being pushed away by the avoidance algorithm. Regarding the performance against the baseline, we re-iterate that all monocular images have a large field-of-view of $90$ degrees, and yet we still observe significant reductions in collisions when using the full ESM geometry for avoidance, see Tab \ref{table:obstacle_avoidance_results}.
+
+
+\subsection{Multi-DOF Reinforcement Learning}
+\label{app:reinforcement_learning}
+
+\subsubsection{Training}
+
+For the reinforcement learning experiment, we train both ESMN and ESMN-RGB as well as all baselines on a similar sequential target reacher task as defined in Section \ref{sec:multi_dof_visuomotor_control} via DQN \citep{mnih2015human}, where the manipulator must reach red, blue and then yellow targets from egocentric observations. We use $(128\times128)$ images in this experiment rather than $(32\times32)$ as used in the imitation learning experiments. We also use an unroll length of 8 rather than 16. We use discrete delta end-effector translations, with $\pm 0.05$ meters for each axis, with no rotation (resulting in an action size of 6). We use a shaped reward of $r = -len(remaining\_targets) - \rVert e - g  \rVert_2$, where $e$ and $g$ are the gripper and current target translation respectively.
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=\textwidth]{figures/rl_results.png}
+  \caption{Average return during RL training on sequential reacher task over 5 seeds. Shaded region represent the $min$ and $max$ across trials.}
+  \label{fig:rl_results}
+\end{figure}
+
+\subsubsection{Network Architectures}
+
+In order to make the RL more tractable, and enable larger batch sizes, we use smaller network than used in the imitation learning experiments. Both methods use a Siamese network to process the RGB and coordinate-image inputs separately, and consist of 2 convolution (conv) layers with 16 and 32 channels (for each branch). We fuse these branches with a 32 channel conv and 1x1 kernel. The remainder of the architecture then follows the same as in the imitation learning experiments, but we instead use channel sizes of $64$ throughout. The network outputs 6 values corresponding to the Q-values for each action. All methods use a learning rate of $0.001$, target Q-learning $\tau = 0.001$, batch size of $128$, and \textit{leakyReLU} activations. We use an epsilon greedy strategy for exploration that is decayed over 100k training steps from 1 to 0.1. We show the average shaped return during RL training on the sequential reacher task over 5 seeds in Fig \ref{fig:rl_results}. Both ESM policies succeed in reaching all 3 targets, whereas all baseline approaches generally only succeed in reaching 1 target. The Partial-Oracle-Omni (PO2) baseline also succeeds in reaching all 3 targets.
+
+\subsection{Object Segmentation}
+\label{app:obj_seg}
+
+\begin{wrapfigure}[26]{R}{0.7\textwidth}
+\centering
+\includegraphics[width=\linewidth]{figures/objseg_networks.png}
+  \caption{Object segmentation network architectures for Mono, ESMN-RGB and ESMN.}
+  \label{fig:objseg_networks}
+\end{wrapfigure}
+
+\subsubsection{Dataset}
+
+For the object segmentation experiment, we use down-sampled $60 \times 80$ and $120 \times 160$ images from the ScanNet dataset, which we first RGB-Depth align. We use a reduced dataset with frame skip of 30 to maximize diversity whilst minimizing dataset memory. Many sequences contain slow camera motion, resulting in adjacent frames which vary very little. We use the Eigen-13 classification labels as training targets.
+
+\subsubsection{Network Architectures}
+
+The Mono, ESMN-RGB and ESMN networks all exhibit a U-Net architecture, and output object segmentation predictions in an ego-sphere map. ESMN-RGB and ESMN do so with a U-Net connecting the ESM output to the final predictions, and Mono does so by projecting and probabilistically fusing the monocular segmentation predictions in a non-learnt manner. The network architectures are all presented in Fig \ref{fig:objseg_networks}. Regarding image padding at the borders for input to the convolutions, the Mono and LSTM/NTM baselines use standard zero padding, whereas ESMN pads the outer borders with the wrapped omni-directional image.
+
+\subsubsection{Training}
+
+For training, all losses are computed in the ego-sphere map frame of reference, either following convolutions for ESMN and ESMN-RGB, or following projection and probabilistic fusion for the Mono case. We compute ground-truth segmentation training target labels by projecting the ground truth monocular frames to form an ego-sphere target segmentation image, see the right-hand-side of Fig \ref{fig:obj_seg} for an example. We chose this approach over computing the ground truth segmentations from the complete ScanNet meshes for implementational simplicity. All experiments use a batch size of 16, unroll size of 8 in the time dimension, and Adam optimizer with learning rate $1e-4$, trained for 250k steps.
+
+\subsection{Runtime Analysis}
+\label{app:runtime}
+
+In this section, we perform a runtime analysis of the ESM memory module. We explore the extent to which inference speed is affected both by monocular resolution and egosphere resolution, as well the differences between CPU and GPU devices, and the choice of machine learning framework. Our ESM module is implemented using Ivy \citep{lenton2021ivy}, which is a templated deep learning framework supporting multiple backend frameworks. The implementation of our module is therefore jointly compatible with TensorFlow 2.0, PyTorch, MXNet, Jax and Numpy. We analyse the runtimes of both the TensorFlow 2.0 and PyTorch implementations, the results are presented in Tables \ref{table:tf2_cpu_runtimes}, \ref{table:tf2_gpu_runtimes}, \ref{table:torch_cpu_runtimes}, and \ref{table:torch_gpu_runtimes}. All analysis was performed while using ESM with RGB projections to reconstruct ScanNet scene 0002-00 shown in Fig \ref{fig:reconstruction}. The timing is averaged over the course of the 260 frames in the frame-skipped image sequence, with a frame skip of 30, for this scene. ESM steps with $960\times1280$ monocular images were unable to fit into the 11GB of GPU memory when using the PyTorch implementation, and so these results are omitted in Table \ref{table:torch_gpu_runtimes}.
+
+\begin{figure}[h!]
+\centering
+\includegraphics[scale=0.22]{figures/FullScanNetImage.png}
+  \caption{Left: point cloud representation of the ego-centric memory around the camera after full rotation in ScanNet scene 0002-00, with RGB features. Mid: (top) Equivalent omni-directional RGB image, (bottom) equivalent omni-directional depth image, both without smoothing to better demonstrate the quantization holes. Right: (top) A single RGB frame, (bottom) a single depth frame. This is the reconstruction produced during the time-analysis. This particular reconstruction used a monocular resolution of $120\times60$, and a memory resolution of $180\times360$}
+  \label{fig:reconstruction}
+\end{figure}
+
+\begin{table}[h]
+\centering
+ \begin{tabular}{|| c | c || c | c | c | c | c ||}
+ \cline{3-7}
+ \multicolumn{2}{c||}{} & \multicolumn{5}{c||}{Monocular Res} \\
+ \cline{3-7}
+ \multicolumn{2}{c||}{} & $ 60\times80$ & $ 120\times160$ & $ 240\times320$ & $ 480\times640$ & $ 960\times1280$ \\
+ \hline
+ \hline
+ \parbox[t]{2mm}{\multirow{5}{*}{\rotatebox[origin=c]{90}{Memory Res}}} & $ 45\times90$ & 245.4 & 162.6 & 83.7 & 24.4 & 6.3 \\
+ \cline{2-7}
+  & $ 90\times180$ & 140.1 & 126.5 & 70.8 & 23.3 & 6.1 \\
+ \cline{2-7}
+  & $ 180\times360$ & 63.9 & 64.0 & 47.5 & 19.2 & 5.8 \\
+ \cline{2-7}
+ & $ 360\times720$ & 16.3 & 14.3 & 14.5 & 11.1 & 4.7 \\
+ \cline{2-7}
+ & $ 720\times1440$ & 3.9 & 3.7 & 3.6 & 3.6 & 2.7 \\
+ \cline{2-7}
+ & $ 1440\times2880$ & 1.1 & 1.1 & 1.0 & 1.0 & 0.9 \\ 
+ \hline
+\end{tabular}
+\caption{Average frames-per-second (fps) runtime for the TensorFlow 2 implemented ESM module on the ScanNet scene 0002-00, with RGB projections, running on 8 CPU cores.}
+\label{table:tf2_cpu_runtimes}
+\end{table}
+
+
+
+
+\begin{table}[h]
+\centering
+ \begin{tabular}{|| c | c || c | c | c | c | c ||}
+ \cline{3-7}
+ \multicolumn{2}{c||}{} & \multicolumn{5}{c||}{Monocular Res} \\
+ \cline{3-7}
+ \multicolumn{2}{c||}{} & $ 60\times80$ & $ 120\times160$ & $ 240\times320$ & $ 480\times640$ & $ 960\times1280$ \\
+ \hline
+ \hline
+ \parbox[t]{2mm}{\multirow{5}{*}{\rotatebox[origin=c]{90}{Memory Res}}} & $ 45\times90$ & 262.1 & 223.8 & 166.5 & 76.2 & 24.1 \\
+ \cline{2-7}
+  & $ 90\times180$ & 193.5 & 214.8 & 164.4 & 73.5 & 23.6 \\
+ \cline{2-7}
+  & $ 180\times360$ & 184.6 & 181.6 & 147.6 & 71.5 & 23.0 \\
+ \cline{2-7}
+ & $ 360\times720$ & 91.0 & 89.1 & 83.6 & 56.8 & 21.6 \\
+ \cline{2-7}
+ & $ 720\times1440$ & 19.8 & 19.5 & 18.7 & 17.6 & 11.3 \\
+ \cline{2-7}
+ & $ 1440\times2880$ & 4.9 & 4.8 & 4.8 & 4.5 & 4.2 \\ 
+ \hline
+\end{tabular}
+\caption{Average frames-per-second (fps) runtime for the TensorFlow 2 implemented and pre-compiled ESM module on the ScanNet scene 0002-00, with RGB projections, running on Nvidia RTX 2080 GPU.}
+\label{table:tf2_gpu_runtimes}
+\end{table}
+
+
+
+
+\begin{table}[h]
+\centering
+ \begin{tabular}{|| c | c || c | c | c | c | c ||}
+ \cline{3-7}
+ \multicolumn{2}{c||}{} & \multicolumn{5}{c||}{Monocular Res} \\
+ \cline{3-7}
+ \multicolumn{2}{c||}{} & $ 60\times80$ & $ 120\times160$ & $ 240\times320$ & $ 480\times640$ & $ 960\times1280$ \\
+ \hline
+ \hline
+ \parbox[t]{2mm}{\multirow{5}{*}{\rotatebox[origin=c]{90}{Memory Res}}} & $ 45\times90$ & 98.9 & 45.8 & 26.3 & 6.9 & 1.8 \\
+ \cline{2-7}
+  & $ 90\times180$ & 57.0 & 36.8 & 22.3 & 6.6 & 1.7 \\
+ \cline{2-7}
+  & $ 180\times360$ & 14.1 & 11.6 & 10.5 & 5.0 & 1.5 \\
+ \cline{2-7}
+ & $ 360\times720$ & 5.5 & 5.1 & 4.8 & 3.2 & 1.4 \\
+ \cline{2-7}
+ & $ 720\times1440$ & 1.5 & 1.4 & 1.4 & 1.3 & 0.8 \\
+ \cline{2-7}
+ & $ 1440\times2880$ & 0.4 & 0.4 & 0.4 & 0.4 & 0.3 \\ 
+ \hline
+\end{tabular}
+\caption{Average frames-per-second (fps) runtime for the PyTorch implemented ESM module on the ScanNet scene 0002-00, with RGB projections, running on 8 CPU cores.}
+\label{table:torch_cpu_runtimes}
+\end{table}
+
+
+
+
+\begin{table}[h]
+\centering
+ \begin{tabular}{|| c | c || c | c | c | c | c ||}
+ \cline{3-7}
+ \multicolumn{2}{c||}{} & \multicolumn{5}{c||}{Monocular Res} \\
+ \cline{3-7}
+ \multicolumn{2}{c||}{} & $60\times80$ & $120\times160$ & $240\times320$ & $480\times640$ & $960\times1280$ \\
+ \hline
+ \hline
+ \parbox[t]{2mm}{\multirow{5}{*}{\rotatebox[origin=c]{90}{Memory Res}}} & $45\times90$ & 108.2 & 105.5 & 92.5 & 86.1 & - \\
+ \cline{2-7}
+  & $90\times180$ & 102.0 & 92.2 & 85.0 & 83.8 & - \\
+ \cline{2-7}
+  & $180\times360$ & 81.8 & 79.9 & 76.2 & 72.0 & - \\
+ \cline{2-7}
+ & $360\times720$ & 44.1 & 43.0 & 42.3 & 41.7 & - \\
+ \cline{2-7}
+ & $720\times1440$ & 13.9 & 13.9 & 13.8 & 13.1 & - \\
+ \cline{2-7}
+ & $1440\times2880$ & 3.7 & 3.7 & 3.7 & 3.6 & - \\
+ \hline
+\end{tabular}
+\caption{Average frames-per-second (fps) runtime for the PyTorch implemented ESM module on the ScanNet scene 0002-00, with RGB projections, running on Nvidia RTX 2080 GPU.}
+\label{table:torch_gpu_runtimes}
+\end{table}
+
+What we see from these runtime results is that the off-the-shelf ESM module is fully compatible as a real-time mapping system. Compared to more computationally intensive mapping and fusion pipelines, the simplicity of ESM makes it particularly suitable for applications where depth and pose measurements are available, and highly responsive computationally cheap local mapping is a strong requirement, such as on-board mapping for drones.

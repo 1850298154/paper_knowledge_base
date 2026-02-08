@@ -1,0 +1,612 @@
+\documentclass[pdflatex,sn-mathphys-num]{sn-jnl}
+\usepackage{graphicx}%
+\usepackage{multirow}%
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{amsthm}
+\usepackage{mathrsfs}
+\usepackage[title]{appendix}
+\usepackage{xcolor}%
+\usepackage{textcomp}%
+\usepackage{manyfoot}%
+\usepackage{booktabs}%
+\usepackage{algorithm}%
+\usepackage{algorithmicx}%
+\usepackage{algpseudocode}
+\usepackage{listings}
+\usepackage{caption}
+\usepackage{subcaption}
+\geometry{bottom=2.5cm}
+
+\theoremstyle{thmstyleone}
+\newtheorem{theorem}{Theorem}
+\newtheorem{proposition}[theorem]{Proposition}% 
+\theoremstyle{thmstyletwo}%
+\newtheorem{example}{Example}%
+\newtheorem{remark}{Remark}%
+
+\theoremstyle{thmstylethree}%
+\newtheorem{definition}{Definition}%
+\raggedbottom
+\begin{document}
+% \title[QAgent: A Hybrid Multi-Agent Framework for Autonomous Quantum Programming via Imitation and Tool-Augmented Reasoning]{QAgent: A Hybrid Multi-Agent Framework for Autonomous Quantum Programming via Imitation and Tool-Augmented Reasoning}
+\title[QAgent: An LLM-based Multi-Agent System for Autonomous OpenQASM programming]{QAgent: An LLM-based Multi-Agent System for Autonomous OpenQASM programming}
+\author{\fnm{Zhenxiao} \sur{Fu}}\email{zhfu@iu.edu}
+\author{\fnm{Fan} \sur{Chen}}\email{fc7@iu.edu}
+\author{\fnm{Lei} \sur{Jiang}}\email{jiang60@iu.edu}
+\affil{\orgname{Indiana University Bloomington}}
+\abstract{
+Noisy Intermediate-Scale Quantum (NISQ) devices have begun to exhibit early quantum advantages on classically intractable problems, spanning physics simulations to Gaussian boson sampling. Yet, realizing these benefits remains challenging for non-experts, primarily due to the complexities of programming in Open Quantum Assembly Language (OpenQASM). Although Large Language Model (LLM)-based agents have shown promise in automating classical programming workflows, their quantum counterparts have largely been restricted to specialized tasks such as quantum chemistry or error correction. In this paper, we present QAgent, an LLM-powered multi-agent system that fully automates OpenQASM programming. By integrating task planning, in-context few-shot learning, retrieval-augmented generation (RAG) for long-term context, predefined generation tools, and chain-of-thought (CoT) reasoning, the agents systematically improve both compilation and functional correctness. Our evaluations demonstrate substantial improvements: across multiple LLMs of varying sizes, QAgent enhances the accuracy of QASM code generation by 71.6\% compared to previous static LLM-based approaches. We envision this multi-agent system as a key enabler for democratizing quantum programming, bridging expertise gaps, and accelerating the practical adoption of quantum computing.}
+
+\keywords{OpenQASM, LLM, Agent}
+
+
+\maketitle
+
+\section{Introduction}
+\label{s:intro}
+
+Despite inherent noise and limited qubit counts, Noisy Intermediate-Scale Quantum (NISQ) devices have already demonstrated quantum advantages on classically intractable tasks, including physics simulation~\cite{daley2022practical}, principal component analysis~\cite{huang2022quantum}, cryptography~\cite{renner2023quantum}, chemistry~\cite{lee2023evaluating}, combinatorial optimization~\cite{bode2025quantum}, and Gaussian boson sampling~\cite{madsen2022quantum}.
+
+To realize these capabilities, Open Quantum Assembly Language (OpenQASM)~\cite{cross2022openqasm} serves as a critical interface between quantum software development kits (SDKs), such as Qiskit~\cite{dupuis2024qiskit,Vishwakarma:QCE2024} and PennyLane~\cite{basit2025pennylang}, and heterogeneous NISQ hardware platforms, including superconducting~\cite{castelvecchi2023ibm} and trapped-ion~\cite{moses2023race} systems. OpenQASM underpins platform-agnostic and platform-specific optimization, mapping, scheduling, evaluation, profiling, and simulation. Although quantum SDKs can automatically produce OpenQASM from high-level circuits, manual OpenQASM programming remains essential. Compiler developers embed high-level information into OpenQASM to guide optimization~\cite{litteken2020updated}, experimentalists adjust timing and pulse-level instructions by OpenQASM for fine-tuning~\cite{mckay2018qiskit}, and hardware engineers write OpenQASM to address controller and waveform constraints~\cite{khammassi2021openql}.
+
+However, OpenQASM programming poses significant challenges for non-experts due to its quantum-specific abstractions. Its syntax, centered on qubits, gates, pulses, and hybrid control, departs markedly from classical languages like C and Python, demanding fluency across algorithms, calibrations, and hardware constraints~\cite{cross2022openqasm}. Variations in gate sets, connectivity, and real-time control introduce further hardware dependencies~\cite{amazonbraketexamples}. Additionally, OpenQASM’s dynamic control and classical feedback require expertise in concurrency and control systems~\cite{cross2022openqasm}. Debugging is particularly demanding, as many errors only surface at runtime and necessitate deep knowledge of both quantum algorithms and low-level hardware behavior~\cite{Ramalho:TSEM2025}.
+
+
+Large Language Model (LLM)-powered agents~\cite{Tang:NIPS2024,wang2024executable} have emerged as promising tools for automating software development, testing, and debugging across languages such as C and Python. For example, GitHub Copilot, integrated with Microsoft VSCode, assists in code management, refactoring, and optimization~\cite{copilot_agent}. While static LLMs have been applied to quantum tasks—including many-body physics~\cite{pan2025quantum}, quantum state simulation~\cite{zhou2025application}, text-to-circuit generation~\cite{jern2025fine,yang2024qcircuitnet,nakaji2024generative,liang2023unleashing,kashani2024quantumllminstruct}, circuit synthesis~\cite{sinha2025circuitpartitioningusinglarge}, and algorithm explanation~\cite{Aloisio:ESEM2024}—few LLM-powered agents are explicitly designed for quantum computing. Some target quantum chemistry tasks~\cite{zou2025agente} executed on classical hardware, others direct physical labs~\cite{cao2025agents} related to quantum experiments, or assist in designing quantum error correction codes~\cite{campbell2025enhancing}. Additional agents generate high-level SDK code in Qiskit~\cite{dupuis2024qiskit,Vishwakarma:QCE2024} and PennyLane~\cite{basit2025pennylang}, but remain confined to Python abstractions. \textit{To the best of our knowledge, no existing LLM-powered agent system supports OpenQASM programming}, limiting accessibility for non-experts and constraining broader adoption of quantum computing in the NISQ era.
+
+To automate OpenQASM programming on NISQ platforms, we introduce QAgent, a hybrid multi-agent system powered by large language models (LLMs) that seamlessly integrates planning, reasoning, memory retrieval, and tool usage—eliminating the need for human intervention. Unlike traditional workflows that require deep expertise in quantum concepts such as pulses, gates, and qubit-level abstractions, QAgent lowers the barrier to entry by fully managing these complexities through coordinated agent collaboration.
+
+Given a quantum problem, the system decomposes it into sub-tasks. For sub-tasks with clear precedents, it employs in-context few-shot learning to synthesize the corresponding OpenQASM code through an Dynamic-few-shot multi-agent Coder. For complex quantum subroutines that benefit from specialized tools, the system utilizes a Tools-augmented multi-agent Coder that leverages a predefined toolset to produce accurate circuits.
+
+Across both modules, QAgent applies retrieval-augmented generation (RAG), few-shot in-context learning, chain-of-thought (CoT) reasoning and reflection mechanisms to iteratively generate, analyze, debug and refine the code. By combining all the techniques, QAgent substantially improves both syntax and functional pass rates—making quantum programming on NISQ devices more accessible and robust.
+
+\begin{figure}[t!]
+\centering
+\includegraphics[width=\linewidth]{figures_v2/fig_workflow.pdf}
+\caption{(a) the overall workflow for QAgent. (b) the detailed design of Dynamic-few-shot Coder. (c) the detailed design of Tool-augmented Coder.}
+\label{fig:figure1}
+\end{figure}
+
+
+
+\section{QAgent Design}
+
+QAgent is a hierarchical multi-agent framework designed for autonomous quantum algorithm synthesis in OpenQASM. It consists of two specialized multi-agent Coder modules: the \textbf{Dynamic-few-shot Coder} and the \textbf{Tools-augmented Coder}, each responsible for tackling different categories of quantum tasks. QAgent supports a hybrid strategy that utilizes both two Coders to cover a variety of task complexity. Each Coder internally orchestrates a series of collaborative LLM-powered agents responsible for generation, validation, and refinement through multi-round self-reflection. This section details the overall architecture and design of QAgent, as well as the internal mechanisms of the two Coders and their hybrid coordination. Importantly, the framework is designed with a pluggable \textbf{base LLM}, meaning the underlying model can be replaced on demand depending on task requirements, computational resources, or advancements in language model capabilities. This flexibility ensures QAgent remains adaptable and effective as the foundation models evolve.
+
+\subsection{Overall Workflow}
+
+As shown in Figure~\ref{fig:figure1} (a), the QAgent workflow begins with a user-provided natural language description of a quantum circuit. Based on this input, QAgent first dispatches the task to the Dynamic-few-shot Coder, which excels at short and structurally regular quantum tasks. If this Coder fails to yield a valid result within limited computational budget (defined as a fixed number of candidate generations and reflection rounds), the task is escalated to the Tools-augmented Coder, which is more capable of handling complex, parameterized quantum tasks.
+
+Each Coder operates as a self-contained multi-agent pipeline which generally involves: (1) problem understanding and decomposition, (2) code generation, (3) test generation and validation, and (4) iterative reflection and revision. The final output is a syntactically and semantically valid OpenQASM program. 
+
+\subsection{Dynamic-few-shot Multi-agent Coder}
+
+The Dynamic-few-shot Coder (Figure~\ref{fig:figure1} (b)) solves quantum programming tasks by mimicking patterns from known code examples. It is most effective when the target algorithm is well-structured, short, and resembles known canonical quantum algorithms.
+
+Upon receiving the task description, the \textbf{Prompt Agent} analyzes the input using both its internal language model and retrieval-augmented generation (RAG). It identifies the most relevant algorithm type and retrieves a set of similar example QASM code from a quantum algorithm database. These retrieved examples are parsed and interpreted to produce a composite in-context learning prompt, which includes: (1) the selected examples, (2) an analysis or summary of the examples, and (3) specific instructions for generating new code in OpenQASM. This prompt is then passed to the \textbf{Coding Agent}, which produces several \textbf{candidate} QASM programs.
+
+Simultaneously, a \textbf{Test Agent} generates a test suite tailored to the task. This agent also leverages RAG to find appropriate testing templates and injects randomized quantum oracles where applicable (to account for the oracle-dependence of many quantum algorithms). Each candidate QASM program is executed in the test environment to check for both syntactic validity and semantic correctness.
+
+If a candidate passes the test, it is returned as the final output. Otherwise, the task is forwarded to the \textbf{Reflection Agent}, which observes the full history of the reasoning process—including the examples, prompt construction, code candidates, test results, and any prior edits. Based on this information (serves a CoT prompt), it generates a revised strategy, which is handed back to the Coding Agent to produce new code. This process is repeated over multiple \textbf{reflection rounds}, each of which refines the output based on accumulated feedback. By default, the Dynamic-few-shot Coder performs one candidate generation and up to three reflection rounds. Detailed example outputs for each agent can be found in Supplemental Material ~\ref{s:dynamic}.
+
+\subsection{Tools-augmented Multi-agent Coder}
+
+The Tools-augmented Coder (Figure~\ref{fig:figure1} (c)) is designed to handle more complex, less templated quantum tasks that may involve parameter tuning or complex quantum-gate definitions. This Coder operates not by mimicking examples, but by actively planning how to solve the problem using a set of pre-defined, composable quantum programming tools.
+
+Upon activation, the \textbf{Plan Agent} first analyzes the natural language description and determines the type of quantum algorithm required, either based on internal model knowledge or via RAG. It then selects a subset of functional tools from a predefined toolset—such as operations for gate application, oracle generation or helper utilities for formatting and post-processing.
+
+Based on the selected tools and the task specification, the \textbf{Plan Agent} constructs detailed plans (\textbf{candidates}), consisting of a sequence of actions expressed in natural language and Python code. This plan is then submitted to the \textbf{Execution Agent}, which carries out the instructions, invokes the selected tools, and generates OpenQASM code.
+
+After execution, the output is validated for correctness. If the resulting QASM code meets the desired criteria, it is returned to the user. Otherwise, the entire plan—including the original instruction, the tools used, generated code, test logs, and revision history—is passed to the \textbf{Reflection Agent}. The Reflection Agent revises the plan or suggests changes in tool composition or step ordering. As with the Dynamic-few-shot Coder, this revision process is iterated over multiple \textbf{reflection rounds}, with the same default setting of one candidate and three rounds. Detailed example outputs for each agent can be found in Supplemental Material ~\ref{s:tools}.
+
+\subsection{Hybrid Strategy}
+
+The hybrid execution mode of QAgent leverages the complementary strengths of the two Coders. The Dynamic-few-shot Coder requires relatively low reasoning capability from the LLM, as it relies primarily on pattern imitation from examples. It performs exceptionally well on well-structured and short tasks. The Tools-augmented Coder, while more dependent on the LLM's analytical and planning capabilities, is better suited for complex tasks requiring parameterization or multi-level quantum-gate composition.
+
+By default, QAgent first applies the Dynamic-few-shot Coder. If it fails to produce a valid output within the allowed budget (3 candidate, 5 reflection rounds), the system automatically switches to the Tools-augmented Coder as a fallback strategy. In future versions, more dynamic routing strategies could be developed—e.g., using task complexity estimation or early failure prediction to make proactive Coder assignments.
+
+This fallback strategy forms the basis of QAgent's robustness and versatility across a wide range of quantum programming tasks, as demonstrated in our experiments in next section.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+% \begin{figure}[t!]
+% \centering
+% \includegraphics[width=\linewidth]{figures/Figure_2_temporary.png}
+% \caption{Comparison of Baseline, Imitation, and Tools approaches with different LLM base models.}
+% \label{fig:figure2}
+% \end{figure}
+
+
+\begin{figure}
+\begin{subfigure}{.48\textwidth}
+  \centering
+  % include first image
+  \includegraphics[width=1\linewidth]{figures_v2/fig1_a.pdf}  
+  \caption{Pass@3 (Syntax) comparison across Static, Dynamic and Tools Coders on Qwen-32B.}
+  \label{fig:fig2_a}
+\end{subfigure}
+\hfill
+\begin{subfigure}{.48\textwidth}
+  \centering
+  % include second image
+  \includegraphics[width=1\linewidth]{figures_v2/fig1_b.pdf}   
+  \caption{Pass@3 (Functional) comparison across Static, Dynamic and Tools Coders on Qwen-32B.}
+  \label{fig:fig2_b}
+\end{subfigure}
+
+%\newline
+
+\begin{subfigure}{.48\textwidth}
+  \centering
+  % include third image
+  \includegraphics[width=1\linewidth]{figures_v2/fig1_c.pdf}   
+  \caption{Pass@3 (Syntax) comparison across model sizes using Dynamic Coder.}
+  \label{fig:fig2_c}
+\end{subfigure}
+\hfill
+\begin{subfigure}{.48\textwidth}
+  \centering
+  % include fourth image
+  \includegraphics[width=1\linewidth]{figures_v2/fig1_d.pdf}  
+  \caption{Pass@3 (Functional) comparison across model sizes using Dynamic Coder.}
+  \label{fig:fig2_d}
+\end{subfigure}
+
+%\newline
+
+\begin{subfigure}{.48\textwidth}
+  \centering
+  % include third image
+  \includegraphics[width=1\linewidth]{figures_v2/fig1_e.pdf}   
+  \caption{Pass@3 (Syntax) comparison across model sizes using Tools Coder.}
+  \label{fig:fig2_e}
+\end{subfigure}
+\hfill
+\begin{subfigure}{.48\textwidth}
+  \centering
+  % include fourth image
+  \includegraphics[width=1\linewidth]{figures_v2/fig1_f.pdf}  
+  \caption{Pass@3 (Functional) comparison across model sizes using Tools Coder.}
+  \label{fig:fig2_f}
+\end{subfigure}
+
+\caption{Comparison of syntax-level and functional-level pass@3 success rate on different quantum algorithms across Coders (Static, Dynamic, Tools) and models of different sizes (Qwen-7B, 32B, 235B).}
+\label{fig:fig2}
+\end{figure}
+
+
+\section{Results}
+
+
+We now demonstrate QAgent's capabilities on single- and multi-algorithm quantum programming tasks, which directly correspond to the level-n setting. Specifically, level-n denotes problem instances where the user query involves n distinct quantum algorithms. Level-1 tasks (single-algorithm) evaluate QAgent’s in-context few-shot learning and RAG-based tool invocation capabilities, while level-2 and higher tasks (multi-algorithm) showcase QAgent’s ability to perform problem decomposition and systematic task planning. The details of these tasks can be found in Section ~\ref{s:methods}
+
+
+\subsection{Evaluation on Level-1 Problems}
+
+We first evaluated QAgent on OpenQASM code generation tasks consisting of a single quantum algorithm problem. Five algorithms were selected — Bernstein-Vazirani (bv), Deutsch-Jozsa (dj), Grover (gr), Phase-Estimation (pe), and W-state Preparation (ws) — for constructing the Level-1 problems benchmark. Three approaches were compared: static few-shot prompting (\textit{Static})~\cite{yang2024qcircuitnet}, QAgent’s Dynamic-few-shot Coder (\textit{Dynamic}), and QAgent’s Tools-augmented Coder (\textit{Tools}), as shown in Figure~\ref{fig:fig2}.  
+The \textit{Static} baseline reproduces prior work, where a small number ($1$–$5$) of example QASM programs are directly appended to the user task description for circuit generation, without any structured chain-of-thought prompt, code analysis, or self-reflection for error correction.  
+The \textit{Dynamic} scheme uses only QAgent’s Dynamic-few-shot Coder and the \textit{Tools} scheme uses only the Tools-augmented Coder.
+
+We measured the syntactic and functional success rates (\texttt{pass@3}) achieved by Qwen2.5-Coder-32B-Instruct (Qwen-32B) as the base LLM, as illustrated in Figure~\ref{fig:fig2_a} and Figure~\ref{fig:fig2_b}. The metric \texttt{pass@k} quantifies the proportion of syntactically or functionally correct codes among $k$ generation trials (candidates); further details on the benchmark, approaches, and metrics are provided in the Methods section ~\ref{s:methods}. All three approaches consistently achieved higher syntactic \texttt{pass@3} rates compared to functional \texttt{pass@3} rates, highlighting the relative ease of generating syntactically valid code.
+
+Among the evaluated approaches, the \textit{Static} method demonstrated the lowest syntactic and functional \texttt{pass@3} rates, primarily due to ambiguity in qubit specification and the absence of dynamic reflection rounds. For simpler tasks (bv, dj, gr), QAgent's \textit{Dynamic} approach yielded the highest syntactic and functional success rates, as shorter, structured OpenQASM codes are effectively generated through imitation from few-shot examples. Conversely, the \textit{Tool} approach occasionally invoked incorrect tools or used wrong parameters. However, for more complex problems (pe, ws) requiring parameter tuning and multi-step gate construction, QAgent's \textit{Tool} approach outperformed others. This result demonstrates that parameter extraction and tool invocation are more reliable for longer, unstructured code generation tasks, where few-shot imitation becomes challenging.
+
+
+
+\subsection{Ablation Studies}
+\subsubsection{Influence of LLM Scale}
+
+We analyze QAgent’s OpenQASM generation quality with three base LLM back-ends of decreasing size: Qwen3-235B-A22B-Instruct-2507 (235b or Qwen-235B), Qwen2.5-Coder-32B-Instruct (32b or Qwen-32B), and Qwen2.5-Coder-7B-Instruct (7b or Qwen-7B). 
+
+\textbf{Dynamic-few-shot Coder}. As Figure~\ref{fig:fig2_c} and ~\ref{fig:fig2_d} illustrates, Qwen-7B consistently records the lowest syntactic and functional \texttt{pass@3} scores across all level-1 tasks. Qwen-32B and Qwen-235B perform similarly well on the simpler tasks (bv, dj, gr), but both models deteriorate on the more complex tasks (pe, ws), with Qwen-235B maintaining a moderate advantage.
+
+\textbf{Tools-augmented Coder}. The same relative ordering emerges: Qwen-7B again fails owing to limited capacity for parameter extraction and tool selection, whereas Qwen-32B and 235B achieve markedly higher \texttt{pass@3} rates. Notably, for the complex pe and ws problems, Qwen-32B and 235B maintain substantially higher \texttt{pass@3} values than \textit{Dynamic} scheme (Figure~\ref{fig:fig2_e} and ~\ref{fig:fig2_f}).
+
+Overall, Qwen-235B achieves the highest \texttt{pass@3} rates across both coder workflows. Qwen-32B remains competitive by selecting its strategy: for simple tasks (bv, dj, gr), Dynamic-few-shot coder outperforms the Tools-augmented coder, as imitation of brief examples is more effective than constructing a tool-based plan.
+
+
+\subsubsection{Effect of Reflection Rounds}
+
+Using Qwen-32B as base LLM, we measure the average functional \texttt{pass@1} rate as a function of CoT-based reflection rounds (Figure~\ref{fig:fig3_a} and ~\ref{fig:fig3_b}). Here, we fix the default candidate number to 1, thereby enabling a clearer evaluation of the performance contributed by the number of reflection rounds. With \textit{Dynamic} Coder, additional reflections yielded negligible improvement, suggesting that iterative reflection cannot remedy errors arising from example imitation. In contrast, for \textit{Tools}, increasing the number of reflection rounds significantly enhanced code quality, indicating that iterative reflection effectively refines parameter extraction and tool calls. %Similar to traditional programming languages such as Python and C, it is easier to use more reflection rounds to revise the natural language plans and Python Code for parameter extraction and tool calls.
+
+
+\subsubsection{Impact of Candidate Number}
+
+We evaluate the average functional \texttt{pass@k} rate as a function of the number of generated candidates $k$ (Figure~\ref{fig:fig3_c} and Figure~\ref{fig:fig3_d}) while using Qwen-32B as base LLM. We fix the default reflection rounds to 3, ensuring that the reflection mechanism remains functional and the effect of the candidate number can be highlighted. In both \textit{Dynamic} and \textit{Tools} workflows, increasing $k$ markedly improves success rates, as the probability of at least one valid candidate rises. This outcome underscores the benefit of trial diversity in error-prone code generation tasks.
+
+
+\subsubsection{Contribution of Different Components}
+
+Finally, Figure~\ref{fig:fig3_e} presents an ablation study of the Dynamic Coder (1 candidate and 3 reflection rounds), revealing that every component, including analysis, CoT-reflection (error correcting suggestions), few-shot in-context learning prompt, contributes meaningfully to success. Removing any element leads to a noticeable performance drop. The largest performance drop occurred when the few-shot prompt was removed (0-shot), resulting in a decrease of up to 69\%, whereas the smallest impact came from the analysis component in the prompt, whose removal led to a 5.2\% loss. We did not perform an ablation study on the \textit{Tools} Coder, since its process — from plan formulation to tool execution — is tightly coupled and cannot be meaningfully segmented.
+
+
+\subsection{Multi-algorithm Problems}
+
+
+Figure~\ref{fig:fig4} evaluates the full \textbf{QAgent} system, which integrates \textit{Dynamic} and \textit{Tools}, across both single-task and multi-algorithm scenarios.
+
+Figure~\ref{fig:fig4_a} compares performance on the same set of single-task benchmarks used in earlier experiments, with 'p-best' bars representing the best performance of \textit{Dynamic} or \textit{Tools} alone in previous experiments. This direct comparison illustrates the benefit of QAgent’s hybrid design: by leveraging \textit{Dynamic} for straightforward problems and \textit{Tools} for complex reasoning, QAgent achieves the highest overall accuracy across all LLM base models. This represents a substantial improvement over using \textit{Dynamic} or \textit{Tools} alone on the same tasks, confirming that the hybrid structure effectively combines the strengths of both paradigms.
+
+Figure~\ref{fig:fig4_b}--~\ref{fig:fig4_d} focus on more challenging scenarios involving combinations of 2 to 4 different quantum algorithms. These multi-algorithm tasks are intrinsically complex because they require QAgent to decompose the overall problem into subtasks first. The results show a clear trend: as the number of involved algorithms increases, accuracy drops substantially. This decline is not only due to the challenge of generating correct QASM code, but also because QAgent must reliably identify and segment subtasks from the user’s instructions — a process that becomes increasingly error-prone with task complexity. When handling tasks involving two algorithms, Qwen-235B and 32B can still maintain relatively strong performance (above 50\%), but in scenarios involving three or more algorithms, all models begin to struggle, with Qwen-7B failing to produce any successful outputs. 
+
+This observation suggests an important direction for future work: improving the ability of LLM-based systems to more accurately decompose user requirements into well-defined subtasks, thereby enabling more robust performance on highly composite tasks.
+
+
+
+\begin{figure}
+\begin{subfigure}{.48\textwidth}
+  \centering
+  % include first image
+  \includegraphics[width=1\linewidth]{figures_v2/fig2_a.pdf}  
+  \caption{Pass@1 (functional) of Dynamic Coder under different numbers of reflection rounds (single candidate).}
+  \label{fig:fig3_a}
+\end{subfigure}
+\hfill
+\begin{subfigure}{.48\textwidth}
+  \centering
+  % include third image
+  \includegraphics[width=1\linewidth]{figures_v2/fig2_c.pdf}   
+  \caption{Pass@1 (functional) of Tools Coder under different numbers of reflection rounds (single candidate).}
+  \label{fig:fig3_b}
+\end{subfigure}
+
+%\newline
+
+
+\begin{subfigure}{.48\textwidth}
+  \centering
+  % include second image
+  \includegraphics[width=1\linewidth]{figures_v2/fig2_b.pdf}   
+  \caption{Pass@k (functional) of Dynamic Coder under different numbers of candidates (fixed 3 reflection rounds).}
+  \label{fig:fig3_c}
+\end{subfigure}
+\hfill
+\begin{subfigure}{.48\textwidth}
+  \centering
+  % include fourth image
+  \includegraphics[width=1\linewidth]{figures_v2/fig2_d.pdf}  
+  \caption{Pass@k (functional) of Tools Coder under different numbers of candidates (fixed 3 reflection rounds).}
+  \label{fig:fig3_d}
+\end{subfigure}
+
+%\newline
+
+\begin{subfigure}{1\textwidth}
+  \centering
+  % include third image
+  \includegraphics[width=1\linewidth]{figures_v2/fig2_e.pdf}   
+  \caption{Pass@1 (functional) ablation study on Dynamic Coder. The comparison includes the static method and various Dynamic Coder settings: different few-shot numbers, removal of analysis, removal of reflection, and the full Dynamic configuration.}
+  \label{fig:fig3_e}
+\end{subfigure}
+
+
+\caption{Analysis of candidate/reflection number and ablation studies on Dynamic Coder (base LLM using Qwen-32B).}
+\label{fig:fig3}
+\end{figure}
+
+
+
+% Figure~\ref{fig:figure3} examines how reflection and candidate generation affect performance in the \textbf{Imitation} and \textit{Tools} Coders, as well as the details of the Coder's components.
+
+% Panel (a) shows that increasing the number of reflection rounds in the \textbf{Imitation} Coder yields only slight performance gains (e.g., from 76\% to 77.6\% after five rounds). This suggests that while reflection can identify some mistakes, imitation coding inherently struggles to correct deeper structural issues in generated code.
+
+% In contrast, panel (b) illustrates that increasing the number of candidates substantially boosts performance (e.g., from 75.6\% at one candidate to 83.6\% at five candidates). This confirms that \textbf{Imitation} benefits significantly from “trial and error”: generating multiple code hypotheses allows at least one to meet requirements.
+
+% Panels (c) and (d) explore the same dimensions for the \textit{Tools} Coder. Here, reflection proves far more effective. In panel (c), more reflection rounds consistently improve performance (e.g., from 83.6\% at one round to 92\% at five rounds). Unlike \textbf{Imitation}, \textit{Tools}-based coding involves natural language plans and Python code, which LLMs find easier to revise iteratively. Panel (d) shows that more candidates also enhance performance, but the improvement saturates quickly — by three candidates, performance nearly plateaus at 99.2\%.
+
+% Finally, panel (e) presents an ablation study of the imitation Coder, revealing that every component, including analysis, CoT-reflection (error correcting suggestions), few-shot in-context learning prompt, contributes meaningfully to success. Removing any element leads to a noticeable performance drop. The largest performance drop occurred when the few-shot prompt was removed (0-shot), resulting in a decrease of up to 69\%, whereas the smallest impact came from the analysis component in the prompt, whose removal led to a 5.2\% loss. We did not perform an ablation study on the \textit{Tools} Coder, since its process — from plan formulation to tool execution — is tightly coupled and cannot be meaningfully segmented.
+
+% \subsection{Integrating Imitation and Tools}
+
+% Figure~\ref{fig:figure4} investigates the combined \textbf{Imitation+Tools} system (QAgent) across tasks of varying complexity.
+
+% Panel (a) confirms that \textbf{imitation} excels on simple tasks (e.g., \textit{bv}, \textit{dj}) with success rates exceeding \textbf{xxx\%}, but fails on more complex tasks (e.g., \textit{w-state}) where accuracy plummets to \textbf{xxx\%}. Panels (b–d) show that \textit{Tools} coding handles complicated, multi-step tasks impressively (up to \textbf{xxx\%} success on certain 4-algorithm tasks), but may occasionally falter on simpler tasks — largely because it “over-plans,” introducing unnecessary complexity.
+
+% By integrating the two paradigms, the \textbf{Imitation+Tools} approach resolves both limitations. Imitation handles lightweight, rule-based problems efficiently, while Tools addresses heavy planning and multi-step execution. As shown in the averaged performance bars, the combined system achieves the highest overall success rate of \textbf{xxx\%}, demonstrating that the synergy of imitation and tool use creates a robust, general-purpose coding framework.
+
+
+% \subsection{Integrating Imitation and Tools: QAgent}
+
+
+% \begin{figure}[t!]
+% \centering
+% \includegraphics[width=\linewidth]{figures/Figure_4_temporary.png}
+% \caption{Performance of Imitation, Tools, and the combined Imitation+Tools (QAgent) system.}
+% \label{fig:figure4}
+% \end{figure}
+
+\begin{figure}
+\begin{subfigure}{.48\textwidth}
+  \centering
+  % include first image
+  \includegraphics[width=1\linewidth]{figures_v2/fig3_a.pdf}  
+  \caption{Pass@3 (functional) of QAgent on level-1 problems.}
+  \label{fig:fig4_a}
+\end{subfigure}
+\hfill
+\begin{subfigure}{.48\textwidth}
+  \centering
+  % include second image
+  \includegraphics[width=1\linewidth]{figures_v2/fig3_b.pdf}   
+  \caption{Pass@3 (functional) of QAgent on level-2 problems.}
+  \label{fig:fig4_b}
+\end{subfigure}
+
+%\newline
+
+\begin{subfigure}{.48\textwidth}
+  \centering
+  % include third image
+  \includegraphics[width=1\linewidth]{figures_v2/fig3_c.pdf}   
+  \caption{Pass@3 (functional) of QAgent on level-3 problems.}
+  \label{fig:fig4_c}
+\end{subfigure}
+\hfill
+\begin{subfigure}{.48\textwidth}
+  \centering
+  % include fourth image
+  \includegraphics[width=1\linewidth]{figures_v2/fig3_d.pdf}  
+  \caption{Pass@3 (functional) of QAgent on level-4 problems.}
+  \label{fig:fig4_d}
+\end{subfigure}
+
+\caption{Pass@3 (functional) results of QAgent across problems with different levels of complexity and different LLM sizes. Here, level-n denotes problems where the user query simultaneously involves n different quantum algorithm.}
+\label{fig:fig4}
+\end{figure}
+
+
+
+
+\section{Conclusion}
+
+QAgent addresses the complexities of quantum programming on NISQ machines by integrating LLM capabilities with automated problem decomposition, circuit generation, synthesis, debugging, and optimization. By leveraging RAG-based long-term memory, few-shot in-context learning, and COT-based reflection process, QAgent mitigates the need for extensive quantum expertise, enabling non-experts to develop, test, and optimize quantum circuits effectively. Experimental results demonstrate that QAgent achieves up to 71.6\% improvements in QASM code generation correctness over prior static LLM text-to-circuit generators and proved effective across different LLM base models. Thus, QAgent substantially lowers the barrier to quantum programming, facilitating broader adoption of quantum computing in the NISQ era.
+
+
+\section{Methods}
+\label{s:methods}
+\subsection{Dataset}
+\textbf{Level-1 foundamental quantum problems}  
+We evaluated QAgent using the QCircuitNet dataset~\cite{yang2024qcircuitnet}, which includes fundamental quantum problems described by natural language prompts enriched with LaTeX-based mathematical notation. Specifically, we selected the following problems:
+\begin{itemize}
+\item \textit{Bernstein-Vazirani (bv)}: Identifies a hidden binary string encoded in a linear Boolean function using a single oracle query.
+\item \textit{Deutsch-Jozsa (dj)}: Determines whether a black-box Boolean function is constant or balanced via a single quantum evaluation.
+\item \textit{Grover (gr)}: Performs quadratically accelerated search on unsorted databases using amplitude amplification.
+\item \textit{Phase Estimation (pe)}: Computes the eigenphase of a unitary operator corresponding to a given eigenstate, foundational for various quantum algorithms.
+\item \textit{W-state (ws)}: Generates multipartite entangled quantum states known for robust entanglement, beneficial in quantum information processing.
+\end{itemize}
+Each problem includes a dedicated Python-based OpenQASM code generator accommodating varying qubit counts and associated test cases for assessing syntactic and functional correctness. These resources adequately support both in-context few-shot learning and RAG-based tool invocation. We set the maximum qubit number to 12 across all kernels to ensure practical simulation feasibility.
+
+\textbf{Higher-level Multi-algorithm Problems}.
+To assess QAgent’s performance on more complex tasks, we constructed composite problems integrating multiple fundamental quantum problems. For instance, in task \textit{bg}, the user specifies an input question that involves both the Bernstein–Vazirani (bv) algorithm and Grover’s algorithm (gr). The composite multi-quantum-algorithm Tasks dataset spans tasks that combine two, three, or four algorithms. The following table enumerates all multi-algorithm tasks and the algorithms logically required to solve them:
+\begin{itemize}
+    \item \textbf{bg}: \textit{Bernstein-Vazirani}, \textit{Grover}
+    \item \textbf{pg}: \textit{Phase Estimation}, \textit{Grover}
+    \item \textbf{bw}: \textit{Bernstein-Vazirani}, \textit{W-state}
+    \item \textbf{pw}: \textit{Phase Estimation}, \textit{W-state}
+    \item \textbf{dw}: \textit{Deutsch-Jozsa}, \textit{W-state}
+    
+    \item \textbf{bpg}: \textit{Bernstein-Vazirani}, \textit{Phase Estimation}, \textit{Grover}
+    \item \textbf{dgw}: \textit{Deutsch-Jozsa}, \textit{Grover}, \textit{W-state}
+    \item \textbf{bdg}: \textit{Bernstein-Vazirani}, \textit{Deutsch-Jozsa}, \textit{Grover}
+    \item \textbf{pgw}: \textit{Phase Estimation}, \textit{Grover}, \textit{W-state}
+    \item \textbf{bpw}: \textit{Bernstein-Vazirani}, \textit{Phase Estimation}, \textit{W-state}
+
+    \item \textbf{bdgw}: \textit{Bernstein-Vazirani}, \textit{Deutsch-Jozsa}, \textit{Grover}, \textit{W-state}
+    \item \textbf{bpgw}: \textit{Bernstein-Vazirani}, \textit{Phase Estimation}, \textit{Grover}, \textit{W-state}
+    \item \textbf{dpgw}: \textit{Deutsch-Jozsa}, \textit{Phase Estimation}, \textit{Grover}, \textit{W-state}
+    \item \textbf{bdpw}: \textit{Bernstein-Vazirani}, \textit{Deutsch-Jozsa}, \textit{Phase Estimation}, \textit{W-state}
+    \item \textbf{bdpg}: \textit{Bernstein-Vazirani}, \textit{Deutsch-Jozsa}, \textit{Phase Estimation}, \textit{Grover}
+\end{itemize}
+This dataset provides a controlled yet challenging environment for assessing whether a language model–driven agent can infer and correctly decompose complex composite requests into the necessary quantum primitives. By covering combinations from two up to four algorithms, the dataset systematically increases reasoning complexity while maintaining interpretable ground truth for evaluation. More detailed descriptions for these tasks can be found in the GitHub repository.
+
+\subsection{LLM Models}
+To implement QAgent and compare against static LLM baselines, we evaluated several code-capable LLMs: Qwen3-235B-A22B-Instruct-2507 (235b or Qwen-235B), Qwen2.5-Coder-32B-Instruct (32b or Qwen-32B), and Qwen2.5-Coder-7B-Instruct (7b or Qwen-7B). Generation parameters were fixed across all models: temperature $= 1.0$ and top-p = $1.0$. To reduce variance due to stochastic generation, each experiment was repeated five times, and results were averaged.
+
+\subsection{Implementation}
+All LLMs were accessed via cloud APIs, with requests issued from a local machine equipped with an Intel core i5-12600K CPU, 64GB DRAM, and an NVIDIA GeForce RTX3090 GPU. The generated OpenQASM code was simulated and evaluated locally using Qiskit and benchmark-specific test cases.
+
+
+
+\subsection{Metrics}  
+We evaluated QAgent using the \texttt{pass@k} rate~\cite{chen2021evaluating}. The \texttt{pass@k} metric quantifies correctness, where \texttt{pass@k} (\texttt{Syntax}) measures the proportion of compilable (syntactically valid) code, and \texttt{pass@k} (\texttt{Functional}) evaluates the proportion of compilable code that passes all functional test cases:
+\begin{equation}
+\text{pass@}k = 1 - \frac{\binom{n_t - n}{k}}{\binom{n_t}{k}}
+\label{e:quantum_pass_rate}
+\end{equation}
+Here, $n_t$ is the total number of generated samples, $k$ is the number of generation trials, and $n$ is the number of successful (passing) samples.
+
+
+
+\textbf{Schemes.}  
+Our experiments evaluate 4 distinct schemes. All methods utilize pretrained LLMs without any additional fine-tuning or LoRA adaptation.
+
+\begin{enumerate}
+    \item \textit{Static Few-Shot} (\textit{Static}) :  
+    This baseline reproduces the setup from prior work~\cite{yang2024qcircuitnet}, where a small number ($1$–$5$) of example QASM code are appended to the user-provided task description to generate required code. It does not include any structured CoT prompt, code analysis or self-reflection mechanisms for error correction.
+
+    \item \textit{Dynamic-few-shot Coder} (\textit{Dynamic}):
+    This scheme involves Dynamic-few-shot Coder alone. The default inference budget is limited as 3 candidate and 5 reflection rounds.
+
+    \item \textit{Tools-augmented Coder}(\textit{Tools}) :  
+    This scheme involves Tools-augmented Coder alone. The default inference budget is limited as 3 candidate and 5 reflection rounds.
+
+    \item \textit{QAgent} :  
+    This full system combines both Dynamic-few-shot and Tools-augmented Coders in a hierarchical fallback architecture, as described previously. If the Dynamic-few-shot Coder fails to produce a valid result within a fixed number of candidates and reflection rounds, the task is automatically escalated to the Tools-augmented Coder for further processing.
+\end{enumerate}
+
+
+
+\section{Code and Data Availability}
+The implementation of the proposed QAgent system will be made publicly available at \texttt{https://github.com/fuzhenxiao/QCoder}, as well as the dataset modified from ~\cite{yang2024qcircuitnet}. We hope this repository will provide all necessary resources for facilitating further research and development based on our framework.
+
+
+
+\bibliography{agent}
+\clearpage
+\section{Supplemental Material}
+\label{s:supplement}
+\subsection{Dynamic-few-shot Coder Example}
+\label{s:dynamic}
+Figure~\ref{fig:appendix-imitation} illustrates an example workflow of QAgent's Dynamic-few-shot Coder for Grover's search problem with $n=3$. QAgent first retrieves relevant examples and constructs a reasoning-driven prompt to guide OpenQASM code generation. The initial generated code fails due to a syntax error caused by an undefined \textsc{mcx} gate. QAgent subsequently employs CoT-based debugging to pinpoint and resolve the issue. The second iteration successfully yields a syntactically and semantically correct OpenQASM circuit.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures_v2/fig_A1.pdf}
+    \caption{Example execution trace of the Dynamic-few-shot Coder.}
+    \label{fig:appendix-imitation}
+\end{figure}
+
+\subsection{Tools-augmented Coder Example}
+\label{s:tools}
+Figure~\ref{fig:appendix-tools} presents an example of QAgent's Tools-augmented Coder workflow for Grover's search with $n=3$. Initially, QAgent formulates a detailed, step-by-step plan and generates Python code using predefined tool functions. The first attempt encounters an error due to an outdated dependency (\texttt{qiskit.aqua} module).  QAgent then leverages CoT-based debugging to revise the plan according to updated APIs. The subsequent execution successfully generates the expected OpenQASM circuit.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures_v2/fig_A2.pdf}
+    \caption{Example execution trace of the Tools-augmented Coder.}
+    \label{fig:appendix-tools}
+\end{figure}
+
+\subsection{Typical Error Examples (pe and ws)}
+\label{s:error}
+\paragraph{Phase Estimation.}
+When \texttt{qubit} $=4$, a correct OPENQASM program for Phase Estimation is:
+\begin{verbatim}
+OPENQASM 3.0;
+include "stdgates.inc";
+include "oracle.inc";
+gate IQFT _gate_q_0, _gate_q_1, _gate_q_2, _gate_q_3 {
+  swap _gate_q_0, _gate_q_3;
+  swap _gate_q_1, _gate_q_2;
+  h _gate_q_0;
+  cp(-pi/2) _gate_q_0, _gate_q_1;
+  h _gate_q_1;
+  cp(-pi/4) _gate_q_0, _gate_q_2;
+  cp(-pi/2) _gate_q_1, _gate_q_2;
+  h _gate_q_2;
+  cp(-pi/8) _gate_q_0, _gate_q_3;
+  cp(-pi/4) _gate_q_1, _gate_q_3;
+  cp(-pi/2) _gate_q_2, _gate_q_3;
+  h _gate_q_3;}
+bit[4] c;
+qubit[5] q;
+Psi q[4];
+h q[0];
+h q[1];
+h q[2];
+h q[3];
+CU_0 q[0], q[4];
+CU_0 q[1], q[4];
+CU_0 q[1], q[4];
+CU_0 q[2], q[4];
+CU_0 q[2], q[4];
+CU_0 q[2], q[4];
+CU_0 q[2], q[4];
+CU_0 q[3], q[4];
+CU_0 q[3], q[4];
+CU_0 q[3], q[4];
+CU_0 q[3], q[4];
+CU_0 q[3], q[4];
+CU_0 q[3], q[4];
+CU_0 q[3], q[4];
+CU_0 q[3], q[4];
+IQFT q[0], q[1], q[2], q[3];
+c[0] = measure q[0];
+c[1] = measure q[1];
+c[2] = measure q[2];
+c[3] = measure q[3];
+\end{verbatim}
+
+Where quantum gate \texttt{CU\_0} is pre-defined in \texttt{oracle.inc}. In phase\_estimation the number of \texttt{CU\_0} applications is \emph{strict}: each control qubit must effect $U^{2^k}$ on the target. Any miscount (missing or extra repetitions) changes the encoded phase and yields wrong estimates. Typical LLM failure modes include:
+\begin{itemize}
+  \item \textbf{Wrong \texttt{IQFT} arity/definition:} the generated \texttt{IQFT} gate does not match the register size (e.g., defined with 3 parameters but applied to 4 qubits), so it cannot be used or produces an incorrect transform.
+  \item \textbf{Incorrect repetition schedule for \texttt{CU\_0}:} miscounting the required powers (e.g., using $1,2,3,6$ repeats instead of $1,2,4,8$), which breaks the $U^{2^k}$ scaling.
+  \item \textbf{Control/target mix-ups:} swapping arguments to controlled gates, altering the effective unitary.
+\end{itemize}
+
+\paragraph{W-state Preparation.}
+A correct 4-qubit W state circuit is:
+\begin{verbatim}
+OPENQASM 3.0;
+include "stdgates.inc";
+bit[4] c;
+qubit[4] q;
+x q[3];
+ry(-pi/3) q[2];
+cz q[3], q[2];
+ry(pi/3) q[2];
+ry(-0.9553166181245093) q[1];
+cz q[2], q[1];
+ry(0.9553166181245093) q[1];
+ry(-pi/4) q[0];
+cz q[1], q[0];
+ry(pi/4) q[0];
+cx q[2], q[3];
+cx q[1], q[2];
+cx q[0], q[1];
+\end{verbatim}
+
+The single-qubit \texttt{ry} angles are not arbitrary constants; they are computed via the two-qubit \emph{F-gate} pattern
+\begin{verbatim}
+def F_gate(theta):
+    circuit = QuantumCircuit(2)
+    circuit.ry(-theta, 1)
+    circuit.cz(0, 1)
+    circuit.ry(theta, 1)
+    return circuit.to_gate().name = "F"
+\end{verbatim}
+and assembled as:
+\begin{verbatim}
+theta_i = acos(sqrt(1.0 / (n - i)))
+\end{verbatim}
+with the sequence (conceptually):
+\begin{verbatim}
+for i in range(n-1):
+    apply F_gate(acos(sqrt(1/(n-i)))) to (n-1-i, n-2-i)
+for i in range(n-1):
+    cx n-2-i -> n-1-i
+\end{verbatim}
+
+A common and dominant LLM failure mode in W-state generation is the inability to \emph{capture the underlying formula and generate the precise numeric constants}.  
+Instead, the LLM often outputs approximate angles or random numbers that break the exact amplitude ratios, resulting in a state with significantly reduced fidelity to the ideal W state.
+
+For both cases, seemingly small deviations (one missing repetition, a flipped sign, or a inaccuate parameter) typically lead to qualitatively incorrect states.
+
+
+% \subsection*{A.3 Multi-Quantum-Algorithm Tasks}
+
+% The composite multi-quantum-algorithm Tasks dataset spans tasks that combine two, three, or four algorithms. The following table enumerates all multi-algorithm tasks and the algorithms logically required to solve them:
+
+% \begin{itemize}
+%     \item \textbf{feature\_search (fs)}: \textit{Bernstein-Vazirani}, \textit{grover}
+%     \item \textbf{key\_security (ks)}: \textit{qrng}, \textit{simon}
+%     \item \textbf{ghz\_analysis (ga)}: \textit{ghz}, \textit{qft}
+%     \item \textbf{quantum\_communication (qc)}: \textit{simon}, \textit{w\_state}
+%     \item \textbf{phase\_randomization (pr)}: \textit{phase\_estimation}, \textit{qrng}
+%     \item \textbf{adaptive\_phase\_tomography (apt)}: \textit{qrng}, \textit{phase\_estimation}, \textit{qft}
+%     \item \textbf{symmetric\_feature\_search (sfs)}: \textit{simon}, \textit{Bernstein-Vazirani}, \textit{grover}
+%     \item \textbf{entangled\_encoding\_scan (ees)}: \textit{ghz}, \textit{Bernstein-Vazirani}, \textit{grover}
+%     \item \textbf{quantum\_link\_analysis (qla)}: \textit{w\_state}, \textit{qrng}, \textit{simon\_multi}
+%     \item \textbf{periodic\_key\_sweep (pks)}: \textit{qrng}, \textit{qft}, \textit{phase\_estimation}
+%     \item \textbf{multi\_feature\_extraction (mfe)}: \textit{Bernstein-Vazirani}, \textit{simon}, \textit{qrng}, \textit{grover}
+%     \item \textbf{distributed\_phase\_analysis (dpa)}: \textit{ghz}, \textit{qrng}, \textit{qft}, \textit{phase\_estimation}
+%     \item \textbf{secure\_entanglement\_testing (set)}: \textit{qrng}, \textit{simon}, \textit{ghz}, \textit{qft}
+%     \item \textbf{phase\_guided\_structural\_search (pgss)}: \textit{qrng}, \textit{phase\_estimation}, \textit{Bernstein-Vazirani}, \textit{grover}
+%     \item \textbf{quantum\_network\_diagnosis (qnd)}: \textit{w\_state}, \textit{qrng}, \textit{simon}, \textit{ghz}
+% \end{itemize}
+
+% This dataset provides a controlled yet challenging environment for assessing whether a language model–driven agent can infer and correctly decompose complex composite requests into the necessary quantum primitives. By covering combinations from two up to four algorithms, the dataset systematically increases reasoning complexity while maintaining interpretable ground truth for evaluation. More detailed descriptions for these tasks can be found in the GitHub repository.
+
+
+\end{document}

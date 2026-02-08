@@ -1,0 +1,335 @@
+
+\begin{figure*}[t]%% placement specifier
+%% Use \includegraphics command to insert graphic files. Place graphics files in 
+%% working directory.
+\centering%% For centre alignment of image.
+\includegraphics[width=0.8\textwidth]{Paper_Figures/Figure1.png}
+%% Use \caption command for figure caption and label.
+\caption{LLM and digital twin enhanced dynamic robot task allocation}\label{fig:framework}
+%% https://en.wikibooks.org/wiki/LaTeX/Importing_Graphics#Importing_external_graphics
+\end{figure*}
+
+
+\section{Methodology}
+The methodology developed in this study is illustrated in Fig. \ref{fig:framework}. It introduces a scalable framework for situation-aware decision-making in multi-robot task allocation, enabled by an LLM. The system is capable to operate with or without an initial digital model (e.g., BIM) and has a closed-loop feedback mechanism that synchronizes the physical site with its digital representation.
+
+The Digital Twin serves as a bridge for synchronization between the physical site and the digital model. The digital model integrates: (1) a list of construction tasks and their precedence relationship that can either be presented in the form of a structured list or be automatically extracted from the BIM; (2) site information (i.e., material supplies and locations), which can either be manually created or detected by robots on the physical site and transmitted to the digital model; and, (3) building information that includes object geometries, types, and poses. It includes the completed structures as well as placeholders for components that have not yet been constructed. Each component is associated with attribute information, including its name (reference ID), layer (unbuilt, as-built, materials, inactive), material type, installation pose, and gripping pose. Based on this information, a comprehensive task list that contains the completion status can be extracted. It covers all active tasks (i.e., tasks that are scheduled to be performed in this project stage), including both the ones that are completed and the pending ones waiting to be assigned and executed.
+
+When an update event is triggered, the robots extract the list of tasks to complete and their logic relationships from the digital model. Updates to this list may originate from the physical site, where task completion status and site changes are detected and transmitted via ROS. Conversely, new or modified task instructions are synchronized back to the digital twin. Human supervision plays a critical role in interpreting construction progress and intervening when unforeseen uncertainties occur, such as weather disruptions, equipment failures, or site access limitations. These decisions and environmental conditions are reflected in the digital twin and influence task allocation strategies.
+
+The central processor coordinates the intelligent decision-making layer. Here, an LLM interprets contextual inputs (e.g., natural language updates from human operators), supported by a repository of domain knowledge. Rather than solving the optimization problem directly, the LLM identifies relevant parameters and updates constraints within a pre-defined IP model used for task allocation. The optimized task allocation plan is then sent to the robot controllers, which execute the tasks accordingly. Completion data flows back to the digital twin and task model, ensuring continuous updates and alignment between the virtual and physical environments.
+
+
+
+
+\subsection{Digital twin system}
+
+As a critical component of the proposed framework, the digital twin system integrates the digital model and the system central processor to continuously monitor and manage the project's status.  It also functions as the user interface, connecting human users with  system backends and enabling them to visualize, supervise, and intervene in the project using natural language via keyboard or voice input. The digital twin state at time $t$ is formalized as:
+\begin{align}
+    S_t = D_0+\mathcal{F}(S_{t-1}, R_t, SI_t, \Delta_{task}, \Delta_{robot})
+    \end{align}
+Here, $S_t$ represents the current state of the digital twin at time $t$, $D_0$ denote the initial information from the digital model $D$, $\mathcal{F}$ is the state update function, $R_t$ and $SI_t$ denote the robot states (i.e., arm joint states and base locations and orientations) and site information at time $t$,  respectively, and $\Delta_{task}$ and $\Delta_{robot}$  capture updates to task statuses and robot statuses (i.e., high-level task each robot in the team is performing) at time $t$, respectively.  Fig. \ref{fig:dt} illustrates the system architecture and information flow of the technical implementation. The three core capabilities, visualization, supervision, and intervention, are supported by four key modules, including the synchronized visualization module, task status tracker, robot status tracker, and user command receiver. 
+
+
+
+\textbf{Visualization} ($D_0, R_t, SI_t \rightarrow S_t$): The synchronized visualization module, adapted from the authors' previous work \cite{wang2024enabling}, is responsible for continuously updating the visual representation of the site and robots in the digital twin based on $SI_t$ and $R_t$. Before the process starts, robot emulators are generated by transmitting the URDF models of the robots and associated mesh files from ROS to the digital twin. In the initial state $S_0$, the basic digital twin scene is generated from $D_0$, which includes both geometric and attribute information. In this step, component geometries received from $D$ are instantiated at the corresponding locations in the digital twin as the environment. Attribute information embedded in $D$ is transmitted to the digital twin to adjust the properties of the corresponding components, such as its name, layer, attachment offset, and visualization (e.g., color).  During the runtime, the robot emulators mirror on-site robots' movements by subscribing to their state data $R_t$, thereby reflecting synchronized robot states to human users. $SI_t$ is similarly integrated through subscription to corresponding ROS topics.
+
+\textbf{Supervision} $(D_0,\Delta_{task}, \Delta_{robot}\rightarrow S_t)$: The supervision function allows the users to quickly get an oversight of construction progress and multi-robot operations to facilitate intervention decision making, which is enabled by the robot status tracker and task status tracker. At $t=0$, the task status tracker extracts from $D$ a comprehensive list of tasks involved. According to the progress, each task is marked as uninitiated, ongoing, or completed. As construction progresses, these labels are updated according to $\Delta_{task}$. Meanwhile, the robot status tracker provides the operation status of each robot in the teams in the form of high-level task name or description. If no task is being performed, the status of the corresponding robot will be marked as "idle".
+
+\textbf{Intervention}: The user command receiver module supports user interventions when users make intervention decisions during the visualization and supervision process or uncertainties occur. In these cases, users can submit high-level instructions in natural language by keyboard typing or directly through voice. The commands are processed by the embedded LLM into actionable modifications. These modifications are then forwarded as valid inputs to the task allocation module, updating $\Delta_{task}$ and triggering state updates via $\mathcal{F}$.
+
+After the completion of tasks or upon reaching a project milestone, the updated task list and building information are transmitted to update the digital model. This information includes components installed during construction and changes in site conditions, such as leftover construction materials on-site. As a result, the digital model maintains an up-to-date record and accurate representation of the project. This closed-loop feedback mechanism ensures that the digital model accurately reflects the project's as-built condition. It also enhances the model's utility in subsequent phases of work, such as facility management, progress auditing, and future renovations.
+
+\begin{figure}[t]
+
+\centering
+\includegraphics[width=0.48\textwidth]{Paper_Figures/DT_Framework.png}
+
+\caption{Digital twin system framework}\label{fig:dt}
+
+\end{figure}
+
+
+\subsection{Multi-robot task allocation: plan creation}
+% \bofutodo{ Integer Programming algorithm theory) Done}
+
+This section formally defines the task allocation and scheduling problem, formulates it as an integer program, and describes the algorithms used to solve it.
+
+Suppose there are \(n_\Acal\) capabilities, denoted by \(\Acal = \{1, \ldots, n_\Acal\}\), \(n_\Rcal\) heterogeneous robots, denoted by \(\Rcal = \{1, \ldots, n_\Rcal\}\), and \(n_\Tcal\) tasks, denoted by \(\Tcal = \{1, \ldots, n_\Tcal\}\). Each robot has a subset of capabilities, and each task requires a team of robots with the required capabilities to serve it. When a team of qualified robots \(\Rcal_i \subset \Rcal\) arrive, the task \(i \in \Tcal\) can be completed after time duration \(T^d_{i}\). A robot may only serve one task at a time. Additionally, each task may have a set of dependencies \(\Tcal_i \subset \Tcal\), i.e., other tasks that must be completed beforehand.
+The goal is to schedule tasks on a set of available robots in a way that minimizes the makespan, the time by which all tasks have been completed.
+
+We formulate the above-mentioned task allocation and scheduling problem as an integer program. Here, we provide common notations in Table \ref{tab:variable_definition}. The decision variables are \(x_{ir}\) for task assignment and \(t^s_{ir}\), \(t^e_{ir}\), \(t^s_i\), and \(t^e_i\) for scheduling.
+
+\begin{table}[t]
+  \caption{Definition of the notation.}
+  \label{tab:variable_definition}%
+    \begin{tabular}{p{0.06\linewidth}|p{0.82\linewidth}} 
+    \toprule
+     & Meaning
+    \\
+    \midrule
+    \(x_{ir}\) & = 1 if task \(i \in \Tcal\) is assigned to robot \(r \in \Rcal\).
+    \\
+    \(t^s_{ir}\) & The start time if robot \(r \in \Rcal\) works on task \(i \in \Tcal\).
+    \\
+    \(t^e_{ir}\) & The end time if robot \(r \in \Rcal\) works on task \(i \in \Tcal\).
+    \\
+    \(t^s_i\) & The start time of task \(i \in \Tcal\).
+    \\
+    \(t^e_i\) & The end time of task \(i \in \Tcal\).
+    \\
+    \(y_{ijr}\) & Auxiliary variables for robot scheduling.
+    \\
+    \(y_{ij}\) & Auxiliary variables for task dependencies.
+    \\
+    \(T^D_{i}\) & The time duration to complete task \(i \in \Tcal\).
+    \\
+    \(T^s_i\) & The earliest start time for task \(i \in \Tcal\).
+    \\
+    \(T^e_i\) & The latest end time for task \(i \in \Tcal\).
+    \\
+    \(T_{\text{large}}\) & A large time constant.
+    \\
+    \(a_{kr}\) & The amount of capability \(k \in \Acal\) available on robot \(r \in \Rcal\).
+    \\
+    \(b_{ki}\) & The amount of capability \(k \in \Acal\) required to execute task \(i \in \Tcal\)
+    \\
+    \bottomrule
+    \end{tabular}
+\end{table}
+
+\textbf{Objective function:}
+The objective function jointly minimizes the makespan and the individual task completion times. The third piece in the objective function penalizes the number of robots assigned to tasks. The makespan is defined as the maximum end time among all tasks. We set \(C_m \gg C_s \approx C_r\) to ensure that the makespan is the primary objective.
+\begin{align}
+    % \min_{x_{ir}, \ t^s_{ir}, \ t^e_{ir}, \ t^s_i, \ t^e_i} 
+    \min_{\substack{x_{ir}, \ t^s_i, \ t^e_i, \\ t^s_{ir}, \ t^e_{ir}}}\ ( C_m \max_{i \in \Tcal} \ t^e_i + C_s \sum_{i \in \Tcal} \ t^e_i + C_r \sum_{i \in \Tcal} \sum_{r \in \Rcal} x_{ir} ) \label{eqn:objective}
+\end{align}
+
+\textbf{Variable bound constraints:}
+\(x_{ir}\) is a binary task allocation variable, equal to 1 if task \(i \in \Tcal\) is assigned to a team that contains robot \(r \in \Rcal\), and 0 otherwise. The scheduling variables are continuous, with the requirement that the end time is always larger the start time.
+\begin{align}
+    x_{ir} \in \{0, 1\}, \quad &\forall i \in \Tcal, \forall r \in \Rcal \label{eqn:assignment_var} \\
+    0 \leq t^s_i \leq t^d_i, \quad &\forall i \in \Tcal \label{eqn:task_time_var} \\
+    0 \leq t^s_{ir} \leq t^d_{ir}, \quad &\forall i \in \Tcal, \forall r \in \Rcal \label{eqn:robot_time_var}
+\end{align}
+
+\textbf{Task dependency constraints:}
+The task dependency is specified using the time variables. If task \(i\) depends on the completion of task \(j\), then task \(i\) can start only after task \(j\) is completed.
+\begin{align}
+    t^s_i \geq t^e_j, \quad &\forall j \in \Tcal_i, \forall i \in \Tcal \label{eqn:task_dependency}
+\end{align}
+
+\textbf{Task requirement constraints:}
+A capability model is introduced to define the task requirement constraints.
+Let \(a_{kr} \in \nonnegativerealset\) denote the amount of capability \(k \in \Acal\) available on robot \(r \in \Rcal\), and let \(b_{ki} \in \nonnegativerealset\) denote the amount of capability \(k \in \Acal\) required to execute task \(i \in \Tcal\).
+% Each task must be assigned to exactly one robot, as specified in \eqref{eqn:task_assign_to_one_robot}.
+The robot team assigned to a task must collectively possess all the capabilities required by that task, as enforced by \eqref{eqn:task_capability_requirement}.
+\begin{align}
+    % \sum_{r \in R} x_{ir} = 1, \quad & \forall i \in \Tcal \label{eqn:task_assign_to_one_robot} \\
+    \sum_{r \in \Rcal} {a_{kr} x_{ir}} \geq b_{ki}, \quad &\forall k \in \Acal, \forall i \in \Tcal \label{eqn:task_capability_requirement}
+\end{align}
+
+\textbf{Task schedule constraints:}
+Equation \eqref{eqn:task_duration} specifies the relation between the task start and end time.
+The constraints \eqref{eqn:task_start_leq_robot_start}-\eqref{eqn:task_end_geq_robot_end} are organized into two groups. The first group, \eqref{eqn:task_start_leq_robot_start}-\eqref{eqn:task_start_geq_robot_start}, ensures that when robot \(r \in \Rcal\) is in the team assigned to task \(i \in \Tcal\), the task start time \(t^s_i\) equals the robot-specific start time \(t^s_{ir}\). Similarly, the second group, \eqref{eqn:task_end_leq_robot_end}-\eqref{eqn:task_end_geq_robot_end}, guarantees that the task end time \(t^e_i\) matches \(t^e_{ir}\) under the same assignment.
+% The third group, \eqref{eqn:task_duration_leq}-\eqref{eqn:task_duration_geq}, enforces that the task duration is given by \(t^e_{ir} = t^s_{ir} + T^D_{i}\) when robot \(r\) is in the team for task \(i\).
+Note that \(T_{\text{large}}\) is a large time constant.
+\begin{align}
+    t^e_i = t^s_i + T^D, \quad & \forall i \in \Tcal \label{eqn:task_duration} \\
+    t^s_i \leq t^s_{ir} + T_{\text{large}} (1 - x_{ir}), \quad & \forall r \in \Rcal, \forall i \in \Tcal \label{eqn:task_start_leq_robot_start} \\
+    t^s_i \geq t^s_{ir} - T_{\text{large}} (1 - x_{ir}), \quad & \forall r \in \Rcal, \forall i \in \Tcal \label{eqn:task_start_geq_robot_start} \\
+    t^e_i \leq t^e_{ir} + T_{\text{large}} (1 - x_{ir}), \quad & \forall r \in \Rcal, \forall i \in \Tcal \label{eqn:task_end_leq_robot_end} \\
+    t^e_i \geq t^e_{ir} - T_{\text{large}} (1 - x_{ir}), \quad & \forall r \in \Rcal, \forall i \in \Tcal \label{eqn:task_end_geq_robot_end}
+    % t^e_{ir} \leq t^s_{ir} + T^D_{i} + T_{\text{large}} (1 - x_{ir}), \quad & \forall r \in \Rcal, \forall i \in \Tcal \label{eqn:task_duration_leq}  \\
+    % t^e_{ir} \geq t^s_{ir} + T^D_{i} - T_{\text{large}} (1 - x_{ir}), \quad & \forall r \in \Rcal, \forall i \in \Tcal \label{eqn:task_duration_geq}
+\end{align}
+
+\textbf{Robot schedule (no-overlap) constraints:}
+Each robot can perform at most one task at a time, so their task schedules must not overlap, as specified in \eqref{eqn:robot_schedule1}-\eqref{eqn:robot_schedule2}. When the auxiliary variable \(y_{ijr} = 1\), task \(i\) is scheduled before task \(j\); otherwise, task \(i\) is scheduled after task \(j\).
+\begin{align}
+    t^e_{ir} &\leq t^s_{jr} + T_{\text{large}} (1 - y_{ijr}), &\quad \forall i < j \in \Tcal, \forall r \in \Rcal \label{eqn:robot_schedule1} \\
+    t^e_{jr} &\leq t^s_{ir} + T_{\text{large}} \ y_{ijr}, &\quad \forall i < j \in \Tcal, \forall r \in \Rcal \label{eqn:robot_schedule2} \\
+    y_{ijr} &\in \{0, 1\}, &\quad \forall i < j \in \Tcal, \forall r \in \Rcal 
+\end{align}
+
+% \begin{align}
+%     t^e_{ir} \leq t^s_{jr} \text{ or }  t^e_{jr} \leq t^s_{ir}, \forall i, j \in \Tcal, \ \text{s.t.} \ i \neq j, \forall r \in \Rcal \label{eqn:robot_schedue}
+% \end{align}
+
+% \begin{align}
+%     \phi(t^s_{ir}, t^e_{ir}, t^s_{jr}, t^e_{jr}) \neq 0, \quad \forall i, j \in \Tcal, \ \text{s.t.} \ i \neq j, \forall r \in \Rcal \label{eqn:robot_schedue} \\
+%     \phi(t^s_{ir}, t^e_{ir}, t^s_{jr}, t^e_{jr}) = \begin{cases}
+%          \ \ \ 1, \quad t^s_{ir} \leq t^e_{ir} \leq t^s_{jr} \leq t^e_{jr} \\
+%         -1, \quad t^s_{jr} \leq t^e_{jr} \leq t^s_{ir} \leq t^e_{ir} \\
+%          \ \ \ 0, \quad \text{Otherwise} \label{eqn:robot_schedue_phi}
+%     \end{cases}
+% \end{align}
+
+\textbf{Time window constraints (optional):}
+The time window constraint is an optional condition that requires a task to be completed within a specified time interval.
+\begin{align}
+    T^s_i \leq t^s_i \leq t^e_i \leq T^e_i, \quad \forall i \in \Tcal \text{ with a time constraint} \label{eqn:task_time_window}
+\end{align}
+
+\textbf{Task conflict constraints (optional):}
+The task conflict constraints are optional and ensure that two tasks \(i\) and \(j\) with conflicting resource requirements are not executed concurrently. \(y_{ij}\) is a binary auxiliary variable.
+\begin{align}
+    t^e_{i} &\leq t^s_{j} + T_{\text{large}} (1 - y_{ij}), &\forall i < j \in \Tcal \ \text{with conflicts} \label{eqn:task_conflict1}\\
+    t^e_{j} &\leq t^s_{i} + T_{\text{large}} \ y_{ij}, &\forall i < j \in \Tcal \ \text{with conflicts} \label{eqn:task_conflict2} \\
+    y_{ij} &\in \{0, 1\}, &\forall i < j \in \Tcal \ \text{with conflicts}\label{eqn:task_conflict3}
+\end{align}
+
+
+% \begin{align}
+%     \phi(t^s_i, t^e_i, t^s_j, t^e_j) \neq 0, \quad \forall i, j \in \Tcal, \ \text{s.t.} \ i \text{ conflicts with } j \label{eqn:task_conflict} \\
+%     \phi(t^s_i, t^e_i, t^s_j, t^e_j) = \begin{cases}
+%          \ \ \ 1, \quad t^s_i \leq t^e_i \leq t^s_j \leq t^e_j \\
+%         -1, \quad t^s_j \leq t^e_j \leq t^s_i \leq t^e_i \\
+%          \ \ \ 0, \quad \text{Otherwise}
+%     \end{cases}
+% \end{align}
+
+The above integer program can be solved using a CP-SAT solver. A CP-SAT solver is an optimization engine that combines constraint programming (CP) techniques with Boolean satisfiability (SAT) solving methods. It is designed to efficiently tackle combinatorial optimization problems - such as scheduling, planning, and assignment tasks - by systematically exploring potential solutions while adhering to a set of constraints. In our work, we employ the CP-SAT solver provided by Google OR-Tools to efficiently solve the integer program.
+
+\renewcommand{\arraystretch}{1.3} % Adjust row height
+
+\begin{table*}[h!]
+\footnotesize
+\setlength{\tabcolsep}{5pt}
+\centering
+\caption{Types of constraint and parameter changes}
+\begin{tabular}{p{3cm}|p{6cm}|p{0.7cm}|p{6.8cm}}
+    \toprule % Top line added
+    \textbf{Constraint Type} & \textbf{Definition} & \textbf{Label} & \textbf{Parameter} \\
+    \midrule
+    Task Dependency & Adjustments in the sequence or prerequisite relationships among tasks & \textbf{1} & \texttt{[task\_id, successors, +/-]} \\
+
+    Task Duration & Variations in the estimated time to complete tasks & \textbf{2} & \texttt{[task\_id, new\_duration]} \\
+
+    Task Starting Time & Changes to tasks' earliest or planned start times & \textbf{3} & \texttt{[task\_id, start\_time\_change]} \\
+
+    Number of Robot & Variations in robot availability & \textbf{4} & \texttt{[new\_robot\_type\_id, robot\_number\_change]} \\
+
+    Task Conflict Constraints & Some tasks cannot be performed at the same time & \textbf{5} & \texttt{[task\_id1, task\_id2]} \\
+    \bottomrule % Bottom line added
+\end{tabular}
+\label{tab:constraint_changes}
+\end{table*}
+
+\subsection{LLM-driven adaptive decision-making}
+
+To enable adaptive task reallocation in response to dynamic site conditions, we introduce a formal mapping that captures how the LLM interprets natural language narratives and transforms them into actionable modifications to the task allocation problem. This process serves as the core of the narrative-driven adaptation mechanism, facilitating human-in-the-loop flexibility without requiring direct manipulation of optimization code.
+
+Fig. \ref{fig:modular_system} illustrates the pipeline for enabling adaptive multi-robot task allocation driven by natural language inputs. The process begins with a narrative containing dynamic project updates, such as task sequencing preferences, resource delays, or timing adjustments. An LLM processes this narrative to extract actionable information, identifying relevant task entities (e.g., painting, window installation, wall-drilling) and interpreting relationships such as precedence constraints or temporal shifts. To ensure accurate task reference, a structured database is used to map textual descriptions to corresponding task IDs (e.g., wall-drilling → T6).
+
+The extracted instructions are then categorized into discrete flag types, each representing a specific kind of modification as demonstrated in Table \ref{tab:constraint_changes}. Each flag is paired with a structured parameter representation, which encapsulates the necessary information to modify the optimization code. These flags are designed to align with designated insertion points in a standalone optimization codebase.
+
+Let the input to the LLM be a narrative description
+$\mathcal{N}$, such as a sentence or paragraph provided by a site supervisor or worker, which describes changes in site conditions, task statuses, or scheduling preferences. The LLM acts as a function:
+
+
+\begin{align}
+\mathcal{M}: \mathcal{N} \rightarrow\left\{\left(C_k, \theta_k\right)\right\}_{k=1}^K
+\end{align}
+
+Where:
+
+$\mathcal{M}$ is the mapping function learned or encoded by the LLM
+
+
+$C_k$ is the type of constraint (e.g., dependency, time shift)
+
+$\theta_k$ is the parameter set for the update
+\\
+
+Each $\left(C_k, \theta_k\right)$ pair defines a flagged constraint to be dynamically injected into the optimization model. These flags are associated with predefined templates in the integer programming codebase, allowing seamless integration with the solver without altering the base model structure. For example:
+
+\begin{itemize}
+    \item A narrative like "Our skilled wall-drilling worker will be arriving an hour late" may yield $\left(C= 3, \theta=\{T6, 1\}\right)$.
+
+    
+    \item A command like "The owner has requested that painting be completed before window installation" maps to $\left(C= 1, \theta=\{T13 \prec T 9\}\right)$.
+\end{itemize}
+
+
+
+
+
+To ensure consistency, the LLM references a structured task knowledge base $\mathcal{T}=$ $\left\{\left(T_i\right.\right.$, Description$\left.\left._i\right)\right\}$ that maps textual task names to task IDs. This helps avoid ambiguity and ensures each extracted constraint can be accurately linked to the model.
+
+
+
+
+
+The LLM output is then parsed into a structured JSON format and passed to the optimization backend, which updates the constraint set accordingly:
+
+\begin{align}
+\mathcal{C}_{\text {new }}=\mathcal{C}_{\text {original }} \cup\left\{C_k\left(\theta_k\right)\right\}
+\end{align}
+
+
+This interaction between the LLM and the optimizer ensures the system can continuously adapt to evolving conditions while maintaining model transparency and interpretability.
+
+Please note that the optimization algorithm operates independently from the LLM. The LLM's role is limited to interpreting the narrative and modifying only the flagged portions of the code, leaving the optimization logic itself untouched. This separation ensures that the optimization process remains robust and interpretable while gaining the flexibility through natural language instructions. The result is a hybrid, human-in-the-loop system that bridges narrative reasoning and formal optimization in a modular, scalable manner.
+
+
+\begin{figure}[t]
+
+\centering
+\includegraphics[width=0.48\textwidth]{Paper_Figures/Figure3.png}
+
+\caption{Pipeline for narrative-driven adaptive schedule optimization}\label{fig:modular_system}
+\end{figure}
+
+
+
+
+
+\subsection{LLM implementation and prompt design}
+Prompt design is critical for LLMs to perform high-quality information extraction, particularly given the intricate nature of construction scheduling tasks \cite{white2023prompt, atreja2024prompt}. To create effective prompts tailored for construction project scheduling, we utilize prompt engineering strategies articulated by White et al. (2023) \cite{white2023prompt}. These strategies emphasize the necessity of integrating context descriptions, structured templates, and explicit output formatting into prompts. In our scenario, context descriptions detail construction tasks, their interdependencies, durations, and associated robotic capabilities, and we further employ JSON as the structured output format to ensure clarity.
+
+In addition, we incorporate two techniques into our prompt design. The first technique is chain-of-thought (CoT) prompting, which guides the LLM through step-by-step reasoning \cite{wei2022chain}. This approach can facilitate accurate task identification and constraint recognition by prompting LLM to engage in deliberate, intermediate reasoning stages before concluding. Specifically, our CoT prompts instruct the LLM to: (1) carefully read the task description, (2) identify the specific task and associated robotic system, (3) determine the constraint type, (4) extract relevant parameters, and (5) format the extracted information. The second technique is few-shot learning. Given that prior research indicates LLMs excel in few-shot learning scenarios \cite{brown2020language, hegselmann2023tabllm}, we provide multiple examples within our prompt. These examples serve as explicit references, allowing LLM to capture task requirements more effectively and thereby enhancing the accuracy of its outputs. By leveraging these prompt engineering techniques, we develop a structured prompt template tailored for prompting LLMs to analyze task descriptions of construction project scheduling (see Appendix \ref{app1}). 
+
+For model selection, we refer to the widely recognized Multi-task Language Understanding (MMLU) benchmark \cite{hendrycks2020measuring}. We utilize two popular LLM families, OpenAI’s GPT series and Anthropic’s Claude series, because of their demonstrated capabilities in complex reasoning and strong performance across diverse NLP tasks \cite{fan2023nphardeval, sonoda2024diagnostic}. Specifically, from OpenAI, we select GPT-4o-mini, GPT-4o, GPT-4.1-mini and GPT-4.1. From Anthropic, we include Claude-Haiku and Claude-Sonnet.
+
+ 
+
+
+
+\subsection{Multi-robot task allocation: replanning}\label{sec:method-replanning}
+
+Suppose the task schedule and robot assignments have already been determined through the task allocation optimization described in the previous section, and the plan has been partially executed.
+At time \(T^R\), updated information becomes available reflecting changes in task conditions, such as modifications to robot capabilities, availability, expected task durations, additional task dependencies, or time window constraints.
+These changes may render the current plan infeasible or suboptimal, necessitating the generation of a new plan. At this point, some tasks have been completed, others are in progress, and the rest have not yet started. For the completed and ongoing tasks, their assigned robots and schedules must remain unchanged during the replanning. Furthermore, in many real-world scenarios, modifying the original plan may incur additional operational costs. To account for this, penalties can be introduced into the optimization to discourage unnecessary deviations from the original plan.
+
+Given an original task allocation and scheduling plan, represented by the solution to the variables $^0x_{ir}$, $^0t^{s}_{ir}$, $^0t^e_{ir}$, $^0t^s_i$, and $^0t^e_i$. Let $\Tcal_{-} = \{i \in \Tcal \mid {^0t^s_i} \leq T^R\}$ denote the set of tasks that are ongoing or completed by the replanning time $T^R$, and let $\Tcal_{+} = \{i \in \Tcal \mid {^0t^s_i} > T^R\}$ represent the set of tasks that have not yet started. The replanning optimization is formulated as follows.
+
+
+\textbf{Replanning optimization:}
+The replanning objective jointly minimizes the makespan and individual task completion times while also penalizing deviations from the original plan. We set \(C_m \gg C_s \approx C_x \approx C_t \) to ensure that the makespan remains the primary objective, with the other terms balanced relative to one another. The constraints include the original constraints \eqref{eqn:assignment_var}-\eqref{eqn:task_conflict3}, along with additional constraints \eqref{eqn:schedule_fixed}-\eqref{eqn:assignment_fixed} to ensure plan consistency.
+\begin{align}
+    \min_{\substack{x_{ir}, \ t^s_i, \ t^e_i, \\ t^s_{ir}, \ t^e_{ir}}} \ ( & C_m \max_{i \in \Tcal} \ t^e_i + C_s \sum_{i \in \Tcal} \ t^e_i + C_r \sum_{i \in \Tcal} \sum_{r \in \Rcal} x_{ir} \nonumber \\
+    & + C_x \Delta x + C_t \Delta t) \\
+    \text{subject to} & \ \eqref{eqn:assignment_var}-\eqref{eqn:task_conflict3} \text{ and } \eqref{eqn:schedule_fixed}-\eqref{eqn:assignment_fixed} \nonumber
+\end{align}
+
+\textbf{Plan change penalty for:}
+Changes to the original task assignments and schedules are penalized during replanning to ensure that the new plan accommodates updated task conditions while minimizing deviations from the original plan.
+\begin{align}
+    \Delta x &= \sum_{\forall i \in \Tcal_{+}} \sum_{\forall r \in \Rcal} |x_{ir} - {^0x_{ir}}| \label{eqn:schedule_change_penalty} \\
+    \Delta t &= \sum_{\forall i \in \Tcal_{+}} \left( |t^s_i - {^0t^s_i}| + |t^e_i - {^0t^e_i}| \label{eqn:assignment_change_penalty} \right)
+\end{align}
+
+\textbf{Historical plan constraints for completed tasks:} The robot assignments and task schedules for ongoing or completed tasks must remain unchanged to ensure consistency between the updated plan and the actual execution.
+\begin{align}
+    t^s_i = {^0t^s_i}, \ t^e_i = {^0t^e_i}, \quad \forall i \in \Tcal_{-} \label{eqn:schedule_fixed} \\
+    x_{ir} = {^0x_{ir}} \quad \forall r \in \Rcal, \forall i \in \Tcal_{-} \label{eqn:assignment_fixed}
+\end{align}
+
+
+
+
+
+
+
+

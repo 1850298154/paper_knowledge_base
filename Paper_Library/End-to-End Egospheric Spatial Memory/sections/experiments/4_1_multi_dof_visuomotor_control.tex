@@ -1,0 +1,74 @@
+\subsection{Multi-DOF Visuomotor Control}
+\label{sec:multi_dof_visuomotor_control}
+
+While ego-centric cameras are typically used when learning to navigate planar scenes from images \citep{jaderberg2016reinforcement, zhu2017target, gupta2017cognitive, parisotto2017neural}, \textit{static} scene-centric cameras are the de facto when learning multi-DOF controllers for robot manipulators \citep{levine2016end, james2017transferring, matas2018sim, james2019sim}. We consider the more challenging and less explored setup of learning multi-DOF visuomotor controllers from ego-centric cameras, and also from \textit{moving} scene-centric cameras. LSTMs are the de facto memory architecture in the RL literature \citep{jaderberg2016reinforcement, espeholt2018impala, kapturowski2018recurrent, mirowski2018learning, bruce2018learning}, making this a suitable baseline. NTMs represent another suitable baseline, which have outperformed LSTMs on visual navigation tasks \citep{wayne2018unsupervised}. Many other works exist which outperform LSTMs for planar navigation in 2D maze-like environments \citep{gupta2017cognitive, parisotto2017neural, henriques2018mapnet}, but the top-down representation means these methods are not readily applicable to our multi-DOF control tasks. LSTM and NTM are therefore selected as competitive baselines for comparison.
+
+
+\subsubsection{Imitation Learning}
+
+For our imitation learning experiments, we test the utility of the ESM module on two simulated visual reacher tasks, which we refer to as Drone Reacher (\textit{DR}) and Manipulator Reacher (\textit{MR}). Both are implemented using the CoppeliaSim robot simulator~\citep{rohmer2013v}, and its Python extension PyRep~\citep{james2019pyrep}. We implement DR ourselves, while MR is a modification of the reacher task in RLBench~\citep{james2019rlbench}. Both tasks consist of 3 targets placed randomly in a simulated arena, and colors are newly randomized for each episode. The targets consist of a cylinder, sphere, and "star", see Figure \ref{fig:reacher_tasks}.
+
+\begin{wrapfigure}[14]{R}{0.5\textwidth}
+    \centering
+    \includegraphics[scale=0.1]{figures/reacher_diagrams.png}
+      \caption{Visualization of (a) Drone Reacher and (b) Manipulator Reacher tasks.}
+      \label{fig:reacher_tasks}
+\end{wrapfigure}
+
+In both tasks, the target locations remain fixed for the duration of an episode, and the agent must continually navigate to newly specified targets, reaching as many as possible in a fixed time frame of 100 steps. The targets are specified to the agent either as RGB color values or shape class id, depending on the experiment. The agent does not know in advance which target will next be specified, meaning a memory of all targets and their location in the scene must be maintained for the full duration of an episode. Both environments have a single body-fixed camera, as shown in Figure \ref{fig:reacher_tasks}, and also an external camera with freeform motion, which we use separately for different experiments.
+
+For training, we generate an offline dataset of 100k 16-step sequences from random motions for both environments, and train the agents using imitation learning from known expert actions. Action spaces of joint velocities $\dot{q}\in\mathbb{R}^{7}$ and cartesian velocities $\dot{x}\in\mathbb{R}^{6}$ are used for \textit{MR} and \textit{DR} respectively. Expert translations move the end-effector or drone directly towards the target, and expert rotations rotate the egocentric camera towards the target via shortest rotation. Expert joint velocities are calculated for linear end-effector motion via the manipulator Jacobian. For all experiments, we compare to baselines of single-frame, dual-stacked LSTM with and without spatial auxiliary losses, and NTM. We also compare against a network trained on partial oracle omni-directional images, masked at unobserved pixels, which we refer to as Partial-Oracle-Omni (PO2), as well as random and expert policies. PO2 cannot see regions where the monocular camera has not looked, but it maintains a pixel-perfect memory of anywhere it has looked. Full details of the training setups are provided in Appendix \ref{app:imitation_learning}. The results for all experiments are presented in Table \ref{table:main_results}.
+
+
+\begin{table}[h!]
+\begin{center}
+\resizebox{\columnwidth}{!}{%
+ \begin{tabular}{|| c || c | c | c | c || c | c | c | c||} 
+ \cline{2-9}
+ \multicolumn{1}{c||}{} & \multicolumn{4}{c||}{Drone Reacher} & \multicolumn{4}{c||}{Manipulator Reacher} \\ 
+ \cline{2-9}
+ \multicolumn{1}{c||}{} & \multicolumn{2}{c|}{Ego Acq} & \multicolumn{2}{c||}{Freeform Acq} & \multicolumn{2}{c|}{Ego Acq} & \multicolumn{2}{c||}{Freeform Acq} \\ 
+ \cline{2-9}
+ \multicolumn{1}{c||}{} & Color & Shape & Color & Shape & Color & Shape & Color & Shape \\
+ \hline
+ \hline
+ Mono & 0.6(0.7) & 0.9(1.7) & 2.4(5.0) & 0.5(1.6) & 1.8(1.5) & 1.6(1.1) & 0.1(0.2) & 0.1(0.2) \\
+ \hline
+ LSTM & 12.7(3.4) & 4.1(2.3) & 1.0(1.0) & 0.6(0.8) & 1.0(0.5) & 0.1(0.2) & 0.1(0.2) & 0.1(0.4) \\
+ \hline
+ LSTM Aux & 1.3(0.8) & 0.4(0.8) & 2.4(2.2) & 1.9(1.7) & 1.0(0.7) & 0.1(0.3) & 0.3(0.6) & 0.0(0.2) \\
+ \hline
+ NTM & 10.5(4.2) & 2.5(1.9) & 3.2(2.9) & 1.6(1.5) & 1.0(0.6) & 0.2(0.4) & 0.1(0.3) & 0.1(0.2) \\
+ \hline
+ ESMN-RGB & \textbf{20.6}(7.3) & 4.1(3.8) & \textbf{16.1}(12.7) & 1.1(2.6) & \textbf{11.4}(5.1) & 3.1(3.2) & \textbf{10.5}(5.7) & \textbf{0.9}(1.6) \\
+ \hline
+ ESMN & \textbf{20.8}(7.8) & \textbf{18.3}(6.4) & \textbf{16.6}(12.9) & \textbf{8.5}(11.2) & \textbf{11.7}(5.3) & \textbf{4.7}(4.0) & \textbf{11.0}(5.8) & \textbf{1.0}(1.2) \\
+ \hline\hline
+ Random & 0.1(0.2) & 0.1(0.2) & 0.1(0.2) & 0.1(0.2) & 0.1(0.2) & 0.1(0.2) & 0.1(0.2) & 0.1(0.2) \\
+ \hline
+ PO2 & 21.0(8.6) & 14.4(6.1) & 19.1(12.7) & 3.9(8.1) & 13.0(5.9) & 4.1(3.5) & 12.5(6.1) & 2.6(2.5) \\
+ \hline
+ Expert & 21.3(8.4) & 21.3(8.4) & 21.3(8.4) & 21.3(8.4) & 16.5(5.2) & 16.5(5.2) & 16.5(5.2) & 16.5(5.2) \\
+ \hline
+\end{tabular}%
+}
+\caption{Final policy performances on the various drone reacher (DR) and manipulator reacher (MR) tasks, from egocentric acquired (Ego Acq) or freeform acquired (Freeform Acq) cameras, with the network conditioned on either target color or shape. The values indicate the mean number of targets reached in the 100 time-step episode, and the standard deviation, when averaged over 256 runs. ESMN-RGB stores RGB features in memory, while ESMN stores learnt features.}
+\label{table:main_results}
+\end{center}
+\end{table}
+
+\input{sections/experiments/4_1_1_IL/4_1_1a_from_ego}
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=\textwidth]{figures/trajectories.png}
+  \caption{Sample trajectories through the memory for (a) ESMN on DR-Ego-Shape, and ESMN-RGB on (b) DR-Ego-Color, (c) DR-Freeform-Color, (d) MR-Ego-Color, (e) MR-Freeform-Color. The images each correspond to features in the full $90\times180$ memory at that particular timestep $t$.}
+  \label{fig:trajectories}
+\end{figure}
+
+\input{sections/experiments/4_1_1_IL/4_1_1b_from_scene}
+\input{sections/experiments/4_1_1_IL/4_1_1c_obstacle_avoidance}
+\input{sections/experiments/4_1_1_IL/4_1_1d_cam_generalization}
+
+
+\input{sections/experiments/4_1_2_RL}

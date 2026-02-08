@@ -1,0 +1,122 @@
+\section{Weakly Consistent Definition of Deadlock}
+\label{sec:def}
+
+With a few tweaks, we can obtain a correctness guarantee for our
+deadlock detector under a weak memory model, which implies the same
+guarantee under any stronger model, including sequential consistency.
+%
+First, we must define this weak memory model and give a definition of
+deadlock that is compatible with it.
+
+In practice, we do not want to assume that maps such as the
+$\fldowner$ field have a single, globally consistent state that is
+observed by all tasks. Machines and languages often have weaker
+consistency guarantees, and there are performance costs for requesting
+stronger consistency due to the synchronization required.
+%
+Instead, we will assume a weak memory model and use unsynchronized
+accesses whenever possible.
+
+We now define this weak memory model, which we will use to establish
+the correctness of our deadlock detection algorithm under models at
+least as strong as this one.
+%
+\begin{definition}
+  The \emph{happens-before} (h.b.) order is a partial order over the
+  instructions in a program execution that subsumes the intra-task
+  program order and, upon spawning each new task, the ordering of
+  \cref{alg:owners} line~\ref{ln:owners:async:D} (the start of the new
+  task) after \cref{alg:owners} line~\ref{ln:owners:async:C} (the last
+  action of the parent task before spawning).
+  %
+  The reverse of happens-before is \emph{happens-after}.
+\end{definition}
+%
+\begin{definition}
+  With respect to a given memory location, a read may only
+  \emph{observe} a (not necessarily unique) last write which
+  happens-before it or any write with which the read is not
+  h.b.~ordered.
+  %
+  Two writes or a write and read of the same location which are not
+  h.b.~ordered are \emph{racing}.
+\end{definition}
+%
+A typical language has a more refined happens-before ordering and
+definition of observable writes, especially relating to reads-from
+edges on promises; however, we will not need to appeal to such edges
+in our formalism.
+%
+\begin{definition}
+  A program in \Lp is \emph{well-formed} if, in every execution, for
+  each promise, $p$, there is at most one $\kwnew~p$ instruction, and
+  each \kwset, \kwget, or \kwasync instruction referring to $p$
+  happens-after such a $\kwnew~p$.
+  %
+  \label{def:wf}
+\end{definition}
+
+We note that although the owners of different promises may be updated
+concurrently, it is not possible in \cref{alg:owners} for a
+write-write race to occur on the same owner field.
+%
+\begin{lemma}
+  Consider an execution of a well-formed program. If $w_1, w_2$ are
+  two writes to $p.\fldowner$ in \cref{alg:owners}, then $w_1$ and
+  $w_2$ are not racing.
+  %
+  Further, if $r$ is a read of $p.\fldowner$ by task $t$, and $r$
+  observes the value to be $t$, then $r$ does not race with the write
+  it observes.
+  %
+  \label{lem:writeorder}
+\end{lemma}
+\begin{proof}
+  The two claims can be shown together.
+  %
+  Line~\ref{ln:owners:new:A} represents the initialization of the
+  $\fldowner$ field and so happens-before every other write to it.
+  %
+  The writes in lines~\ref{ln:owners:async:C}
+  and~\ref{ln:owners:set:B} each happen-after a read of the same field
+  observes the value to be the currently executing task
+  (lines~\ref{ln:owners:async:X},~\ref{ln:owners:set:A}).
+  %
+  Take this together with the fact that there are only two ways to set
+  $p.\fldowner$ to $t$: line~\ref{ln:owners:new:A}, executed by $t$
+  itself, or line~\ref{ln:owners:async:C}, executed by the parent of
+  $t$ prior to spawning $t$. In either case, writing $t$ to
+  $p.\fldowner$ happens-before any read of $p.\fldowner$ by $t$
+  itself.
+\end{proof}
+
+Since we do not assume a globally consistent state, we have to be
+careful in the definition of deadlock cycle. Two tasks need not agree
+on the value of $\fldowner(p)$ for a given promise, $p$.
+%
+Instead of freely referring to $\fldowner$ as a map
+$\mathit{Promise} \to \mathit{Task} \cup \{ \Null \}$, we must
+additionally state which task's perspective is being used to observe
+the $\fldowner$ map.
+%
+\begin{definition}
+  A non-empty set of tasks, $T$, is in a \emph{deadlock cycle} if
+  for every task $t \in T$,
+  %
+  \begin{enumerate}
+  \item $t$ is executing $\kwget p_t$ for some promise, $p_t$,
+  \item there exists a task, $o_{p_t}$, also in $T$ which observes that
+    $\fldowner(p_t) = o_{p_t}$,
+  \end{enumerate}
+  and $T$ is minimal with respect to these constraints.
+  %
+  The set of promises associated to the deadlock is
+  $\{ p_t ~|~ t \in T \}$.
+\end{definition}
+%
+The subtle point in this definition is that task $o_{p_t}$ necessarily
+has the most up-to-date information about the owner of $p_t$, since
+$o_{p_t}$ is itself the owner. Per \cref{lem:writeorder}, we know that
+all the writes to $p_t.\fldowner$ are ordered and that $o_{p_t}$ is
+observing the last such write, since only $o_{p_t}$ is capable of
+performing the next write to follow the observed one.

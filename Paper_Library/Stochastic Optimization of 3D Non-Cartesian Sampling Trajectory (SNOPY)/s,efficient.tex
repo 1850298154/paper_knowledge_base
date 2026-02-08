@@ -1,0 +1,128 @@
+\subsubsection{Optimizer}
+
+\begin{table*}[t]%
+\caption{~The memory/time use reduction brought by proposed techniques.
+Here we used a 2D 400$\times$400 test case,
+and CG-SENSE reconstruction (20 iterations). `+' means adding the technique to previous columns.
+}
+\label{tab:memory}
+\begin{tabular*}{\textwidth}{@{\extracolsep\fill}lcccc@{\extracolsep\fill}}
+\toprule
+\textbf{Plain} & \textbf{+Efficient Jacobian}  & \textbf{+In-place ops}  & {\textbf{+Toeplitz embedding}}  & \textbf{+Low-res NUFFT}   \\
+\midrule
+5.7GB / 10.4s  &  272MB / 1.9s  & 253MB / 1.6s  & 268MB / 0.4s  & 136MB / 0.2s  \\
+\bottomrule
+\end{tabular*}
+\begin{tablenotes}%%[341pt]
+\end{tablenotes}
+\end{table*}
+
+Generally, to optimize the sampling trajectory $\om$
+and other parameters (such as reconstruction parameters $\thta$) via
+stochastic gradient descent-like methods,
+each update needs to take a gradient step
+(in the simplest form)
+\begin{align*}
+\thta^K &= \thta^{K-1} - \etat  \frac{\partial \Loss}{\partial\thta}(\om^{K-1}, \thta^{K-1})
+\\
+\om^K &= \om^{K-1} - \etao  \frac{\partial \Loss}{\partial\om}(\om^{K-1}, \thta^{K-1}),
+\end{align*}
+where $\Loss$ is the loss function described
+in Section \ref{subsec:obj} 
+and
+%$\eta$ is the step size.
+where \etat and \etao denote step-size parameters.
+
+
+The optimization is highly non-convex
+and may suffer from sub-optimal local minima.
+We used stochastic gradient Langevin dynamics (SGLD)
+\cite{welling:2011:sgld} as the optimizer to improve results and
+accelerate training.
+Each update of SGLD injects Gaussian noise into the gradient
+to introduce randomness
+\begin{align}
+\thta^K &= \thta^{K-1} - \etat
+\frac{\partial \Loss}{\partial\thta^{K-1}} + \sqrt{2 \eta_{\thta}} \mathcal{N}(0,\,1)
+\nonumber \\
+\om^K &= \om^{K-1} - \etao
+\frac{\partial \Loss}{\partial\om^{K-1}} + \sqrt{2\etao} \mathcal{N}(0,\,1)
+\label{e:sgld}
+.\end{align}
+
+Across most experiments, 
+we observed that SGLD led to improved results 
+and better convergence speeds
+compared with SGD or Adam \cite{kingma:2017:AdamMethodStochastic}.
+\fref{fig:loss} shows a loss curve of SGLD
+and Adam of experiment \ref{exp:pns}.
+
+\begin{figure}[htb]
+\centerline{\includegraphics[width=\columnwidth]{figure/fig,loss.png}}
+\caption{~The evaluation loss curve led by SGLD and Adam.}
+\label{fig:loss}
+\end{figure}
+
+\begin{figure*}[htb]
+\centerline{\includegraphics[width=0.9\textwidth]{figure/fig,bjork.png}}
+\caption{~The optimized sampling trajectory of experiment \ref{exp:freeform}.
+The training involves SKM-TEA dataset and MoDL \cite{modl} reconstruction.
+The upper row shows a zoomed-in region from different viewing perspectives.
+The lower row shows one shot from different perspectives.
+\label{fig:bjork}}
+\end{figure*}
+
+\begin{figure}[htb]
+\centerline{\includegraphics[width=0.9\columnwidth]{figure/fig,psf.png}}
+\caption{~Visualization of the optimized trajectory in \ref{exp:freeform}.
+The upper subfigure displays PSFs (log-scaled, single-coil)
+of trajectories optimized with different reconstruction methods.
+The lower subfigure shows the density of sampling trajectories,
+by convolving the sampling points with a Gaussian kernel.
+Three rows are central profiles from three perspectives.
+\label{fig:psf}}
+\end{figure}
+
+\begin{figure*}[htb]
+\centerline{\includegraphics[width=0.99\textwidth]{figure/fig,recon.png}}
+\caption{~Examples of the reconstructed images for two knee slices in experiment \ref{exp:freeform}.
+\label{fig:recon}}
+\end{figure*}
+
+
+
+\subsubsection{Memory saving techniques}
+
+Due to the large dimension, 
+the memory cost for naive 3D trajectory optimization
+would be prohibitively intensive.
+We developed several techniques to
+reduce memory use and accelerate training.
+
+As discussed above,
+the efficient Jacobian approximation 
+uses only 10\% of the memory used in 
+the standard auto-differentiation approach \cite{wang:21:eao}.
+%It is also possible to
+We also used in-place operations
+in certain reconstruction steps,
+such as the conjugate gradient (CG) method,
+because with careful design
+it will still permit
+auto-differentiation.
+(See our open-source code\footnote{\url{https://github.com/guanhuaw/Bjork}} for details.)
+The primary memory bottleneck is with the 3D NUFFT operators.
+We pre-calculate the Toeplitz embedding kernel to 
+save memory and accelerate computation \cite{fessler:05:tbi,muckley:20:tah}.
+In the training phase,
+we use a NUFFT with lower accuracy,
+for instance, with a smaller oversampling ratio for gridding
+\cite{wang:21:eao}.
+\tref{tab:memory} shows the incrementally improved efficiency
+achieved with these techniques.
+Without the proposed techniques,
+optimizing 3D trajectories
+would require hundreds of gigabytes of memory,
+which would be impractical.
+SNOPY enables solving this otherwise prohibitively large problem
+on a single graphic card (GPU).

@@ -1,0 +1,166 @@
+
+
+
+\section{SYMPHONY}
+\label{system}
+\subsection{Background and Overview}
+
+A Markov Decision Process (MDP) \cite{bellman1966MDP} provides a principled framework for modeling sequential decision-making, defined by the tuple $(S, A, \mathcal{T}, R, \gamma)$, where $S$ is the state space, $A$ is the action space, $\mathcal{T}: S \times A \rightarrow \mathcal{P}(S)$ defines the transition dynamics, $R: S \times A \rightarrow \mathbb{R}$ is the reward function, and $\gamma \in [0,1]$ is the discount factor. At each timestep, the agent observes a state $s \in S$, selects an action $a \in A$, transitions to a new state $s' \sim P(\cdot \mid s, a)$, and receives a reward $R(s, a)$. The objective is to learn a policy that maximizes the expected cumulative discounted return.
+
+LLMs can be naturally integrated into this framework to support high-level reasoning and decision-making. Specifically, an LLM can serve as a \textit{policy} by generating actions conditioned on language-based state representations, as a \textit{value function} by estimating expected returns from textual trajectories, or as a \textit{world model} by predicting future states and rewards through learned knowledge. Unlike traditional reinforcement learning agents that rely on explicit environment modeling and manually designed reward signals, LLM-based agents leverage pretraining on large corpora to internalize commonsense, domain knowledge, and structured reasoning. This allows them to operate effectively in complex, open-ended environments with minimal task-specific engineering.
+
+
+Monte Carlo Tree Search (MCTS)~\cite{coulom2006MCTS} is a sample-based planning algorithm that incrementally builds a search tree by balancing exploration and exploitation. It has been widely used in sequential decision-making problems and is well-suited for integration with LLM-based agents, as it allows structured reasoning guided by model-generated priors.
+
+Formally, given the MDP setup, MCTS constructs a partial search tree rooted at the initial state $s_0$, iteratively performing four steps: \textit{selection}, which traverses the tree using an upper confidence bound to choose promising actions; \textit{expansion}, which adds new child nodes for unexplored actions; \textit{simulation} (or rollout), which estimates future rewards using a  policy; and \textit{backpropagation}, which updates statistics along the visited path. A detailed description of MCTS can be found in Appendix~\ref{appendix:mcts}.
+
+In this work, we adapt MCTS by incorporating LLMs to guide both the selection and rollout phases, replacing uniform or heuristic strategies with model-informed priors that focus exploration on semantically meaningful regions. Building on this foundation, we introduce \textbf{SYMPHONY}, a synergistic multi-agent planning framework designed to enhance both the efficiency and robustness of LLM-based decision-making. SYMPHONY extends classical MCTS through several key innovations: a heterogeneous ensemble of LLM agents with diverse inductive priors, a UCB-driven adaptive agent scheduling strategy, a pool-wise memory sharing protocol enabling decentralized reflective adaptation, and an entropy-aware utility modulation mechanism for confidence-calibrated evaluation. These components collectively promote diverse trajectory generation, context-aware coordination, coherent information propagation and reliable value estimation. The theoretical analysis and complete pseudocode of SYMPHONY can be found in Appendix \ref{alg:symphony}.
+
+
+
+\begin{figure}[h]
+		\centering
+		\includegraphics[width=\textwidth]{fig/method.png}
+		\caption{SYMPHONY System Overview.}
+\end{figure}
+
+
+
+
+\subsection{Heterogeneous Agent Pool}
+
+The heterogeneous agent pool in SYMPHONY is designed to enhance rollout diversity by incorporating multiple language models with varied inductive biases and reasoning behaviors. Unlike traditional MCTS approaches that rely on repeated queries to a single language model, SYMPHONY maintains a collection of distinct language models, each serving as an independent agent that contribute complementary perspectives during search. Formally, the agent pool is represented as \(\mathcal{M}^{(k)} = \left \{ M_1^{(k)}, \cdot\cdot\cdot, M_n^{(k)} \right \}  \), where $M_i$ is the $i^{th}$ agent based on a language model after the $k^{th}$ memory update.  
+
+These agents may be instantiated from either open-source models that are deployable on consumer-grade hardware, or large-scale cloud-based models accessible only via remote API.  Different agents exhibit complementary strengths in reasoning depth, factual precision, abstraction ability, and stylistic preferences, which collectively enhance the system’s capacity to explore diverse trajectories in the search space.
+
+
+SYMPHONY employs a uniform  input-output interface for agents pool. More specifically, the input to the agent pool at the $t^{th}$ step is 
+$P_{\phi}(s_t, h_{t-1})$, where  $\phi \in \{\text{expansion}, \text{evaluation}, \text{reflection}\}$  is the function indicator of language models , $P_\phi$ is the corresponding prompt template, and $h_t$ is the interaction history \(h_{t-1}=(s_0,a_0,\cdot\cdot\cdot,s_{t-1},a_{t-1})\). This design choice facilitates modularity. New models can be added or removed without altering the core planning algorithm. It ensures compatibility with future advances in LLMs and facilitates efficient reuse of available computational resources under different deployment settings. Prompts for each stage can be found in case studies (Appendix \ref{appendix:case}). 
+
+% While differing in architecture and training background, all agents conform to a unified interface, abstracting away model-specific details and allowing SYMPHONY to invoke them interchangeably. 
+% This design choice facilitates modularity. New models can be added or removed without altering the core planning algorithm. It ensures compatibility with future advances in LLMs and facilitates efficient reuse of available computational resources under different deployment settings. 
+%  More specifically, the input to the agent pool at the $t^{th}$ step is, 
+% \begin{equation}
+%     Prompt = P_{\phi}(s_t, h_{t-1})
+% \end{equation}
+% where  $\phi \in \{\text{expansion}, \text{evaluation}\}$ is the stage indicator of MCTS, $P_\phi$ is the corresponding prompt template, and $h_t$ is the interaction history   \(h_{t-1}=(s_0,a_0,\cdot\cdot\cdot,s_{t-1},a_{t-1})\).
+
+
+
+% By decoupling planning logic from model-specific implementations and enforcing a uniform input-output interface, SYMPHONY transforms diverse LLMs into interoperable planning components. This enables ensemble-style exploration without compromising architectural generality or extensibility, and forms the basis for the adaptive coordination and confidence scoring strategies introduced in subsequent sections.
+
+
+\subsection{Agent Scheduling}
+To operationalize the functional heterogeneity of the agent pool, SYMPHONY implements an adaptive dispatch mechanism grounded in the Upper Confidence Bound (UCB) principle, formulating agent selection at each MCTS rollout step as a structured multi-armed bandit problem. Rather than relying on static sampling heuristics or fixed priority weights, the framework dynamically calibrates agent choice based on  performance statistics, enabling context-sensitive allocation of reasoning capacity.
+
+Formally, for each agent $M_i^{(k)} \in \mathcal{M}^{(k)}$, the scheduler maintains a cumulative utility estimate $\bar{Q}(M^{(k)}_i)$ reflecting empirical rollout effectiveness, Let $S_{M_i^{(k)}}$ denotes the set of nodes generated by agent $M^{(k)}_i$, $S_{M_i^{(k)}} =  \{ s_{t+1}  \sim  \mathcal{T}(s_t, M_i^{(k)} (s_t, h_{t-1}) )  \} $. We record the total invocation count for agent $M^{(k)}_i$ as $N_i^{(k)}$, Similarly, the cumulative average score for agent $M^{(k)}_i$ is defined as $\bar{Q}(M^{(k)}_i) = \ { \sum_{s_t \in S_{M_i^{(k)}}}}R(s_{t}) / |S_{M_i^{(k)}}| $. The selection priority at a search node $s_t$ is governed by the canonical UCB expression:
+
+\begin{equation}\label{eq:ucb}
+\mathrm{UCB}(M_i^{(k)}) = \bar{Q}(M_i^{(k)}) + \alpha \cdot \sqrt{\frac{\ln N^{\mathcal{M}^{(k)}}_{total}}{N(M^{(k)}_i) + 1}}
+\end{equation}
+
+Here $\alpha$ denotes an exploration–exploitation trade-off hyperparameter, 
+$N^{\mathcal{M}^{(k)}}_{total}= \ {\textstyle \sum_{j=1}^n}N(M^{(k)}_j)$ represents the total number of scheduling decisions made thus far, and the denominator smoothing term ensures initialization-phase optimism. This formulation favors agents that exhibit either superior historical returns or low invocation frequency, thereby enabling simultaneous exploitation of high-confidence models and exploration of underutilized reasoning modes.
+
+Crucially, this scheduling mechanism is not an isolated module but is tightly interwoven with the recursive structure of MCTS, encompassing action generation and reflective evaluation. Following UCT-guided node traversal, a  frontier node $s_t$ is expanded by dispatching an $M_i^{(k)} \in \mathcal{M}^{(k)}$
+selected via Equation~\ref{eq:ucb}, which is queried using the  expansion prompt:
+
+\begin{equation}
+a_t = M_i^{(k)}(P_{\text{expansion}}(s_t, h_{t-1}))
+\end{equation}
+
+where $h_{t-1}$ encodes the accumulated interaction trace. The returned actions populate the search frontier with semantically diverse and structurally varied hypotheses.
+
+The agent scheduling mechanism is also used in creating pool-wise reflection memory and node evaluation with EMCS, which will be detailed in the subsequent subsections. 
+
+We further establish, from a theoretical perspective, that sampling agents from the ensemble with non-zero probabilities leads to a strictly lower expected error than deterministically selecting a single agent. The detailed proof is provided in Appendix~\ref{appendix:proofs}.
+
+% These candidate actions subsequently trigger a reflective evaluation cascade, wherein agents perform parallelized, self-consistent analyses of the current search state—assessing logical coherence, goal alignment, and strategic deviation. Their assessments are subsequently fused via the Entropy-Modulated Confidence Scoring (EMCS) mechanism (Section 4.4), producing a calibrated utility landscape that prioritizes consensus-grounded hypotheses while suppressing incoherent or speculative rollouts.
+
+% Furthermore, in the event of terminal failure—where the search fails to reach a successful outcome, the system reengages the scheduling loop for post hoc reflection. The entire trajectory is abstracted into a natural language diagnostic, which is broadcast into the shared memory of the agent pool to inform future behavior via decentralized prompt adaptation and internal alignment tuning.
+
+% Through this tightly integrated scheduling framework, SYMPHONY transcends naive ensemble querying and instead realizes an orchestrated reasoning substrate: one that continuously aligns agent dispatch with contextual task demands and emergent search signals. This not only maximizes epistemic coverage during exploration but also endows the system with the capacity for iterative self-correction, enabling robust operation in high-stakes, dynamically evolving decision environments.
+
+
+
+\subsection{Pool-wise Memory Sharing}
+To support continual adaptation without parameter updates, SYMPHONY introduces a pool-wise memory sharing mechanism based on decentralized reflection with natural language. Rather than relying on explicit retraining, agents update their behavior by integrating peer-generated reflections into prompt-level memory.
+
+When a trajectory terminates unsuccessfully, $\tau_{\mathrm{fail}} = (s_0, a_0, \dots, s_T)$, a UCB-selected agent $M_i^{(k)}$
+generates a structured reflection $\mathcal{R}^{k}_i$ summarizing the failure. This reflection is broadcast to the entire agent pool and treated as a shared memory block. As reflections accumulate from different agents and episodes, they form a diverse collective memory that enhances generalization and coordination.
+
+To manage memory constraints and maintain efficiency, each agent retains a fixed-size buffer updated via a FIFO policy. Reflections are incorporated through prompt-level memory updates:
+\begin{equation}
+\mathcal{M}^{(k+1)} = \text{Update}(\mathcal{M}^{(k)}, \mathcal{R}^k), \mathcal{R}^k = M_i^{(k)}(P_{\text{reflection}}(s_t, h_{t-1})) 
+\end{equation}
+This update mechanism enables behavioral adjustment without modifying model parameters, supporting lightweight and scalable adaptation across heterogeneous agents.
+
+
+
+% To enable continual adaptation across heterogeneous agents without explicit parameter sharing or retraining, SYMPHONY employs a pool-wise memory sharing mechanism grounded in decentralized natural language reflection. This mechanism supports distributed behavioral adjustment by allowing agents to integrate and respond to peer-generated reflections through prompt-level updates, rather than through weight modification.
+
+% When a planning trajectory terminates unsuccessfully, denoted as $\tau_{\mathrm{fail}} = (s_0, a_0, \dots, s_T)$, the system invokes the agent scheduling algorithm (E.q. \ref{eq:ucb}) to assign a reflective role to one agent from the pool. The selected agent produces a structured natural language reflection $\mathcal{R}^{k}_i$ that captures critical reasoning failures, such as misaligned strategies, overlooked checkpoints, or incoherent decision paths.
+
+% The resulting reflection is treated as a memory block and disseminated to the entire agent pool. As these reflections originate from diverse agents and tasks, they gradually accumulate into a heterogeneous repository of shared experiences, forming a collective memory that encodes varied reasoning patterns. This shared memory enhances the pool's overall adaptability by exposing agents to perspectives beyond their own decision traces.
+
+% To ensure inference efficiency and bounded memory usage, each agent maintains a fixed-size buffer governed by a first-in, first-out (FIFO) policy, retaining only the most recent reflective updates. After every reflection, agents incorporate new shared reflections into their internal memory state via prompt-level integration:
+% \begin{equation}
+% \mathcal{M}_j^{(k+1)} = \text{Update}(\mathcal{M}_j^{(k)}, \mathcal{R}^k)
+% \end{equation}
+% Here, $\mathcal{M}^{(k)}_j$ denotes agent $M_j$’s memory at iteration $k$, typically instantiated as an editable prompt template or cached instruction context. The $\text{Update}(\cdot)$ function modifies this memory without altering the model’s parameters, allowing behavioral modulation even in closed-weight or API-based LLMs.
+
+% Through this decentralized reflection process, SYMPHONY enables agents to co-evolve over time via shared linguistic feedback, fostering implicit coordination and continual improvement without centralized training or synchronization.
+
+
+
+% To enable continual improvement across heterogeneous agents without explicit parameter sharing or retraining, SYMPHONY introduces a pool-wise memory sharing mechanism grounded in collective natural language reflection. Rather than treating post-hoc reasoning as an isolated agent-specific operation, the framework aggregates reflective signals at the agent-pool level and disseminates them as shared memory updates, thereby enabling distributed behavioral adaptation. This design enables implicit collective reflection to emerge organically: although each agent contributes only locally and episodically, their aggregated reflective outputs gradually construct a shared global memory structure across the pool.
+
+% Concretely, upon termination of an unsuccessful trajectory \(\tau_{fail}=(s_0,a_0,\cdot\cdot\cdot,s_T)\), a UCB-selected agent \(s_T\in\mathcal{T}_{\mathrm{fail}}\) generates a structured natural language reflection \(\mathcal{R}^{k}_i\) encapsulating failure causes, misaligned reasoning paths, or overlooked decision checkpoints. This reflection is treated as a memory block and is immediately broadcast to the full agent pool. Each agent $M_j$ then independently incorporates this shared reflection into its own internal memory state via a prompt-level update:
+
+
+
+% \begin{equation}
+% \mathcal{M}_j^{(k+1)} = \text{Update}(\mathcal{M}_j^{(k)}, \mathcal{R}^k)
+% \end{equation}
+
+% Here, 
+% $\mathcal{M}^{(k)}_j$ denotes agent $M_j$’s reflective memory at planning iteration $k$, typically operationalized as a modifiable prompt template or embedded instruction cache. The $\text{Update}(\cdot)$ function performs localized memory editing without altering model parameters, enabling behavior modulation even for closed-weight or remotely hosted models.
+
+% Over successive rollouts, this process results in an emergent distributed memory space: reflections from temporally distinct agents accumulate as shared artifacts, which are selectively absorbed and recontextualized by their peers. Unlike centralized gradient-based learning, this memory sharing framework fosters loose coupling between agents while preserving a continual, low-friction channel for mutual adaptation. Through this mechanism, SYMPHONY instantiates a form of decentralized cognitive coordination, in which reasoning improvements propagate across the ensemble not through weight updates, but through reflective linguistic traces embedded in memory.
+
+
+\subsection{Entropy-Modulated Node Evaluation}
+To improve value estimation during search, SYMPHONY introduces an entropy-modulated node evaluation strategy that adjusts utility scores based on agent confidence. Upon expanding a new node $s_t$, a scheduled agent $M_i^{(k)} \in \mathcal{M}^{(k)}$ performs an internal evaluation, producing a value estimate $Z(s_t) \in [0,1]$ and a confidence score $C(s_t) \in (0,1)$:
+\begin{equation}
+    Z(s_{t}), C(s_{t}) = M_i(P_{\text{evaluation}}(s_{t}, h_{t-1}))
+\end{equation}
+
+To integrate these outputs, SYMPHONY employs Entropy-Modulated Confidence Scoring (EMCS), which penalizes uncertain predictions by down-weighting value estimates using the entropy of a Bernoulli distribution. Here, the confidence score $C(s_t)$ is interpreted as the success probability of a Bernoulli variable: the entropy is maximal at $C(s_t)=0.5$, indicating maximum uncertainty, and approaches zero as $C(s_t)\rightarrow 0$ or $C(s_t)\rightarrow 1$, reflecting high confidence.
+\begin{equation}\label{eq:emcs}
+     R(s_{t}) = Z(s_t) \cdot (1 - E(s_t))
+\end{equation}
+where $E(s_t) = -C(s_t)\ln C(s_t) - (1 - C(s_t))\ln(1 - C(s_t))$.
+
+This formulation preserves confident evaluations while suppressing uncertain ones, ensuring that nodes with ambiguous outcomes have reduced influence. Compared to fixed heuristics, EMCS offers uncertainty-aware, real-time modulation with minimal overhead, leading to more stable and reliable planning behavior within the MCTS loop.
+
+
+
+% In addition to improving rollout diversity and coordination, SYMPHONY incorporates an entropy-modulated node evaluation strategy to better assess the value of each candidate node. 
+
+% Whenever a new node \(s_t\)  is expanded, SYMPHONY triggers real-time evaluation, wherein a selected agent \(M_i^{(k)} \in \mathcal{M}^{(k)} \) evaluates the state based on internal priors and reasoning heuristics. 
+% Each agent produces a value estimate 
+% \(V_s \in [0,1]\), representing its assessment of the downstream utility of the node, along with a confidence score 
+% \(C_s \in [0,1]\) reflecting its epistemic certainty.
+% That is, 
+% \begin{equation}
+%     Z(s_{t+1}),C(s_{t+1}) = M_i(P_{\text{evaluation}}(s_{t+1}, h_{t}))
+% \end{equation}
+
+% To integrate these outputs into the search process, we introduce Entropy-Modulated Confidence Scoring (EMCS), which penalizes uncertain estimates by adjusting value scores based on the information entropy of model confidence. EMCS applies a modulation function based on the entropy of a Bernoulli distribution defined by the confidence. That is 
+% \begin{equation}\label{eq:emcs}
+%      R(s_{t+1}) = Z(s_t) \cdot (1-E(s_t)) 
+% \end{equation}
+% where $E(s_t)=-c(s_t)\ln c(s_t)-(1-c(s_t))\ln(1-c(s_t))$. 
+
+
+% This formulation ensures that when the agent is highly confident ($C\rightarrow0$,$C\rightarrow1$),the entropy approaches zero and the value estimate is preserved. Conversely, when $C=0.5$, the entropy reaches its maximum $\ln2\approx0.693$, and the utility score is significantly suppressed. This entropy-based modulation effectively captures the model's internal uncertainty: the more uncertain the prediction, the less influence its value estimate has on the planning decision. Compared to traditional heuristics, EMCS better avoids over-reliance on uncertain high-value predictions and ensures stable pruning of unreliable branches. Its symmetric, convex form provides smooth, real-time adjustment with negligible computational cost, making it highly suitable for integration into the MCTS loop.

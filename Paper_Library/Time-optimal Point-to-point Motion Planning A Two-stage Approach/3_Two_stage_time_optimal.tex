@@ -1,0 +1,75 @@
+\section{Two-stage Time-optimal OCP}\label{Sec_III}
+We propose a two-stage approach to formulate the time-optimal OCP, which combines the advantages of the time scaling approach and the exponential weighting approach, as follows:
+\begin{equation}
+    \begin{alignedat}{3}
+        \minimize_{\substack{\{s_1\}_{n=0}^{N_1}, \{u_1\}_{n=0}^{N_1-1},\\\{s_2\}_{n=0}^{N_2}, \{u_2\}_{n=0}^{N_2-1},\\T_2}} &\: w_1\sum_{n=0}^{N_1-1}\gamma^n\|s_{1,n}-s_{\text{tf}}\|_1&+w_2T_2 \\
+        \text{subject to }\:s_{1,0}&=s_{\text{t0}}\\
+        \:s_{1,n+1}&=f_{d}(s_{1,n}, u_{1,n}),&\:\text{for } n\in&[0,N_1-1]\\
+        \:h(s_{1,n},u_{1,n})&\leq0,&\:\text{for } n\in&[0,N_1-1]\\
+        \:s_{1,N_1}&=s_{2,0}\\
+        \:s_{2,n+1}&=f_{T}(s_{2,n}, u_{2,n},\frac{T_2}{N_2}),&\:\text{for } n\in&[0,N_2-1]\\
+        \:h(s_{2,n},u_{2,n})&\leq0,&\:\text{for } n\in&[0,N_2-1]\\
+        \:s_{2,N_2}&=s_{\text{tf}},
+        \label{ocp: two_stage}
+    \end{alignedat}
+\end{equation}
+where $N_1$ and $N_2$ are fixed horizon lengths of the two stages. 
+$\{s_1\}_{n=0}^{N_1}$ and $\{u_1\}_{n=0}^{N_1-1}$ denote the state and control input sequences of stage 1, respectively, in which the discrete-time model (\ref{eq: discrete_time}) with the fixed sampling interval $t_s$ is used.
+$\{s_2\}_{n=0}^{N_2}$ and $\{u_2\}_{n=0}^{N_2-1}$ denote the state and control input sequences of stage 2, respectively, in which the discrete-time representation $s_{2,n+1}=f_{T}(s_{2,n}, u_{2,n}, T_2/N_2)$ of the time-scaled system (\ref{eq: continuous_system_scaled}) is used and $T_2$ denotes the total time of stage 2.
+The problem (\ref{ocp: two_stage}) constrains the first state of the stage 1 $s_{1,0}$ to the initial state $s_{\text{t0}}$, and the last state of the stage 2 $s_{2, N_2}$ to the terminal state $s_{\text{tf}}$. 
+The last state of stage 1 is stitched to the first state of stage 2 by the equality constraint $s_{1, N_1} = s_{2,0}$.
+
+The objective function in the problem (\ref{ocp: two_stage}) comprises two components, stemming from stages 1 and 2, respectively. 
+The weighting factors, $w_1$ and $w_2$, are used to signify the relative importance of the objectives associated with the respective stages.
+Note that the total time required to transition from the initial state $s_{\text{t0}}$ to the desired terminal state $s_{\text{tf}}$ in problem (\ref{ocp: two_stage}) is given by $T=N_1t_s + T_2$ when $T_2$ is positive, in other words, the total time for stage 1 remains fixed.
+The optimal value of the total time $T_2$ for stage 2 approaches and becomes zero when the system is in close proximity to the desired terminal state.
+Therefore, two phases should be considered when choosing the weighting factors.
+In the first or initial phase, when $T_2$ remains positive, we choose $w_1$, $w_2$ such that $w_2T_2$ is much larger than $w_1\sum_{n=0}^{N_1-1}\gamma^n\|s_{1,n}-s_{\text{tf}}\|_1$ to prioritize stage 2 dominance in time optimality.
+In the second or end phase, as $T_2$ approaches and becomes zero, $w_1$ and $w_2$ are updated to align the problem (\ref{ocp: two_stage}) with the problem (\ref{ocp: exponential_weight}), emphasizing stage 1 with its objective $w_1\sum_{n=0}^{N_1-1}\gamma^n\|s_{1,n}-s_{\text{tf}}\|_1$ dominance in time optimality.
+We will discuss this in detail in the next subsection in the context of the NMPC implementation.
+\subsection{NMPC Update Implementation}
+In a classical implementation of NMPC, the OCP is solved in between every two control steps.
+The first optimal control solution is applied to the system at the time instance $t_0$. 
+It will then proceed to the next time instance, i.e., $t_0+t_s$, and solve the OCP again, incorporating an updated initial state and potential updated stage constraints.
+This repetitive cycle continues until the system reaches the desired terminal state $s_{\text{tf}}$.
+In this scenario, it is reasonable to set $N_1$ equal to 1.
+However, in cases where the complex nonlinear system encounters complex stage constraints, such as collision avoidance constraints, 
+the NMPC solution time may exceed the control sampling time $t_s$. 
+The widely adopted Real-Time Iterations (RTI) technique, introduced by \cite{RTI}, aims to ensure high update rates by implementing only the first iteration of the OCP solution. 
+However, this introduces potential safety risks, as it becomes impossible to guarantee constraint satisfaction.
+
+A modified implementation of NMPC updates — Asynchronous NMPC (ASAP-MPC) (\cite{ASAP-MPC}) — was proposed recently to deal with the computational delays, i.e., the NMPC solution time takes more than one control sampling time $t_s$, and allows for full convergence of the optimization problem.
+The ASAP-MPC strategy selects a future state $s(t_n)$ at the time instance $t_n=t_0+nt_s$ from the current solution as the initial state for the next replanning with $nt_s$ the (estimated) time required to find the OCP solution for this replanning, 
+and assumes that the actual state $\hat{s}(t_n)$ at the time instance $t_n$ in the future corresponds to the predicted future state $s(t_n)$. 
+This last requirement requires a (low-level) stiff tracking controller to ensure that the actual state tracks the predicted future state, i.e., $\hat{s}(t_n)\approx s(t_n)$.
+Then, this predicted future state serves as the best estimate of the system's state after obtaining the replanning solution, seamlessly stitching the new solution to the previous one at this point.
+
+
+\begin{algorithm2e}[t]
+  \KwInput{$s_{\text{t0}}$, $s_{\text{tf}}, N_1, N_2, t_s, \gamma, w_1, w_2$}
+  $\{s_1\}_{n=0}^{N_1}, \{u_1\}_{n=0}^{N_1-1}, T_2 \gets$ solve the problem (\ref{ocp: two_stage})\;
+  $n_{\text{update}} = N_1$\;
+  $s_{\text{t0}} \gets s_{1,n_{\text{update}}}$\;
+  \While{$\mathrm{abs}(s_{\mathrm{t0}} - s_{\mathrm{tf}})\geq1e-6$}{
+    \If{$T_2 - n_{\mathrm{update}}t_s \leq 0$}{
+      Update $w_1, w_2$\;
+    }
+  $\{s_1\}_{n=0}^{N_1}, \{u_1\}_{n=0}^{N_1-1}, T_2 \gets$ solve the problem (\ref{ocp: two_stage})\;
+  get the computation time $t_{\mathrm{comp}}$ of solving the problem (\ref{ocp: two_stage})\;
+  $n_{\text{update}} = \text{ceil}(t_{\mathrm{comp}}/t_s)$\;
+  $s_{\text{t0}} \gets s_{1,n_{\text{update}}}$\;
+  }
+  \caption{Two-stage time-optimal motion planning solved repeatedly in the ASAP-MPC formulation}
+  \label{algo1}
+\end{algorithm2e}
+Here, we employ the ASAP-MPC update strategy to repeatedly solve the problem (\ref{ocp: two_stage}) for transitioning the system from the initial state $s_{\text{t0}}$ to the desired terminal state $s_{\text{tf}}$.
+The combination of both is summarized in the Algorithm \ref{algo1}.
+In addition to $s_{\mathrm{t0}}$ and $s_{\mathrm{tf}}$, the algorithm takes fixed values for $N_1$, $N_2$, $t_s$, $\gamma$, and assigns weighting factors $w_1$ and $w_2$ as part of its input.
+This initial choice of $w_1$ and $w_2$ is to signify that stage 2 dominates time-optimality in the initial phase.
+It solves the problem (\ref{ocp: two_stage}) for the first time. 
+Afterward, it chooses the last state of stage 1 $s_{1, N_1}$ as the new initial state $s_{\mathrm{t0}}$ for replanning. 
+Assuming accurate trajectory tracking, this selection aligns with the ASAP-MPC update strategy.
+More specifically, the total time $N_1t_s$ for stage 1 is designed to represent the worst-case computation time required to solve the problem (\ref{ocp: two_stage}) so that $s_{1, N_1}$ is a just-in-time selection.
+In the subsequent solves, the computation time $t_{\mathrm{comp}}$ is recorded, and the update index $n_{\mathrm{update}}\in[1, N_1]$ is computed as the smallest integer equal to or greater than $t_{\mathrm{comp}}/t_s$ for updating $s_{\text{t0}}$.
+The condition $T_2 - n_{\mathrm{update}}t_s \leq 0$ indicates that the total time for the next replanning will be equal to or smaller than the trajectory time of stage 1. 
+Therefore, it updates the values of $w_1$ and $w_2$ to signify that stage 1 dominates time-optimality in the end phase (stage 2 may be deemed to have ceased to exist) and stabilizes the system to the desired terminal state $s_{\mathrm{tf}}$.

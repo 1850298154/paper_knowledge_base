@@ -1,0 +1,115 @@
+%!TEX root = main.tex
+
+\section{Synchronization-Preserving Deadlocks and their Prediction}
+\seclabel{syncp}
+Having established the intractability of general deadlock prediction in \secref{lower-bounds}, we now define the subclass of predictable deadlocks called synchronization-preserving (\emph{sync-preserving}, for short) in \secref{syncp-def}.
+The key benefit of sync-preserving deadlocks is that, unlike arbitrary deadlocks, they can be detected efficiently; we develop our algorithm $\SyncPDOffline$ for this task in Sections 4.2-4.5.
+Our experiments later indicate that most predictable deadlocks are actually sync-preserving, hence the benefit of fast detection comes at the cost of little-to-no precision loss in practice.
+%We start with a brief overview.
+
+\myparagraph{Overview of the algorithm}{
+	There are several insights behind our algorithm.
+	First, given a deadlock pattern, one can verify 
+	if it is a sync-preserving deadlock in linear time (\secref{verify-patterns});
+	this is based on our sound and complete characterization of sync-preserving deadlocks (\secref{characterize-patterns}).
+%	This is in sharp contrast with prior works
+%such as~\cite{Cai2021,Kalhauge2018} that resort to
+%SMT-solving or expensive (i.e., of large polynomial) graph-based analyses. 
+	Next, instead of verifying single deadlock patterns one-by-one, 
+	we consider \emph{abstract deadlock patterns},
+	which are essentially collections of deadlock patterns
+	that share the same signature;
+	the formal definition is given in \secref{verify-abstract-patterns}.
+	We show that our basic algorithm can
+	be extended to \emph{incrementally}
+	verify \emph{all} the concretizations of an abstract deadlock pattern in linear time (\secref{verify-abstract-patterns}), in a single pass (\lemref{abstract-pattern-linear-time}).
+	%Finally, we extend this algorithm to all deadlock patterns in the trace,
+	%by first enumerating all the abstract deadlock patterns by constructing an \emph{abstract lock graph},
+	%and then verifying each of them using the algorithm thus far (\secref{enumerate-patterns}).
+	Finally, we feed this algorithm all the abstract deadlock patterns of the input trace,
+    by constructing an \emph{abstract lock graph} and enumerating cycles in it (\secref{enumerate-patterns}).
+	
+	% We next discuss these in detail \ucomment{and conclude with a summary of our algorithm in section 4.6}.
+}
+
+\subsection{Synchronization-Preserving Deadlocks}
+\seclabel{syncp-def}
+
+Our notion of sync-preserving deadlocks builds on the recently introduced concept of sync-preserving correct reorderings~\cite{Mathur2021}.
+
+\begin{definition}[Sync-preserving Correct Reordering]
+\deflabel{syncp-correct-reordering}
+A correct reordering $\rho$ of a trace $\tr$ is
+\emph{sync-preserving} if for every lock $\lk \in \locks{\rho}$
+and every two acquire events $e_1 \neq e_2 \in \events{\rho}$
+with $\OpOf{e_1} = \OpOf{e_2} = \acq(\lk)$, the order of $e_1$ and
+$e_2$ is the same in $\tr$ and $\rho$, i.e., 
+$e_1 \trord{\rho} e_2$ iff $e_1 \trord{\tr} e_2$.
+\end{definition} 
+A sync-preserving correct reordering
+preserves the order of those critical sections (on the same lock) that actually appear in 
+the reordering, but allows 
+intermediate critical sections to be dropped completely.
+% 
+% Since a correct reordering $\pi$ of $\tr$ may only contain
+% a prefix of events in some thread $t$, some critical section of $\tr$
+% in thread $t$ may not be present in $\pi$.
+% In particular, sync-preserving correct reorderings allow intermediate 
+% critical sections (of the same lock) to be dropped, 
+% as long as the order on the remaining ones is preserved.
+This style of reasoning is more permissive than
+the space of reorderings %(and their prefixes) 
+induced by the Happens-Before partial order~\cite{Lamport78},
+that implicitly enforces that all intermediate critical sections on a lock
+be present.
+Sync-preserving deadlocks can now be defined naturally.
+\begin{definition}[Sync-preserving Deadlocks]
+\deflabel{syncp-deadlock}
+Let $\tr$ be a trace and $D = \pattern{e_0, e_1, \ldots, e_{k-1}}$
+be a deadlock pattern.
+We say that $D$ is a sync-preserving deadlock of $\tr$
+if there is a sync-preserving correct reordering $\rho$ of $\tr$
+such that each of $e_0, \ldots, e_{k-1}$ is $\tr$-enabled in $\rho$.
+\end{definition}
+
+\input{figures/fig_syncp_example}
+
+\begin{example}
+\exlabel{sp-deadlocks}
+Consider the trace $\tr_2$ in \figref{motivating-dl}.
+The deadlock pattern $D = \pattern{e_4, e_{18}}$ is a sync-preserving deadlock, witnessed by the sync-preserving correct reordering
+$\rho_3 = e_1e_2e_3 e_8 e_9 \,e_{12}..e_{15}\,e_{16} e_{17}$.
+Now consider the trace $\tr_3$ from \figref{syncp_example}
+and the deadlock pattern $D_5 = \pattern{e_{29}, e_{16}}$.
+This is a predictable deadlock, witnessed by the correct reordering
+$\rho_5 = e_1..e_7e_8..e_{11}e_{12}..e_{15}\,e_{28}$.
+Observe that $\rho_5$ is a sync-preserving reordering, which makes $D_5$ a sync-preserving deadlock.
+%\hunkar{
+A key aspect in $\rho_5$ is that the events $e_{22}..e_{27}$ are dropped, as otherwise $e_{16}$ cannot be $\sigma_3$-enabled.
+%}
+%Another reordering that witnesses the deadlock $D_5$ is
+%$\rho_5 = e_8\,e_1..e_3\,e_9\,e_4..e_7\,e_{12}e_{10}\,e_{11}e_{28}\,e_{13}..e_{15}$.
+%This reordering $\rho_5$ inverts the order between some events,
+%but is sync-preserving because
+%it preserves the order between all pairs of critical sections
+%on the same lock. % is the same as in $\tr_2$.
+% Hence, $\rho_5$ is also a sync-preserving correct reordering.
+A similar reasoning applies for the deadlock pattern $D_6$, and it is also a sync-preserving deadlock.
+The other deadlock patterns ($D_1, D_2, D_3, D_4$)
+are not predictable deadlocks.
+Intuitively, the reason for this is that realizing these deadlock patterns require executing the read event $e_{14}$, which then enforces to execute the events $e_8..e_{11}$ and $e_1..e_6$.
+This prevents the deadlocks from becoming realizable as the events 
+$e_2$ or $e_4$ that appear in these deadlock patterns are no longer $\sigma_3$-enabled.
+This point is detailed in \exref{syncp-ex}.
+\end{example}
+
+
+
+
+
+
+\input{check-syncp}
+\input{verifying-pattern}
+\input{verifying-abstract-patterns}
+\input{enumerate-patterns}
+%\input{offline-summary}

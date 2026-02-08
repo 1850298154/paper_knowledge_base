@@ -1,0 +1,264 @@
+\section{Correctness under Weak Consistency}
+\label{sec:correct}
+
+\Cref{alg:detector} correctly and precisely detects all deadlocks
+under our weak memory consistency model with some additional specific
+consistency requirements on certain accesses. We define these
+requirements, show how to meet them in each of the TSO, Java, and C++
+memory models, and then prove the algorithm raises an alarm exactly
+when there is a deadlock.
+
+\subsection{Requirements}
+
+In order to prove correctness, we require the following additional
+memory consistency.
+%
+\begin{enumerate}
+\item There is a total order, $<$, over all instances of the write in
+  \cref{alg:detector} line~\ref{ln:detector:enter}, across all memory
+  locations. Let $w_1 < w_2$. Any write preceding and including $w_1$
+  in h.b.~order is visible to any read following $w_2$ in h.b.~order.
+  %
+  \label{rule:seq}
+
+\item The consistency of any $\fldowner$ field is expected to
+  follow from release-acquire semantics for any $\fldwaitingOn$
+  field.
+  %
+  Specifically, let $w_1$ be an \cref{alg:owners}
+  line~\ref{ln:owners:new:A} or line~\ref{ln:owners:async:C} write to
+  an $\fldowner$ field, let $w_2$ be an \cref{alg:detector}
+  line~\ref{ln:detector:enter} write to a $\fldwaitingOn$ field, let
+  $r_2$ be an \cref{alg:detector} line~\ref{ln:detector:waitingOn}
+  read, and let $r_1$ be an \cref{alg:detector}
+  line~\ref{ln:detector:changed} read.
+  %
+  Suppose $w_1,r_1$ refer to the same location, as do $w_2,r_2$.
+  %
+  If $w_1$ happens-before $w_2$, if $w_2$ is visible to $r_2$, and if
+  $r_2$ happens-before $r_1$, then $w_1$ is visible to $r_1$.
+  %
+  \label{rule:acq}
+
+\item The write in \cref{alg:detector} line~\ref{ln:detector:final}
+  must not become visible until the fulfillment of $p_0$ is visible
+  (\cref{alg:owners} line~\ref{ln:owners:set:B}) or it is determined
+  that an exception should be raised (\cref{alg:detector}
+  line~\ref{ln:detector:fail}).
+  %
+  \label{rule:rel}
+\end{enumerate}
+
+These three requirements are readily attained in TSO, Java, and C++ as
+follows.
+%
+\begin{itemize}
+\item Under TSO, a memory fence is needed in \cref{alg:detector}
+  line~\ref{ln:detector:fence} to achieve requirement~\ref{rule:seq}
+  by ordering line~\ref{ln:detector:waitingOn} after
+  line~\ref{ln:detector:enter} and sequentializing all instances of
+  line~\ref{ln:detector:fence} with each other.
+  %
+  TSO naturally achieves requirement~\ref{rule:acq} by respecting the
+  local store order, as well as requirement~\ref{rule:rel} by not
+  allowing the line~\ref{ln:detector:final} write to become visible
+  early.
+  %
+  Note that the loop contains no fences.
+
+\item Under the Java memory model, it suffices to mark the two fields,
+  $\fldowner$ and $\fldwaitingOn$, as volatile to satisfy
+  all three requirements.
+  %
+  This eliminates all write-read data races.
+  %
+  Remember that there are no write-write races (see
+  \cref{lem:writeorder}).
+  %
+  In the absence of any races on these two fields, the Java memory
+  model guarantees sequential consistency with respect to these
+  fields.
+
+\item In C++ both of the fields must be \texttt{std::atomic} to
+  eliminate data races, but this alone is insufficient.
+  %
+  \Cref{alg:detector} line~\ref{ln:detector:enter} must be tagged as a
+  \texttt{std::memory\_order\_seq\_cst} access to achieve
+  requirement~\ref{rule:seq}, establishing a total order over these
+  writes and subsuming release consistency.
+  %
+  Line~\ref{ln:detector:waitingOn} must then be tagged
+  \texttt{std::memory\_order\_acquire} to achieve
+  requirement~\ref{rule:acq}.
+  %
+  And finally, line~\ref{ln:detector:final} must be
+  \texttt{std::memory\_order\_release} to satisfy~\ref{rule:rel}.
+\end{itemize}
+
+\subsection{Correctness}
+
+Under the preceding consistency requirements, we can now prove
+important theoretical guarantees of correctness for our deadlock
+detector. Throughout, we consider an execution of a well-formed
+program (\cref{def:wf}).
+
+We first show that \cref{alg:detector} raises no false alarms.
+%
+\begin{theorem}
+  If task $t$ fails the assertion in line~\ref{ln:detector:fail}
+  during $\textsc{Get}(p)$, then a deadlock cycle exists, involving
+  $t$ and $p$.
+  %
+  \label{thm:precise}
+\end{theorem}
+\begin{proof}
+  We have $t_0 = t$ and $p_0 = p$.
+  %
+  If the execution had broken out of the while loop in
+  line~\ref{ln:detector:breakt},~\ref{ln:detector:breakp},
+  or~\ref{ln:detector:changed}, then the assertion would have
+  succeeded.
+  %
+  Therefore, it is the loop condition that fails.
+  %
+  Upon reaching line~\ref{ln:detector:inc} in each iteration, we have
+  found $p_i.\fldowner$ to be $t_{i+1}$ both before and after we found
+  $t_{i+1}.\fldwaitingOn$ to be $p_{i+1}$. Therefore, we know 1) that
+  at one time $t_{i+1}$ was the owner of $p_i$, and 2) that while
+  $t_{i+1}$ still observed itself to own $p_i$, $t_{i+1}$ had invoked
+  $\textsc{Get}(p_{i+1})$.
+  %
+  This follows from memory consistency requirement~\ref{rule:acq}.
+  %
+  At this point in the reasoning, we do not yet know if $t_{i+1}$
+  still the owner of $p_i$ or if $t_{i+1}$ is still awaiting
+  $p_{i+1}$.
+
+  When the loop
+  (lines~\ref{ln:detector:loop}--\ref{ln:detector:loopend}) terminates
+  with $t_{i+1} = t_0$, since $t_0$ is the current task, we deduce
+  that the final $t_{i+1}$, set by line~\ref{ln:detector:owner1}
+  or~\ref{ln:detector:owner2}, is the current owner of $p_i$.
+  %
+  For all $k$ modulo $i+1$, $t_k$ at one time concurrently observed
+  itself to be the owner of $p_{k-1}$ and was in a call to
+  $\textsc{Get}(p_k)$. This meets our definition of deadlock.
+\end{proof}
+
+The following series of lemmas builds to the theorem that
+\cref{alg:detector} detects every deadlock.
+
+\begin{definition}
+  In a deadlock cycle comprising tasks $T$, a \emph{$t^*$ task} is a
+  task in $T$ to which the line~\ref{ln:detector:enter} write by every
+  task in $T$ is visible.
+\end{definition}
+%
+\begin{lemma}
+  Every deadlock cycle has a $t^*$ task.
+  %
+  \label{lem:tstar}
+\end{lemma}
+\begin{proof}
+  Corollary to memory consistency requirement~\ref{rule:seq}.
+\end{proof}
+%
+A $t^*$ task, which need not be unique, should be thought of as the
+(or a) last task to enter the deadlock.
+
+\begin{lemma}
+  If a program execution exhibits a deadlock cycle comprising tasks
+  $T$ and promises $P$, when a $t^*$ task calls \textsc{Get} it
+  constructs a sequence $\{ t_i \}_i$ that is a subset of $T$ and a
+  sequence $\{ p_i \}_i$ that is a subset of $P$.
+  %
+  \label{lem:inTP}
+\end{lemma}
+\begin{proof}
+  We have $t_0 = t^* \in T$ and, by definition, $p_0 \in P$.
+  %
+  If the loop immediately terminates, then $t_1 = t_0 \in T$, and we
+  are done.
+  %
+  Otherwise, the values of $t_{i+1}$ and $p_{i+1}$ inductively depend
+  on $t_i$ and $p_i$.
+  %
+  By definition of deadlock, one of the tasks in $T$, call it
+  $o_{p_i}$, observes itself to be the owner of $p_i$. The most recent
+  write to $p_i.\fldowner$ (recall all the writes are ordered by
+  \cref{lem:writeorder}) occurred in program order before $o_{p_i}$'s
+  line~\ref{ln:detector:enter} write.
+  %
+  Therefore, memory consistency requirement~\ref{rule:seq} establishes
+  that $t^*$ must read $t_{i+1} = o_{p_i} \in T$ in
+  line~\ref{ln:detector:changed}.
+  %
+  By definition of $t^*$ and by memory consistency
+  requirement~\ref{rule:rel}, we see that
+  line~\ref{ln:detector:waitingOn} observes $t_{i+1}$'s
+  line~\ref{ln:detector:enter} write, not its
+  line~\ref{ln:detector:final} write. Thus, $p_{i+1} \in P$ by
+  definition of deadlock.
+\end{proof}
+
+\begin{lemma}
+  If a program execution exhibits a deadlock cycle comprising tasks
+  $T$, no $t^*$ task executes a diverging loop
+  (lines~\ref{ln:detector:loop}--\ref{ln:detector:loopend}) in its
+  call to \textsc{Get}.
+  %
+  \label{lem:terminate}
+\end{lemma}
+\begin{proof}
+  Suppose, during the call to \textsc{Get} by $t^*$, the loop does not
+  terminate. Thus $t_i \ne t_0$ for any $i > 0$.
+  %
+  But by \cref{lem:inTP}, the infinite sequence $\{ t_i \}_i$ is a
+  subset of $T$.
+  %
+  Therefore, $T$, in fact, exhibits a smaller cycle not involving
+  $t_0$, violating the minimality condition in the definition of
+  deadlock cycle.
+\end{proof}
+
+\begin{theorem}
+  If a program execution exhibits a deadlock cycle comprising tasks
+  $T$ and promises $P$, at least one task in $T$ fails the assertion
+  in \cref{alg:detector} line~\ref{ln:detector:fail}.
+  %
+  \label{thm:correct}
+\end{theorem}
+\begin{proof}
+  Suppose for the sake of contradiction that a deadlock cycle arises and
+  yet no assertion fails.
+  %
+  So every task $t \in T$ enters the \textsc{Get} procedure and either
+  blocks at line~\ref{ln:detector:return} on a promise in $P$ or
+  diverges in an infinite loop.
+
+  No task exits the loop by failing the loop condition,
+  $t_{i+1} \ne t_0$, since this would directly fail the assertion in
+  line~\ref{ln:detector:fail}.
+
+  For each invocation of \textsc{Get} by a $t^*$ task, the loop cannot
+  break in line~\ref{ln:detector:breakt} or
+  line~\ref{ln:detector:breakp} because \cref{lem:inTP} implies no
+  tasks or promises in the sequence are $\Null$.
+  %
+  If the loop breaks in line~\ref{ln:detector:changed}, then $t^*$ has
+  observed the owner of $p_i$ to change from one read to the
+  next. This is impossible: both reads observe the current owner,
+  $o_{p_i}$, by the same reasoning as in the proof of \cref{lem:inTP}.
+  %
+  Finally, the loop cannot diverge for $t^*$, by \cref{lem:terminate}.
+  %
+  Since there exists at least one $t^*$ task, by \cref{lem:tstar}, we
+  have a contradiction.
+\end{proof}
+
+\begin{corollary}[to \cref{thm:precise,thm:correct}]
+  \Cref{alg:detector} is precise and correct, guaranteeing the
+  existence of a deadlock when an alarm is raised and raising an alarm
+  upon every deadlock.
+\end{corollary}
+

@@ -1,0 +1,81 @@
+
+The quest for efficient acquisition and reconstruction mechanisms in Magnetic Resonance Imaging (MRI) has been ongoing since its invention in the 1970's. 
+This led to a few major breakthrough, which comprise the design of efficient pulse sequences \cite{bernstein2004handbook}, the use of parallel imaging \cite{roemer1990nmr,blaimer2004smash}, the theory and application of compressed sensing \cite{lustig2008compressed} and its recent improvements thanks to the progresses in learning and GPU computing \cite{knoll2020advancing}. While the first attempts to use neural networks in this field were primarily focused on the efficient design of reconstruction algorithms \cite{jacob2020computational}, some recent works began investigating the design of efficient sampling schemes or joint sampling/reconstruction schemes. The aim of this paper is to make progress in the numerical analysis of this nascent and challenging field.
+
+\subsection{Some sampling theory}\label{sec:sampling_theory}
+
+In a simplified way, an MRI scanner measures values of the Fourier transform of the image to reconstruct at different locations $(\xi_m)_{1\leq m \leq M}$ in the so-called k-space. 
+The locations $(\xi_m)$ are obtained by sampling a continuous trajectory defined through a gradient sequence. 
+The problem we tackle in this paper is: how to choose the points $(\xi_m)$ or the underlying trajectories in an efficient or optimal way?
+
+\paragraph{Shannon-Nyquist}
+This question was first addressed using Shannon-Nyquist theorem, which certifies that sampling the k-space on a sufficiently fine Euclidean grid provides exact reconstructions using linear reconstructors.
+This motivated the design of many trajectories, such as the ones in echo-planar imaging (EPI) \cite{schmitt2012echo}.
+Progresses on non-uniform sampling theory \cite{feichtinger1994theory} then provided guidelines to produce efficient sampling/reconstruction schemes for linear reconstructors. This theory is now mature for the reconstruction of bandlimited functions.
+In a nutshell, it advocates the use of a sampling set which covers the k-space sufficiently densely with well spread samples.
+
+\paragraph{Compressed sensing theory}
+Shannon-Nyquist theory requires sampling the k-space densely, resulting in long scanning times. 
+It was observed in the 1980's that subsampling the high frequencies using variable density radial patterns did not compromise the image quality too much \cite{ahn1986high,jackson1992twisting}.
+The first theoretical elements justifying this evidence were provided by the theory of compressed sensing, when using nonlinear reconstructors.
+This seminal theory is based on concepts such as the restricted isometry property (RIP) or the incoherence between the measurements \cite{candes2006robust,lustig2005faster}. 
+However it soon became evident that these concepts were not suited to the practice of MRI and a refined theory based on local coherence appeared in \cite{adcock2017breaking,boyer2019compressed}. 
+The main teaching is that a good sampling scheme for $\ell^1$-based reconstruction methods must have a variable density that depends on the sparsity basis and on the sparsity pattern of the images. 
+To the best of our knowledge, this theory is currently the one that provides the best explanation of the success of sub-sampling. 
+In particular, analytical expressions of the optimal densities \cite{adcockoracle} can be derived and fit relatively well with the best empirical ones.
+
+\paragraph{The main teachings}
+To date, there is still a significant discrepancy between the theory and practice of sampling in MRI. 
+A mix between theory and common sense however provides the following main insights. 
+A good sampling scheme should \cite{boyer2016generation}:
+\begin{itemize}
+	\item have a variable density, decaying with the distance to the center of the k-space,
+	\item have a sufficiently high density in the center to comply with the Shannon-Nyquist criterion, and sufficiently low to avoid dense clusters which would not bring additional information,
+	\item have a locally uniform coverage of the k-space. In particular, nearby samples are detrimental to the reconstruction since they are highly correlated and increase the condition number of partial Fourier matrices.
+\end{itemize}
+These considerations are all satisfied when using Poisson disk sampling with an adequate density \cite{vasanawala2011practical} for pointwise sampling. 
+They also led to the development of the Sparkling trajectories \cite{chauffert2017projection,lazarus2019sparkling}, which incorporate additional trajectory constraints in the design. 
+
+\paragraph{What can still be optimized?}
+Given the previous remarks, an important question remains open: how to choose the sampling density? 
+An axiomatic approach leads to choosing radial densities with a plateau (constant value) at the center. 
+The radial character ensures rotation invariance, which seems natural to image organs in arbitrary orientations. 
+The plateau enforces Nyquist rate at the center. 
+However, it may still be possible to improve the results for specific datasets.
+
+\subsection{Data-driven sampling schemes}
+
+The first attempts to learn a sampling density \cite{knoll2011adapted,zhang2014energy} were based on the average energy of the k-space coefficients on a collection of reference images. While this principle is valid for linear reconstructions, it is not supported by a theoretical background when using nonlinear reconstructors. Motivated by the recent breakthroughs of learning and deep learning, many authors recently proposed to learn either the reconstructor \rev{\cite{hammernik2018learning,korkmaz2022unsupervised,muckley2021results}}, the sampling pattern \cite{baldassarre2016learning,gozcu2018learning,zibetti2021fast,sherry2019learning}, or both \rev{\cite{jin2019self,bahadir2020deep,weiss2021pilot,aggarwal2020j,zibetti2022alternating,wang2022b}}. Data-driven optimization has emerged as a promising approach to tailor the sampling schemes with respect to the reconstructor and to the image structure.
+In \cite{baldassarre2016learning,gozcu2018learning,sherry2019learning,sanchez2020scalable,zibetti2021fast}, the authors look for an optimal subset of a fixed set of k-space positions. The initial algorithms are based on simple greedy approaches that generated a sampling pattern by iteratively selecting a discrete horizontal line that minimizes the residual error of the reconstructed image. This approach is limited to low dimensional sets of parallel lines. 
+Some efforts have been spent on finding better and more scalable solutions to this hard combinatorial problem using stochastic greedy algorithms \cite{sanchez2020scalable}, $\ell^1$-relaxation and bi-level programming \cite{sherry2019learning} or bias-accelerated subset selection \cite{zibetti2021fast}. This method is reported to provide results over 3D images and seems to have solved some of the scalability issues.
+
+To the best of our knowledge, the first work investigating the joint optimization of a sampling pattern and a reconstruction algorithm was proposed in \cite{jin2019self}. In this work, the authors use a Monte Carlo Tree Search which allows them to optimize a policy that determines the positions to sample.
+This sampling relies on lines and the reconstruction process is an image to image domain with an inverse Fourier transform performed on the data before the denoising step.
+In the same spirit, \cite{bahadir2020deep} proposes to learn MRI trajectories by optimizing a binary mask over a Cartesian grid with some sparsity constraint. The reconstruction is decomposed into two steps: a regridding using an inverse Fourier transform and a U-NET for de-aliasing. Finally, a new class of reconstruction methods called \textit{algorithm unrolling}, mimicking classical variational approaches have emerged. 
+These approaches improve the interpretability of deep learning based methods. 
+Optimizing the weights of a CNN that plays the role of a denoiser in a conjugate gradient descent has been investigated in \cite{aggarwal2020j}. 
+The authors jointly optimize the sampling pattern and a denoising network based on an unrolled conjugate gradient scheme. 
+The sampling scheme is expressed as the tensor product of 1D sampling patterns which significantly restricts the possible sampling schemes.
+
+Overall, the previous works suffer from some limitations: the sampling points are required to live on a Cartesian grid, which may be non physical and lead to combinatorial problems; the methods cannot incorporate advanced constraints on the sampling trajectory and therefore focus on ``rigid'' constraints such as selecting a subset of horizontal lines.
+
+To address these issues, some recent works propose to optimize points that can move freely in a continuous domain \cite{weiss2021pilot,wang2022b}. This approach allows handling real kinematic constraints.
+In \cite{weiss2021pilot}, the authors propose to reconstruct an image using a rough inversion of the partial Fourier transform, followed by a U-NET to eliminate the residual artifacts. They optimize jointly the weights of the U-NET together with the k-space positions using a stochastic gradient method. 
+The physical kinematic constraints are handled using two different ingredients.
+First, the k-space points are regularly ordered by solving a traveling salesman problem, ensuring a low distance between consecutive points.
+Second, the constraints are promoted using a penalization function.
+This re-ordering step was then abandoned in \cite{wang2022b}, where the authors use a B-spline parameterization of the trajectories with a penalization over the constraints in the cost function.
+Instead of using a rough inversion with a U-NET, the authors opted for an unrolled ADMM reconstructor where the proximal operator is replaced by a DIDN CNN \cite{yu2019deep}.
+The k-space locations and the CNN weights are optimized jointly.
+In both works, long computation times and memory requirements are reported.
+We also observed significant convergence issues related to the existence of spurious minimizers \cite{gossard2022spurious}. 
+
+
+
+\subsection{Our contribution}
+
+The purpose of this work is to improve the process of optimizing sampling schemes from a methodological perspective.
+We propose a framework that optimizes the sampling density using Bayesian Optimization (BO).
+Our method has a few advantages compared to recent learning based approaches: i) it globalizes the convergence by reducing the dimensionality of the optimization problem, ii) it reduces the computing times drastically, iii) it requires only a small number of reference images and iv) it works off-the-grid and handles arbitrary physical constraints.
+The first three features are essential to make sampling scheme optimization tractable in a wide range a different MRI scanners. The last one allows more versatility in the sampling patterns that can take advantage of all the degrees of freedom offered by an MRI scanner.
+

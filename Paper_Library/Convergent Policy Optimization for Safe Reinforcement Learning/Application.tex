@@ -1,0 +1,145 @@
+\section{Application to Constrained Linear-Quadratic Regulator}
+\label{sec:application_LQR}
+
+
+We apply our algorithm to the linear-quadratic regulator (LQR), which
+is one of the most fundamental problems in control theory.  In the LQR
+setting, the state dynamic equation is linear, the cost function is
+quadratic, and the optimal control theory tells us that the optimal
+control for LQR is a linear function of the state
+\cite{evans2005introduction, anderson2007optimal}.  LQR can be viewed
+as an MDP problem and it has attracted a lot of attention in the
+reinforcement learning literature \cite{bradtke1993reinforcement,
+  bradtke1994adaptive, dean2017sample, recht2018tour}.
+
+We consider the infinite-horizon, discrete-time LQR problem.  Denote
+$x_t$ as the state variable and $u_t$ as the control variable. The
+state transition and the control sequence are given by
+\begin{equation}
+  \label{eq:LQR}
+  \begin{aligned}
+    x_{{t+1}}&=Ax_{t}+Bu_{t} + v_t,\\
+    u_t &= - F x_t + w_t,    
+  \end{aligned}
+\end{equation}
+where $v_t$ and $w_t$ represent possible Gaussian white noise, and the
+initial state is given by $x_0$. The goal is to find the control
+parameter matrix $F$ such that the expected total cost is minimized.
+The usual cost function of LQR corresponds to the negative reward in
+our setting and we impose an additional quadratic constraint on the
+system. The overall optimization problem is given by
+\begin{equation}
+\begin{aligned}
+\label{eq:LQR_constrained}
+&\mathop{\textrm{minimize}}_{} 
+~~J(F) =    \EE \biggl [ \sum_{t\geq 0} x_t^\top Q_1 x_t + u_t^\top R_1 u_t \biggr ], \\
+&\text{subject to}
+~~D(F) =   \EE \biggl [  \sum_{t\geq 0} x_t^\top Q_2 x_t + u_t^\top R_2 u_t \biggr ]  \leq  D_0,
+\end{aligned}
+\end{equation}
+where $Q_1, Q_2, R_1,$ and $R_2$ are positive definite matrices. Note
+that even thought the matrices are positive definite, both the
+objective function $J$ and the constraint $D$ are nonconvex with
+respect to the parameter $F$.  Furthermore, with the additional
+constraint, the optimal control sequence may no longer be linear in
+the state $x_t$. Nevertheless, in this work, we still consider linear
+control given by \eqref{eq:LQR} and the goal is to find the best
+linear control for this constrained LQR problem.  We assume that the
+choice of $A, B$ are such that the optimal cost is finite.
+
+
+\paragraph{Random initial state.}
+We first consider the setting where the initial state $x_0 \sim \cD$
+follows a random distribution $\cD$, while both the state transition
+and the control sequence \eqref{eq:LQR} are deterministic (i.e.
+$v_t = w_t = 0$). In this random initial state setting,
+\cite{fazel2018global} showed that without the constraint, the policy
+gradient method converges efficiently to the global optima in polynomial time.  In the constrained
+case, we can explicitly write down the objective and constraint
+function, since the only randomness comes from the initial state.
+Therefore, we have the state dynamic $x_{t+1} = (A-BF)x_t$ and
+the objective function has the following expression  (\cite{fazel2018global}, Lemma 1)
+\begin{equation}
+\label{eq:J_F_LQR}
+  J(F) = \EE_{x_0 \sim \cD} \big[ x_0^\top P_F x_0 \big],   
+\end{equation}
+where $P_F$ is the solution to the following equation
+\begin{equation}
+\label{eq:P_F_equation}
+P_F = Q_1 + F^\top R_1 F + (A-BF)^\top P_F (A-BF).  
+\end{equation}
+The gradient is given by
+\#
+\label{eq:gradient_J_F_LQR}
+\nabla_F J(F) = 2 \Big( \big(R_1 + B^\top P_F B \big)F - B^\top P_F A\Big) \cdot \bigg[\EE_{x_0 \sim \cD} \sum_{t=0}^{\infty} x_t x_t^\top\bigg].
+\#
+Let $S_F = \sum_{t=0}^{\infty} x_t x_t^\top$ and observe that
+\begin{equation}
+\label{eq:S_F_equation}
+S_F = x_0 x_0^\top + (A-BF)S_F(A-BF)^\top. 
+\end{equation}
+We start from some $F_0$ and apply our Algorithm~\ref{algo} to solve
+the constrained LQR problem. In iteration $k$, with the current
+estimator denoted by $F_k$, we first obtain an estimator of $P_{F_k}$
+by starting from $Q_1$ and iteratively applying the recursion
+$P_{F_k} \leftarrow Q_1 + F_k^\top R_1 F_k + (A-BF_k)^\top P_{F_k}
+(A-BF_k)$ until convergence. Next, we sample an $x_0^*$ from the
+distribution $\cD$ and follow a similar recursion given by
+\eqref{eq:S_F_equation} to obtain an estimate of $S_{F_k}$.  Plugging
+the sample $x_0^*$ and the estimates of $P_{F_k}$ and $S_{F_k}$ into
+\eqref{eq:J_F_LQR} and \eqref{eq:gradient_J_F_LQR}, we obtain the
+sample reward value $J^*(F_k)$ and $\nabla_F J^*(F_k)$,
+respectively. With these two values, we follow
+\eqref{eq:quadratic_appriximation_J} and \eqref{eq:J_bar} and obtain
+$\overline J^{(k)}(F)$. We apply the same procedure to the cost
+function $D(F)$ with $Q_1, R_1$ replaced by $Q_2, R_2$ to obtain
+$\overline D^{(k)}(F)$. Finally we solve the optimization problem
+\eqref{eq:QCQP} (or \eqref{eq:QCQP_alternative} if \eqref{eq:QCQP} is
+infeasible) and obtain
+$F_{k+1}$ by \eqref{eq:theta_update}.
+
+
+\paragraph{Random state transition and control.} 
+We then consider the setting where both $v_t$ and $w_t$ are
+independent standard Gaussian white noise. In this case, the state
+dynamic can be written as $x_{t+1} = (A-BF)x_t + \epsilon_t$ where
+$\epsilon_t \sim \cN(0, I + BB^\top)$. Let $P_F$ be defined as
+in \eqref{eq:P_F_equation} and $S_F$ be the solution to the following
+Lyapunov equation
+\begin{equation}
+\label{eq:S_F_equation_2}
+S_F = I + BB^\top + (A-BF)S_F(A-BF)^\top.   
+\end{equation}
+The objective function has the following expression (\cite{yang2019global}, Proposition 3.1) 
+\#
+\label{eq:J_F_LQR_2}
+J(F) = \EE_{x \sim \cN(0, S_F)} \Big[ x^\top (Q_1+F^\top R_1 F) x  \Big] + \tr(R_1),
+\#
+and the gradient is given by
+\begin{equation}
+\label{eq:gradient_J_F_LQR_2}
+\nabla_F J(F) = 2 \Big( \big(R_1 + B^\top P_F B \big)F - B^\top P_F A\Big) \cdot \EE_{x \sim \cN(0, S_F)}\Big[xx^\top \Big].
+\end{equation}
+Although in this setting it is straightforward to calculate the
+expectation in a closed form, we keep the current expectation form to
+be in line with our algorithm. Moreover, when the error distribution
+is more complicated or unknown, we can no longer calculate the closed
+form expression and have to sample in each iteration. With the
+formulas given by \eqref{eq:J_F_LQR_2} and
+\eqref{eq:gradient_J_F_LQR_2}, we again apply our
+Algorithm~\ref{algo}. We sample $x \sim \cN(0, S_F)$ in each iteration
+and solve  the optimization problem \eqref{eq:QCQP} or
+\eqref{eq:QCQP_alternative}. The whole procedure is similar to the
+random initial state case described above.
+
+
+\paragraph{Other applications.} 
+Our algorithm can also be applied to constrained parallel MDP and
+constrained multi-agent MDP problem. Due to the space limit, we
+relegate them to supplementary material.
+
+
+
+%%% Local Variables:
+%%% TeX-master: "paper"
+%%% End:

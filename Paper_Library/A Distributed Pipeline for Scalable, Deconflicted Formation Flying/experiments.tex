@@ -1,0 +1,217 @@
+
+
+\begin{table}[t!]	
+    \ra{1.1}
+	\centering
+	\caption{Execution time of the CVX solver used for \eqref{eq:OptimCVX} vs. our ADMM solver \eqref{eq:ADMM} for obtaining formation gains for different number of vehicles. Reported times are in seconds and rounded to two decimals.}
+	\begin{tabularx}{\columnwidth}{@{} l rrrrr @{}} %
+		\toprule
+		Algorithm  &  \multicolumn{5}{c @{}}{Number of Vehicles}\\ 
+		\cmidrule(l){2-6}
+		& {5} & {20} & {50} & {100} &  {200}  \\
+		\midrule
+		CVX-SDP time         & 0.54 & 32.48 & 8684.24 &  \texttt{OOM} & \texttt{OOM}  \\
+		ADMM time (ours) & 0.01 & 0.03 & 1.31 & 12.26 & 134.67  \\
+		\bottomrule
+	\end{tabularx}
+	\\ [0.2em]
+	\begin{flushleft}
+	{\scriptsize \texttt{OOM}: Out of memory}
+	\end{flushleft}
+	\label{tbl:gaintimes}
+	\vskip-0.05in
+\end{table}
+
+
+
+\section{Experimental Results} \label{sec:exper}
+
+This section shows that our distributed formation control and \edit{distributed} task assignment solutions scale with the number of UAVs, resolve gridlocks resulting from collision avoidance, and reduce the total distance traveled.
+
+First, we investigate scalability by comparing the runtime of our ADMM-based solver~\eqref{eq:ADMM} with the interior-point method used in CVX (\href{http://cvxr.com/cvx}{\texttt{http://cvxr.com/cvx}}) to solve the SDP formulation~\eqref{eq:OptimCVX}.
+These results are shown in Table~\ref{tbl:gaintimes}, and are generated in MATLAB using an Intel Core i7-7700K with \SI{32}{\giga\byte} RAM.
+While the interior-point method becomes intractable for formations with more than 50 vehicles, our ADMM approach can solve for the control gains in seconds.
+
+Second, we use software-in-the-loop simulations and hardware demonstrations to highlight how task assignment leads to quicker formation convergence with nearly \SI{100}{\percent} success.
+Our pipeline is implemented in \texttt{C++} using Robot Operating System (ROS)~\cite{Quigley2009}.
+Hardware demonstrations use a team of custom-built hexarotors, each with a diameter of \SI{0.5}{\meter} and an all-up-weight of \SI{1.1}{\kilo\gram}.
+Code runs onboard the Qualcomm Snapdragon Flight board that includes a platform-optimized VIO package that outputs odometry at \SI{30}{\hertz} \cite{VIO}.
+For simplicity of the implementation and the safety of the vehicles, we use our localization module (see Fig.~\ref{fig:System}) to inform each vehicle of every other vehicle's position.
+However, the information about non-neighbors is only used for collision avoidance and could alternatively be found using, for example, onboard cameras.
+
+\begin{table}[t]
+\centering
+\ra{1.1}
+\caption{
+Simulation results for 30 vehicles over 100 Monte Carlo trials.
+Using our distributed assignment algorithm, we obtain results closer to the optimal, but centralized, Hungarian approach.
+}
+\label{tbl:simresults}
+\begin{tabular}{l@{\hskip3pt}r x{1cm}x{0.6cm}x{1cm}x{0.6cm} r}
+\toprule
+&& \multicolumn{2}{c}{Distance Traveled (m)} & \multicolumn{2}{c}{Convergence Time (s)} & Success \\ \cmidrule{3-6}
+&& mean & std & mean & std & \\ \midrule
+\multirow{2}{*}{\normalsize{NA}}
+& nc &
+28.2 & 4.1 & 131.0 & 30.0 & \SI{58}{\percent} \\
+& c    &
+28.6 & 3.6 & 134.0 & 25.2 & \SI{66}{\percent} \\ [0.2em]
+\multirow{2}{*}{\normalsize{A}}
+& nc &
+10.9 & 2.2 & 64.7 & 38.6 & \SI{98}{\percent} \\
+& c    &
+9.9 & 2.0 & 68.1 & 43.7 & \SI{96}{\percent} \\ [0.2em]
+\multirow{1}{*}{\normalsize{H}}
+& c    &
+5.1 & 1.0 & 40.6 & 53.5 & \SI{100}{\percent} \\
+\bottomrule
+\end{tabular}
+\\ [0.2em]
+\begin{flushleft}
+{\scriptsize NA: no assignment\quad A: \edit{distributed} assignment (ours)\quad H: centralized Hungarian} \\
+{\scriptsize c: complete graph\quad nc: non-complete graph}
+\end{flushleft}
+\vskip-0.05in
+\end{table}
+
+
+\subsection{Simulations}
+
+We perform Monte Carlo trials to measure the impact of \edit{distributed} task assignment on a large team of vehicles.
+A trial consists of randomly initializing 30 UAVs in a \SI[product-units = single]{20 x 20}{\meter} area, where the minimum distance between initial positions is \SI{1.5}{\meter}.
+A random formation is generated for each trial within a \SI[product-units = single]{15 x 15 x 2}{\meter} volume, with a minimum distance between formation points of \SI{2}{\meter}.
+A trial is completed once the swarm has successfully reached the formation from the random initialization.
+If the swarm is trapped in a gridlock for more than \SI{90}{\second}, the trial is considered indefinitely gridlocked and is aborted.
+
+For each trial, our pipeline is tested in three main configurations: with centralized assignment, with distributed assignment, and without assignment.
+Except for centralized assignment, each configuration is further tested with both a complete and randomly generated non-complete formation graph.
+Centralized assignment provides an optimal baseline for comparison and is performed using the Hungarian algorithm with a complete graph.
+The assignment algorithms are executed at a period of \SI{2}{\second}, allowing the swarm to resolve gridlocks by enabling new collision-free motion directions.
+
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=1\columnwidth]{Figs/mitacl100.png}
+    \caption{Large-scale simulation with 100 UAVs. The last \SI{40}{\second} of motion are shown and UAVs are depicted at 2x scale for better visibility.}
+	\label{fig:mitacl100}
+\end{figure}
+
+Table~\ref{tbl:simresults} shows the comparison results, where for successful trials the average distance traveled and average flying time to converge to the desired formation are reported.
+As expected, the centralized Hungarian approach obtains \SI{100}{\percent} success rate with the shortest distance traveled \edit{and only an average of 2.0 reassignments} to converge to the formation.
+\edit{However, this approach has a computational cost of $O(n^3)$ in the number of vehicles and relies on a centralized coordinator in a common reference frame with complete knowledge of the swarm (Fig.~\ref{fig:frame-a}).
+On the other hand, our CBAA-based assignment algorithm is a more scalable deconfliction strategy that is executed in the non-aligned frames of the UAVs (Fig.~\ref{fig:frame-c}) and is nearly optimal in practice as confirmed by the \SI{97}{\percent} average convergence rate in Table~\ref{tbl:simresults}, with an average of 11.6 reassignments}.
+Compared to formation control without assignment, our algorithm allows the swarm to achieve formation convergence in nearly every case and in half the amount of time, on average.
+The results also show that, on average, there is no significant performance decrease between complete and non-complete formation graphs.
+Thus, non-complete formation graphs can be used to reduce communication overhead without sacrificing the convergence rate or ability to reach the desired formation.
+
+\edit{We remark that symmetric formations may lead our task assignment strategy~\eqref{eq:assign_prob} to exhibit momentary swapping behavior.
+However, noise in each UAV's sensing is included in the simulation and we have not observed convergence failure of~\eqref{eq:assign_prob} in simulation or hardware.
+We believe this swapping behavior is caused by ignoring the vehicle dynamics in~\eqref{eq:assign_prob} and consider this in future work.
+}
+
+To demonstrate scalability, we performed a large-scale simulation with 100 UAVs randomly initialized in a \SI[product-units = single]{60 x 30}{\meter} area.
+This simulation was performed using Amazon Web Services.
+Vehicles achieve the \texttt{MIT ACL} formation using a sparse formation graph with only \SI{24}{\percent} of the edges in a complete graph, which is beneficial for bandwidth-limited communication.
+The last \SI{40}{\second} are shown in Fig.~\ref{fig:mitacl100}, where the motion traces indicate deconfliction due to reassignment.
+
+\begin{figure}[t!]
+	\centering
+	\begin{subfigure}[b]{0.32\columnwidth}
+	    \centering
+	    \includegraphics[width=\textwidth, trim={3cm 0.5cm 3cm 2cm},clip]{Figs/formation/nonfc_pyramid_grid.png}
+	    \caption{\scriptsize Pentagonal pyramid}
+	\end{subfigure}
+	\begin{subfigure}[b]{0.32\columnwidth}
+	    \centering
+	    \includegraphics[width=\textwidth, trim={3cm 0.5cm 3cm 2cm},clip]{Figs/formation/nonfc_prism_grid.png} 
+	    \caption{\scriptsize Triangular prism}
+	\end{subfigure}
+	\begin{subfigure}[b]{0.32\columnwidth}
+	    \centering
+	    \includegraphics[width=\textwidth, trim={3cm 0.5cm 3cm 2cm},clip]{Figs/formation/nonfc_plane_grid.png} 
+	    \caption{\scriptsize Slanted plane}
+	\end{subfigure}
+	\caption{Non-complete formation graphs used in the hardware experiments.}
+	\label{fig:exp_formations}
+\end{figure}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[trim=20 85 20 120, clip, width=1\columnwidth]{Figs/gridlock_annotated.png}
+    \caption{Without assignment, UAVs attempting to achieve the pyramid formation are gridlocked due to collision avoidance.}
+	\label{fig:hwgridlock}
+\end{figure}
+
+\subsection{Hardware Demonstrations}
+
+We demonstrate formation flight with six UAVs by cycling through the three formations illustrated in Fig.~\ref{fig:exp_formations}.
+The minimum distance between desired formation points is \SI{2}{\meter} for each formation.
+\edit{Because the time required to calculate the formation gains from~\eqref{eq:ADMM} is small, in our experiments each UAV independently calculates the formation gains onboard in \SI{20}{\milli\second}.
+In this case, the base station is used only to dispatch the desired formation graph to the UAVs.}
+
+
+The UAVs are initialized at pre-specified locations so that the transforms between vehicles' VIO start frames are known.
+After taking off and hovering, an operator dispatches each desired formation to the swarm.
+Four configurations are tested by cycling through the formations twice.
+For each configuration, a total of six trials are recorded and averaged over, where a trial is the transition from the current swarm state to the next desired formation.
+When assignment is used, the period of reassignment is \SI{1.2}{\second}.
+
+Consistent with the simulations, the results in Table~\ref{tbl:hwresults} indicate that without our assignment strategy, the vehicles fail to achieve the desired formation in up to \SI{50}{\percent} of the trials, while every trial using assignment was successful.
+An example of convergence failure is shown in Fig.~\ref{fig:hwgridlock}.
+
+The supplementary video provides insights into the qualitative behavior of our system.
+Note that the achieved formations in the video are occasionally inverted from the desired formations shown in Fig.~\ref{fig:exp_formations}.
+Recall that our formation control aims to achieve the desired \textit{shape}.
+The inverted formations seen in experiments are due to negative scaling in the $z$-axis.
+We also point out that the formations shown in Fig.~\ref{fig:exp_formations} are not universally rigid. 
+Universal rigidity is a sufficient condition for our gain design, but not necessary.
+In practice, formations with sparser graphs can be used,
+so long as the recovered gain matrix leads to a negative objective~\eqref{eq:OptimX}.
+This helps to alleviate communication load across the swarm.
+
+\edit{The transmission requirements for localization and assignment are $5.2$ kbps per neighbor and $0.064nd(n+1)$ kb per neighbor at the reassignment period, respectively.
+For example, in our experiments with non-complete graphs, the theoretical bandwidth between each vehicle is approximately $9$ kbps.
+Using a sparse graph, a reassignment period of \SI{30}{\second}, and mid-grade WiFi connectivity, the expected upper bound before channel saturation is 800 UAVs.
+These numbers are supported by our simulation of 30 UAVs in a non-complete formation graph, where we measured 2161 kbps of communication between a UAV and its neighbors.
+}
+
+
+
+
+\begin{table}[t]
+\centering
+\ra{1.1}
+\caption{
+Hardware results.
+Our distributed assignment algorithm successfully breaks gridlock and converges to every desired formation.
+}
+\label{tbl:hwresults}
+\begin{tabular}{l@{\hskip3pt}r x{1cm}x{0.6cm}x{1cm}x{0.6cm} r}
+\toprule
+&& \multicolumn{2}{c}{Distance Traveled (m)} & \multicolumn{2}{c}{Convergence Time (s)} & Success \\ \cmidrule{3-7}
+&& mean & std & mean & std & \\ \midrule
+\multirow{2}{*}{\normalsize{NA}}
+& nc &
+0.8 & 0.5 & 15.5 & 9.2 & \SI{50}{\percent} \\
+& c    &
+0.9 & 1.0 & 11.3 & 3.0 & \SI{67}{\percent} \\ [0.2em]
+\multirow{2}{*}{\normalsize{A}}
+& nc &
+1.4 & 0.8 & 14.3 & 8.7 & \SI{100}{\percent} \\
+& c    &
+0.8 & 0.6 & 10.1 & 4.8 & \SI{100}{\percent} \\
+\bottomrule
+\end{tabular}
+\\ [0.2em]
+\begin{flushleft}
+{\scriptsize NA: no assignment\quad A: \edit{distributed} assignment (ours)} \\
+{\scriptsize c: complete graph\quad nc: non-complete graph}
+\end{flushleft}
+\vskip-0.1in
+\end{table}
+
+
+
+
+
+

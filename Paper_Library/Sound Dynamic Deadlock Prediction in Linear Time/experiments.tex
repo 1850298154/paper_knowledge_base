@@ -1,0 +1,344 @@
+%!TEX root = main.tex
+
+\section{Experimental Evaluation}
+\seclabel{experiments}
+
+We first evaluated our algorithms
+in an offline setting~(\secref{offline-expr}), where we record execution traces and evaluate different approaches on the \emph{same} input.
+This eliminates biases due to non-deterministic thread scheduling.
+Next, we consider an online setting~(\secref{online-expr}),
+where we instrument programs and perform the analyses during runtime.
+We conducted all our experiments on a standard laptop with \SI{1.8}{GHz} Intel Core i7 processor and \SI{16}{GB} RAM.
+
+% We evaluated our algorithms in two experimental settings. 
+% The first setting is offline experiments~(\secref{offline-expr}),
+% in which we record execution traces and evaluate different approaches.
+% This has the benefit that different approaches can be compared on the \emph{same} input,
+% thereby eliminating biases due to non-deterministic thread scheduling.
+% The second setting is online experiments~(\secref{online-expr}),
+% in which we instrument programs and perform the analyses during runtime.
+% We conducted all our experiments on a standard laptop with 1.8GHz Intel Core i7 processor and 16GB RAM.
+
+%We compare our predictive algorithm with the \dlfuzzer tool. 
+%This setting enables us to assess the applicability of our technique in a runtime monitoring system.
+%The state-of-the-art deadlock predictors \dirk and \seqc work offline by design.
+%Hence, they are not applicable for a comparison in this setting.
+%As discussed in~\secref{otf}, offline methods are not directly applicable in runtime monitoring systems.
+
+%Talk about implementation - name of tool + prog lang + traces are logged + filtering phase + cycle detection phase + online vs offline + trace conversion for seqc
+%
+%Setup - benchmarks + log traces using so-and-so-tools + 1-trace-per-benchmark  + cluster details + how many runs per trace + Timeout (if any)
+%
+%benchmark details: number of shared locks
+%\subsection{Evaluation}
+%
+%Some suggested experiments:
+%
+%\begin{itemize}
+%	\item Comparison with other tool(s) - \dirk and \seqc
+%	\item Comparison of online vs online algorithms
+%	\item Scalability with number of events
+%	\item Scalability with number of threads in the trace
+%	\item Scalability with number of threads in the deadlock pattern
+%	\item Time spent in each kinds of events (this will be useful to guide future research)
+%\end{itemize}
+%
+%\Andreas{For matching reports, we slightly adapt the algorithm to report all sets of program locations that contain a deadlock pattern (hence we might have more than one reports per abstract deadlock pattern, corresponding to different program locations)}
+
+
+% Here we report on an implementation and experimental evaluation of our algorithms.
+
+% \subsection{Experimental Setup}
+
+
+
+\subsection{Offline Experiments}
+\seclabel{offline-expr}
+
+
+\Paragraph{Experimental setup}
+The goal of the first set of experiments is to evaluate 
+$\SyncPDOffline$, and compare it
+against prior algorithms for dynamic deadlock prediction.
+In order for our evaluation to be precise we evaluate all algorithms on the \emph{same} execution trace.
+We implemented $\SyncPDOffline$ in Java inside the \toolname analysis tool~\cite{rapid}, 
+following closely the pseudocode in \algoref{offline}.
+\toolname takes as input execution traces, as defined in \secref{prelim}.
+These also include fork, join, and lock-request events.
+We compare $\SyncPDOffline$ with two state-of-the-art, 
+theoretically-sound albeit computationally more expensive, deadlock predictors,
+\seqc~\cite{Cai2021} and \dirk~\cite{Kalhauge2018}, both of which also work on execution traces.
+
+
+
+
+On the theoretical side, the complexity of \seqc is $\Otilde(\NumEvents^4)$, 
+as opposed to the $\Otilde(\NumEvents)$ complexity of $\SyncPDOffline$. 
+Moreover, \seqc only predicts deadlocks of size $2$, and though it could be extended to handle deadlocks of any size, this would degrade performance further.
+\seqc may miss sync-preserving deadlocks even of size $2$, 
+but can  detect deadlocks that are not sync-preserving.
+Thus \seqc and $\SyncPDOffline$ are theoretically incomparable in their detection capability.
+We refer to\begin{pldi}~\cite{arxiv}\end{pldi}\begin{arxiv}~\appref{incomp}\end{arxiv} for examples.
+We noticed that \seqc fails on traces with non-well-nested locks --- we encountered one such case in our dataset.
+\dirk's algorithm is theoretically complete, i.e., it can find all predictable deadlocks in a trace.
+In addition, it can find deadlocks beyond the predictable ones, by reasoning about event values.
+However, \dirk relies on heavyweight SMT-solving and
+employs windowing techniques to scale to large traces. 
+Due to windowing, it can miss deadlocks between events that are outside the given window. 
+%\hunkar{
+As with previous works~\cite{Cai2021, Kalhauge2018}, we set a window size of $10$K for \dirk.
+%}
+
+Our dataset consists of several benchmarks 
+from standard benchmark suites --- IBM Contest suite~\cite{Farchi03}, Java Grande suite~\cite{Smith01},
+DaCapo~\cite{Blackburn06}, and
+SIR~\cite{doESE05} ---
+and recent literature~\cite{Kalhauge2018, Cai2021, jula2008deadlock, Joshi2009}.
+Each benchmark was instrumented with RV-Predict~\cite{rvpredict} or Wiretap~\cite{Kalhauge2018} and
+executed in order to log a single execution trace.
+
+\input{tables/tab_overall}
+
+\Paragraph{Evaluation}
+\cref{tab:expr-results} presents our results.
+A bug identifies a unique tuple of source
+code locations corresponding to events participating in the deadlock.
+%Columns 2-6 present the characteristics of our benchmark traces.
+Trace lengths vary vastly from $39$ to about $241$M, while the number of threads ranges from $3$ to about $800$,
+which are representative features of real-world settings.
+\texttt{Hsqldb} contains critical sections that are not well nested, 
+and \seqc was not able to handle this benchmark;
+our algorithm does not have such a restriction.
+%We were unable to run \dirk on certain benchmarks due to \dirk's technical issues, which are marked with F.
+
+
+\vspace{-0.1cm}
+\SubParagraph{\underline{Abstract vs Concrete Patterns}}
+Columns 7-9 present statistics on the 
+abstract lock graph $\lkevgraph{\tr}$ of each trace $\tr$.
+Many traces have a large number of concrete deadlock patterns 
+but much fewer abstract deadlock patterns;
+a single abstract deadlock pattern can 
+comprise up to an order of $10^4$ more concrete patterns (Column $8$ v/s Column $9$).
+Unlike all prior sound techniques, 
+our algorithms analyze 
+abstract deadlock patterns, instead of concrete ones. 
+We thus expect our algorithms to be much more scalable in practice.
+
+
+\SubParagraph{\underline{Deadlock-detection capability}}
+In total, both \seqc and $\SyncPDOffline$ reported 40 deadlocks.
+\seqc misses a deadlock of size $5$ in \texttt{DiningPhil},
+which is detected by $\SyncPDOffline$,
+and $\SyncPDOffline$ misses a deadlock in \texttt{jigsaw} which is detected by \seqc.
+As $\SyncPDOffline$ is complete for sync-preserving deadlocks, we conclude that there are no more such deadlocks in our dataset.
+Overall, $\SyncPDOffline$ and \seqc miss only three deadlocks reported by \dirk. 
+On closer inspection, we found that these deadlocks are not witnessed by correct reorderings, and require reasoning about event values.
+On the other hand, \dirk struggles to analyze even moderately-sized benchmarks and times out in $3$ of them. %(timeout is 3h).
+This results in \dirk failing to report 5 deadlocks after $9$ hours, all of which are reported by $\SyncPDOffline$ in under a minute.
+Similar conclusions were recently made in~\cite{Cai2021}.  
+Overall, our results strongly indicate that the notion of sync-preservation characterizes most deadlocks that other tools are able to predict.
+
+
+\SubParagraph{\underline{Unsoundness of \dirk}}
+In our evaluation, we discovered that the soundness guarantee 
+underlying \dirk~\cite{Kalhauge2018} is broken, resulting in it reporting false positives.
+% Although \dirk is portrayed as sound, we have found two independent sources of unsoundness 
+% resulting in it reporting false positives.
+First, its constraint formulation~\cite{Kalhauge2018} 
+does not rule out deadlock patterns when acquire events in the pattern hold common locks, 
+in which case mutual exclusion disallows such a pattern to be a real predictable deadlock.
+Second, \dirk also models conditional statements, allowing it to reason about witnesses beyond correct reorderings.
+While this relaxation allows \dirk to predict additional deadlocks in \texttt{Transfer}, \texttt{Deadlock} and \texttt{HashMap}, 
+its formalization is not precise and its implementation is erroneous.
+We elaborate these aspects further in\begin{pldi}~\cite{arxiv}. \end{pldi}\begin{arxiv}~\appref{unsound-dirk}.\end{arxiv}
+
+
+%We noticed that \dirk reports false positives in certain cases, which contradicts its theoretical soundness guarantee.
+%We provide two such cases in~\appref{unsound-dirk}.
+%The first case is a modified version of \texttt{Transfer}.
+%Here, \dirk falsely reports a deadlock because it inadequately models conditional statements, which are used to allow more trace reorderings that can expose a deadlock.
+%This relaxation enables \dirk to predict deadlocks in the benchmarks \texttt{Transfer} and \texttt{Deadlock}, which are missed by $\SyncPDOffline$ and \seqc. 
+%However, this relaxation is not formalized and its implementation is erroneous.
+%In the second case, \dirk falsely reports a deadlock due to missing that a common lock protects an otherwise deadlock pattern.
+
+\SubParagraph{\underline{Running time}}
+Our experimental results indicate that \dirk, backed by SMT solving, 
+is the least efficient technique in terms of running time ---
+it takes considerably longer or times out on large benchmark instances.
+$\SyncPDOffline$ analyzed the entire set of traces $\sim\!\!\!21\times$ faster than \seqc.
+On the most demanding benchmarks, such as 
+HashMap and TreeMap, $\SyncPDOffline$ is more than $200\times$ faster than \seqc.
+Although \seqc employs a polynomial-time algorithm for deadlock prediction, 
+and thus significantly faster than the SMT-based \dirk,
+the large polynomial complexity in its running time hinders scalability on 
+execution traces coming from benchmarks that are more representative of realistic workloads.
+In contrast, the linear time guarantees of $\SyncPDOffline$ are realized in practice, 
+allowing it to scale on even the most challenging inputs.
+More importantly, the improved performance comes while preserving essentially the same precision.
+
+
+%\input{figures/fig_scalability}
+
+
+%\Andreas{We might revisit/remove the following}
+
+%\textcolor{red}{check the numbers again.}
+\SubParagraph{\underline{False negatives}}
+Our benchmark set contains $93$ abstract deadlock patterns, $40$ of which are confirmed sync-preserving deadlocks.
+We inspected the remaining $53$ abstract patterns to see if any of them are predictable deadlocks
+missed by our sync-preserving criterion, independently of the compared tools.
+$48$ of these $53$ patterns are in fact not predictable deadlocks ---
+for every such pattern $D$, 
+the set $S_D$ of events in the downward-closure of $\prev{}(D)$ with respect to $\tho{}$ and $\rf{}$,
+already contains an event from $D$, disallowing any correct reordering
+(sync-preserving or not) in which $D$ can be enabled.
+Of the remaining, $4$ deadlock patterns obey the following scheme:
+there are two acquire events $\acq_1, \acq_2$ participating in the deadlock pattern, 
+each $\acq_i$ is preceded by a critical section on a lock that appears in 
+$\lheld{}(\acq_{3-i})$, again disallowing a correct reordering that witnesses the pattern.
+Thus, \emph{only one} predictable deadlock is not sync-preserving in our whole dataset.
+This analysis supports that the notion of sync-preservation is not overly conservative in practice.
+%\hunkar{I think here we should clarify that this analysis is not overly conservative as far as predictable deadlocks go.}
+
+%\hunkar{
+The above analysis concerns false negatives wrt. predictable deadlocks.
+Some deadlocks are beyond the common notion of predictability we have adopted here, as they can only be exposed by reasoning about event values and control-flow dependencies, a problem that is $\NP$-hard even for 3 threads~\cite{Gibbons1997}.
+We noticed $3$ such deadlocks in our dataset, found by \dirk,
+though, as mentioned above, \dirk's reasoning for capturing such deadlocks is unsound in practice.
+%}
+
+%\hunkar{Maybe stress again that this reasoning about event values is non-trivial as it relies on heavyweight SMT solving. Also, maybe have the section "Unsoundness of Dirk" after this one and say that next we show that it is also tricky to implement in practice.}
+%sync-preserving deadlocks are likely to be permissive and not lead to a high false negative rate.
+%We conduct an analyses based on our benchmark set and characterize potential false negatives of our technique.
+%Recall the conditions imposed on correct reorderings (see \secref{prelim}).
+%One of the main conditions imposed by the definition of a correct reordering is that
+%every read event reads from the same write as in the original trace. 
+%We investigated the effect of this condition on the potential false negatives.
+%Our benchmark set contains $93$ abstract deadlock patterns and our technique is able to find $42$ deadlocks.
+%The remaining $51$ deadlock patterns constitute potential false negatives.
+%If we only impose the above condition, then $46$ of the deadlock patterns cannot be realized to a real deadlock.
+%The additional conditions that are specific to sync-preserving deadlocks (e.g., the order of critical sections on the same lock cannot be reversed) prevents the remaining $5$ deadlock patterns from being realizable.
+%We remark that the definition of correct reorderings adopted in this work originate from the standard model that is widely used in this domain~\cite{Smaragdakis12,serbanuta2013,Koushik05}.
+%Hence, this analyses further supports that given this standard program model, the additional restrictions introduced with the
+%sync-preserving deadlocks are likely to be permissive and not lead to a high false negative rate.
+
+
+\subsection{Online Experiments}
+\seclabel{online-expr}
+
+\Paragraph{Experimental setup}
+%Dynamic analyses can incur high runtime overheads.
+The objective of our second set of experiments is to evaluate 
+the performance 
+of our proposed algorithms in an \emph{online} setting.
+For this, we implemented our $\SyncPDOnline$ algorithm inside the
+framework of \dlfuzzer~\cite{Joshi2009} following closely the pseudocode in \algoref{online}. 
+This framework instruments a concurrent program so that it can
+perform analysis on-the-fly while executing it.
+If a deadlock occurs during execution, it is reported and the execution halts.
+However, if a deadlock is predicted in an alternate interleaving, 
+then this deadlock is reported and the execution continues to search further deadlocks.
+We used the same dataset as in \secref{offline-expr}, 
+after discarding some benchmarks that could not be instrumented by \dlfuzzer.
+
+To the best of our knowledge, all prior deadlock prediction techniques work offline.
+For this reason, we only compared our online tool with the randomized 
+scheduling technique of~\cite{Joshi2009} already
+implemented inside the same \dlfuzzer framework.	
+At a high level, this random scheduling technique works as follows.
+Initially, it
+(i)~executes the input program with a random scheduler, 
+(ii)~constructs a \emph{lock dependency relation}, and 
+(iii)~runs a cycle detection algorithm to discover deadlock patterns. 
+For each deadlock pattern thus found, it spawns new executions that attempt 
+to realize it as an actual deadlock.
+To increase the likelihood of hitting the deadlock,
+\dlfuzzer biases the random scheduler by pausing threads at specific locations.
+%(e.g., before acquiring a certain lock).
+
+The second, confirmation phase of~\cite{Joshi2009}
+acts as a best-effort proxy for sound deadlock prediction.
+On the other hand, $\SyncPDOnline$ is already sound and predictive, and thus does not require
+additional confirmation runs, making it more efficient.
+Towards effective prediction, we also implemented a simple bias to the scheduler.
+If a thread $t$ attempts to write on a shared variable $x$ while holding a lock, then 
+our procedure randomly decides to pause this operation for a short duration.
+This effectively explores race conditions in different orders.
+Overall, implementing $\SyncPDOnline$ inside \dlfuzzer provided the added advantage of supplementing a powerful prediction technique with a biased randomized scheduler.
+%As an added advantage of implementing our algorithms in the
+% framework, we are able to achieve
+%the complementary objective of evaluating how well prediction supplements
+%the effectiveness of an otherwise naive
+%controlled concurrency testing
+%technique like randomized scheduling.
+To our knowledge, our work is the first to effectively 
+combine these two orthogonal techniques.
+We also remark that such a bias is of no benefit to \dlfuzzer itself
+since it does not employ any predictive reasoning.
+
+% a randomized testing procedure, even though the latter is rather simple.
+
+For this experiment, we run \dlfuzzer on each benchmark, and for each deadlock pattern found in the initial execution, 
+we let it spawn $3$ new executions trying to realize the deadlock, 
+as per standard (\href{https://github.com/ksen007/calfuzzer}{https://github.com/ksen007/calfuzzer}).
+We repeated this process $50$ times and recorded the total time taken.
+Then, we allocated the same time for $\SyncPDOnline$ to repeatedly execute the same program and perform deadlock prediction.
+We measured all deadlocks found by each technique.
+%We also noticed that \dlfuzzer fails to work properly if the given input program deadlocks in the initial run.
+%This results in \dlfuzzer itself to go into deadlock without producing any deadlock reports.  
+%Hence, we made a modest modification on \dlfuzzer allowing it to work properly and report deadlocks in such cases.
+%We used this modified version of \dlfuzzer in our evaluation.
+
+
+
+
+
+\input{tables/tab_dlf}
+
+\Paragraph{Evaluation}
+\cref{tab:expr-dlf-results} presents our experimental results.
+%A bug identifies a unique tuple of source code locations corresponding to events
+%participating in the deadlock.
+Columns $2$-$3$ of the table display the total number of bug hits,
+which is the total number of times a bug was predicted by $\SyncPDOnline$ in the entire duration,
+or was confirmed in any trial of \dlfuzzer.
+Columns $4$-$6$ display the unique bugs (i.e., unique tuples of source code locations leading to a deadlock) 
+found by the techniques.
+The employed techniques are able to find a maximum of $3$ unique bugs for each benchmark
+in our benchmark set. 
+Respectively, columns $7$-$12$ display the detailed information on the number 
+of times a particular bug was found by each technique.
+Runtime overheads are displayed in the columns $13$-$16$, with $\mathsf{\tt -I}$ denoting the instrumentation phase only.
+
+
+\SubParagraph{\underline{Deadlock-detection capability}}
+\dlfuzzer had $2076$ bug reports in total, and it found $42$ unique bugs.
+In contrast, $\SyncPDOnline$ flagged $7633$ bug reports, corresponding to $49$ unique bugs.
+In more detail, \dlfuzzer missed $9$ bugs reported by \SyncPDOnline whereas 
+$\SyncPDOnline$ missed $2$ bugs reported by \dlfuzzer.
+Also, \SyncPDOnline significantly outperformed \dlfuzzer in total number of bugs hits.
+Our experiments again support that the notion of sync-preservation  captures most deadlocks that occur in practice, to the extent that other state-of-the-art techniques can capture.
+%\hunkar{
+A further observation is that in the offline experiments, \SyncPDOffline  was not able to find deadlocks in \texttt{Transfer} and \texttt{Deadlock}. 
+However, the random scheduling procedure allowed \SyncPDOnline 
+to navigate to executions from which deadlocks can be predicted.
+This demonstrates the potential of combining predictive dynamic
+techniques with controlled concurrency testing.
+%; a direction we find promising to be pursued further by the community.
+
+
+\SubParagraph{\underline{Runtime overhead}}
+We have also measured the runtime overhead of both \SyncPDOnline and \dlfuzzer,
+both as incurred by instrumentation, as well as by the deadlock analysis.
+The latter is the time taken by \algoref{online} for the case of $\SyncPDOnline$,
+and the overhead introduced due to the new executions in the second confirmation phase for the case of \dlfuzzer.
+Our results show that the instrumentation overhead of \SyncPDOnline is, in fact, comparable to that of \dlfuzzer, though somewhat larger. 
+This is expected, as \SyncPDOnline needs to also instrument memory access events, while \dlfuzzer only instruments lock events, but at the same time surprising because the number of memory access events
+is typically much larger than the number of lock events.
+On the other hand, the analysis overhead is often larger for \dlfuzzer, 
+even though it reports fewer bugs.
+It was not possible to measure the runtime overhead in certain benchmarks as 
+either they were always deadlocking or the computation was running indefinitely.
+
+

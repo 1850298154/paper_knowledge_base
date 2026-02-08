@@ -1,0 +1,1209 @@
+% For later:
+% \begin{itemize}
+%   \item{}
+% \gbcomment{extract a precise statement from Plesniak94.}
+% \jacomment{Maybe \cite{ganzburg1981multidimensional} is a better reference (together with references therein)? Plesniak seem to mostly deal with $C^\infty$ functions when having the bound?}
+%   \item{} Numexps: tuning $M$?
+%   \item{} no-splitting feature removed. Why? See $d_{t}$ in \citet{bertsimasOptimalClassificationTrees2017}.
+%   \item{} numexps: add loss value for each regression function.
+% \end{itemize}
+
+% \section{High-level ideas / picture}
+% Johannes to explain \cite{FISCHER2014787} and the Stone–Weierstrass theorem that continuous functions can be approximated by polynomial functions. Ideally, draft a theorem that o-minimal structures on a bounded domain are approximable to any precision by piecewise polymomial functions?
+% Then, we can use piecewise polynomial regression of \citet{chatterjeeAdaptiveEstimationMultivariate2021} to optimize over the piecewise polynomial model.
+% Jiri Nemecek could work on the MIP \cite{nemecek2023improving}.
+
+\section{Introduction}
+\label{sec:introduction}
+
+% \gbcomment{
+%   \citet{serraBoundingCountingLinear2018} count the number of active polyhedra for ReLU FNN, with both theoretical bound and practical MIP.
+%   How does this change when activation with nonlinear activation functions?
+%   Their MIP is no longer helpful to uncover the
+%   In fact, there are no practical algorithms, doubly exponential methods only.
+%   We provide (i) a natural way to generalize the notion of active polyhedra to any function, DL and otherwise using the framework of tame geometry, and (ii) we provide a MIP that can recover the stratification of any such function, as well as a piecewise polynomial approximation.
+% }
+
+In a wide range of applications, one encounters nonsmooth and nonconvex functions that are \emph{tame}, short for \emph{definable in o-minimal structures}.
+% functions that is, nosmooth and nonconvex functions .
+% difficult, nonsmooth and nonconvex, but also \emph{tame}.
+Such functions can be decomposed into a finite number of regions, where the function is smooth across each region, as illustrated in \cref{fig:NN_intro} (left pane).
+Tame functions appear in a broad range of useful and difficult, \ie{} nonsmooth and nonconvex, applications.
+Prominent examples are all common (nonsmooth and nonconvex) deep learning architectures \citep{davisStochasticSubgradientMethod2020,bolteMathematicalModelAutomatic2020}, and (nonsmooth) empirical risk minimization frameworks \citep{iutzelerNonsmoothnessMachineLearning2020}.
+Tame functions also appear, \eg{} in mixed-integer optimization, with the value function and the solution to the so-called subadditive dual \citep{aspman2023taming}; in quantum information theory, with approximations of the matrix exponential for a k-local Hamiltonian \citep{bondar2022recovering,aravanis2022polynomial}; and in quantum chemistry, with functions describing the electronic structure of molecules.
+The tame assumption was key in recent advances in learning theory, with notably the first convergence proofs of Stochastic Gradient Descent  \citep{davisStochasticSubgradientMethod2020,davis2021active,bianchiStochasticSubgradientDescent2021}, or theory of automatic differentiation \citep{bolteMathematicalModelAutomatic2020}.
+The tameness property of a function is, among other things, stable under composition. We will discuss these aspects in more detail later.
+% have certain nice properties: tameness of functions is notably stable under composition, and implies a well-behaved landscape; see \eg{} \cref{fig:NN_intro}.
+% Tame functions are inherently well-behaved.
+% have enjoyable properties.:
+% , or functions definable in o-minimal structures.
+% This is a class of nonconvex and nonsmooth functions with certain distinguishing \emph{nice} properties.
+% \emph{Tame} functions, short for functions \emph{definable in o-minimal structures}, appear in a wide range of useful and difficult, \ie{} nonsmooth and nonconvex, applications.
+% One important application, which has seen a lot of activity in recent years, is deep learning.
+% There, all commonly used activation functions, and compositions thereof, are tame \citep{davisStochasticSubgradientMethod2020,bolteMathematicalModelAutomatic2020}.
+% \jncomment{See the left plot in \Cref{fig:NN_intro} for an example of a cell decomposition of a Neural Network utilizing a variety of activation functions.}
+% \gbcomment{A bit soon.}
+% More standard frameworks for machine learning, \eg{} founded on regularized empirical risk minimization \citep{iutzelerNonsmoothnessMachineLearning2020}, also feature tame functions.
+% Furthermore, in mixed-integer linear and quadratic programs, the value function and the solution to the so-called subadditive dual are often tame \citep{aspman2023taming}.
+% Beyond the classical learning and optimisation applications, tame functions appear \eg{} in quantum information theory, where approximations of the matrix exponential for a k-local Hamiltonian is tame \citep{bondar2022recovering,aravanis2022polynomial}, and in quantum chemistry, where the functions describing the electronic structure of many molecules are typically tame.
+
+
+\begin{figure}
+  \begin{center}
+    % \ifIsNeuripsVersion
+      \includegraphics[width=0.6\textwidth]{figures/numres_plots/NN_intro_1hour.png}
+    % \else
+    %   \ifIsArxivVersion
+    %     \includegraphics[width=0.8\textwidth]{figures/numres_plots/NN_intro_1hour.png}
+    %   \else
+    %     \includegraphics[width=\columnwidth]{figures/numres_plots/NN_intro_1hour.png}
+    %   \fi
+    % \fi
+    % \includegraphics[width=\columnwidth]{figures/numres_plots/NN_intro.png}
+    \caption{
+      Left pane: a generic 2-dimensional function, with level lines (white) and nonsmooth points (black).
+      Right pane: piecewise polynomial approximation of the network, obtained from the proposed integer program with a depth 3 regression tree and degree 2 polynomials.
+      % Cell decomposition of an Artificial Neural Network on 2-dimensional input space and its piecewise polynomial approximation. The approximation is obtained by solving a MIP formulation of a regression tree of depth 3 that fits polynomes of degree 2.
+    }
+    \label{fig:NN_intro}
+  \end{center}
+  \vskip -0.2in
+\end{figure}
+
+This paper is concerned with building approximation of tame nonsmooth functions, a topic which has received attention recently  \citep{NEURIPS2021_dba4c1a1,chatterjeeAdaptiveEstimationMultivariate2021,donoho1997cart}.
+% \gbmargincomment{Why is function approximation relevant?}
+Formally, given a function $f$, we seek a function $p$ in a set of simple functions $\mathcal{P}$ that minimizes the distance from $p$ to $f$ over a domain $A$:
+\begin{equation*}
+    \inf_{p\in\mathcal{P}} \left( \|f - p\|_{\infty, A} = \sup_{x\in A} |f(x) - p(x)|\right).
+\end{equation*}
+
+A major challenge is the nonsmoothness of the function to approximate.
+Classical polynomial approximation theory shows that good (``fast'') polynomial approximation of a function is possible if the function has a high degree of regularity.
+% if the polynomial has a degree at least equal to the degree of regularity of the function to be approximated.
+Specifically, if $f$ is a function $(\smoothDeg+1)$-times continuously differentiable, the best degree $\polyDeg$ polynomial incurs an $\bigoh(1/\polyDeg^{\smoothDeg})$ error \citep{plesniakMultivariateJacksonInequality2009}.
+% $\inf_{p\in\mathcal{P}_n} \|f-p\|_{[-1, 1]^\ndim,\infty} = \bigoh(n^{-\smoothDeg})$ \citep{plesniakMultivariateJacksonInequality2009}.
+However, the situation changes dramatically when the function has low regularity, \eg{} is continuous but with discontinuous derivatives, as is the case for most settings in learning theory.
+% However, when the function to be approximated is merely continuous, the approximation quality degrades significantly.
+% Indeed, consider the prototypical example of a nonsmooth function: the absolute value $x\mapsto |x|$.
+Indeed, approximating the absolute value --- the simplest nonsmooth function --- by degree $\polyDeg$ polynomials over the interval $[-1, 1]$ incurs \emph{exactly} the slow rate $1/\polyDeg$:
+\begin{equation*}
+  \inf_{p \in \mathcal{P}_{\polyDeg}} \|p - |\cdot|\|_{\infty, [-1, 1]} = \frac{\beta}{\polyDeg} + o\left(\frac{1}{\polyDeg}\right),
+\end{equation*}
+where $\beta\approx 0.28$ \citep{bernsteinMeilleureApproximationPar1914}.
+ % $\mathcal{P}_{\polyDeg}$ denotes the set of polynomials of degree up to $\polyDeg$, and
+In sharp contrast, allowing an approximation by \emph{piecewise polynomials} makes this problem simpler: the absolute value itself is a piecewise polynomial, consisting of two polynomial pieces of degree 1.
+As a second example, consider a neural network comprised of sigmoid, $\tanh$, and ReLU activations.
+Its landscape contains nonsmooth points, showed in black in \cref{fig:NN_intro} (left pane).
+As the empirical risk minimization is tame, the nonsmooth points delineate regions of space where the function behaves smoothly.
+We know of no convergent method for finding a piecewise polynomial approximation of tame functions.
+% is non-trivial; we know of no convergent method for estimating it.
+% \gbmargincomment{s/``Estimating''/Finding simple approximation of ?}
+
+
+\textbf{Related work.}
+While simple, these examples illustrate the two fundamental challenges of estimating nonsmooth functions:
+\begin{enumerate}[(i)]
+\item estimating the \emph{cells} of the function, that is the full-dimensional sets on which the function is smooth; and, 
+\item estimating the function on each cell.
+\end{enumerate}
+These challenges require input from several branches of mathematics. 
+
+% \jamargincomment{This paragraph can maybe be commented out?}A natural approach is then to \emph{(i)} estimate the cells of the function to approximate, and \emph{(ii)} perform classical polynomial approximation of the (smooth) restriction of function on each piece.
+
+%Partition
+For \emph{(i)}, one can consult Model Theory, and, more specifically, o-minimal structures.  
+Let us recall a central theorem there: the graph of any tame function splits into \emph{finitely} many full-dimensional sets, known as ``cells'', on which the function can have any desired degree of smoothness \citep{van1998tame}.
+A natural approach is then to estimate this cell decomposition of the space.
+% This result justifies trying to estimate how the space decomposes in cells induced by the tame function.
+\citet{rannouComplexityStratificationComputation1998} reduces this to a quantifier elimination problem and proposes a procedure that takes doubly-exponential time, for semialgebraic functions.
+We are not aware of any implementation of this approach.
+% , for which there are algorithms that take double-exponential time, 
+% although we are not aware of any implementation of the general case. 
+\citet{helmerConormalSpacesWhitney2023,helmerEffectiveWhitneyStratification2023} tested an implementation for real algebraic varieties and, possibly, semialgebraic sets.
+We propose an algorithm that applies to general tame functions, thus covering the semialgebraic case but also networks using \eg{} sigmoid or $\tanh$ activations.
+
+In Machine Learning, 
+\citet{serraBoundingCountingLinear2018,pmlr-v97-hanin19a,liu2023relu} study the cells of networks built from ReLU activation and linear layers. They provide bounds on the number of cells, as well as a way to compute the cells of a given network by a mixed-integer linear program.
+In contrast, we propose to approximate the tame function by a piecewise polynomial function such that each piece is defined by affine inequalities.
+Thus, the whole domain is partitioned by a series of affine-hyperplane cuts, organized in a hierarchical tree structure, and a polynomial function is fit to each region.
+
+To address \emph{(ii)}, Computational Statistics approximate smooth functions by polynomials on polytopes.
+There, algorithms are mostly focused on continuous and typically one-dimensional functions \citep{goldbergMINLPFormulationsContinuous2021, warwickerComparisonTwoMixedInteger2021, pwlf, warwickerGeneratingOptimalRobust2023},
+and often restricted to approximation of piecewise linear functions, \citep{vielmaMixedIntegerModelsNonseparable2010,KAZDA2021107310, huchetteNonconvexPiecewiseLinear2023}. 
+Piecewise polynomial regression with polynomials of degree $\polyDeg \ge 2$ is either not addressed \cite{goldbergMINLPFormulationsContinuous2021,warwickerComparisonTwoMixedInteger2021,warwickerGeneratingOptimalRobust2023} or done through ``dimensionality lifting'' by appending values of all monomials of degrees $2$ to $\polyDeg$ as extra features to the individual samples \cite{pwlf}.
+This approach of \citet{pwlf} requires us to know the nonsmooth points in advance.
+We make no such assumption.
+%\gbcomment{@Jiri, could you clarify this sentence a bit? The part "not addressed or done through dim. lift." is quite a broad statement, it'd be nice to explain more / cite refs to back this up.}\jncomment{is it ok now?}
+
+
+% Indeed, there have been no methods, even for piecewise regression, that would be both non-trivial and applicable beyond one dimension. \textcolor{red}{Jiri to summarize} Even the most recent work of \cite{NEURIPS2021_dba4c1a1} proposes to use brute-force optimization-by-enumeration in piecewise linear regression. \textcolor{blue}{How about \cite{chatterjeeAdaptiveEstimationMultivariate2021}? }
+%\jareplace{When we relax the regression problem by allowing the function to be discontinuous, \ie{} with partitions not connected, we find trees as models that naturally fit the task.}{} % JN: I like it this way 
+%\jamargincomment{Maybe we shouldnt stress the discontinuous bit too much, since we are trying to approximate continuous things? And the trees could be used for this as well I guess?} 
+
+In Machine Learning, the use of trees befits the task of piecewise polynomial regression, with regression in dimensions higher than 1 utilizing hierarchical partitioning of the input space.
+% \jacomment{Which problem are we relaxing by this assumption? Also, connect to the dimensionality question, as this reads like the main problem with the algorithms mentioned in the previous paragraph. }
+%The topic of piecewise regression using trees has received some attention in the statistical learning theory in recent years.
+In \citet{NEURIPS2021_dba4c1a1}, the Dyadic CART algorithm of \citet{donoho1997cart} is used to recover a piecewise constant function defined on a lattice of points on the plane, with typical application in image processing and denoising.
+This builds upon the work on Optimal Regression Trees (ORT) for classification by \citet{bertsimasOptimalClassificationTrees2017},
+% partition recovery, in other words, image denoising.
+and is concerned with the optimal axis-aligned partitioning of the space, resulting in a piecewise constant function.
+We stress that \citet{NEURIPS2021_dba4c1a1} only suggest a brute-force computation of the trees for piecewise constant functions. 
+
+In Statistical Theory, \citet{chatterjeeAdaptiveEstimationMultivariate2021} reasons about sample complexity of piecewise polynomial regression via ORT, which also assumes that the data is defined over a lattice and that the splits are axis-aligned, but accommodates fitting polynomials of arbitrary degree and lattices of points in arbitrary dimensions $\ndim \ge 2$.
+%formulate the problem of finding the optimal tree as a mixed-integer program and employ corresponding solvers, thus obtaining provably optimal results for classification.
+%They also present an OCT-H formulation for classification trees with general affine hyperplane splits instead of axis-aligned. 
+The lattice data structure assumption facilitates the possibility of using dynamic programming to solve the mixed-integer program, leading to polynomial-time complexity in the number of samples $\nSample$, but has never been demonstrated in practice. 
+% Specifically, the complexity is $O(\nSample^{2\ndim}(\nSample \ndim + \ndim^{3r}))$, where $r$ is the maximum degree of each polynomial function in the partitioning. \jnmargincomment{Is this use of $r$ ok? It refers to the polydeg afaik, but using $\polyDeg$ here would be maybe even more confusing IMO given the $\nSample$ uses letter n as well?}
+%In practice, \citet{NEURIPS2021_dba4c1a1} confirms that Dyadic CART \citep{donoho1997cart} has significantly lower sample complexity that ORT \citep{chatterjeeAdaptiveEstimationMultivariate2021}.
+% \jncomment{TODO: compare our formulation to this. - for later}
+Two obvious shortcomings of the above approaches are that they require both that the data be defined over a regular lattice and that the splits of the tree are axis-aligned. We know of no proposal to compute optimal regression trees without requiring axis-aligned splits.
+This significantly limits the type of piecewise polynomial functions they can reasonably fit, such as the neural network of \cref{fig:NN_intro}, the example function \eqref{eq:cone2dintro} illustrated in \Cref{fig:conelevelsjoint}, or even the simple $\|\cdot\|_{\infty}$ polyhedral norm.% illustrated in \Cref{fig:linfnorm}.
+%Closely related to this is the Optimal Classification Tree (OCT) formulation of \cite{bertsimasOptimalClassificationTrees2017}.
+
+
+% ... \jacomment{Something short again about what we do and how it relates to Bertsimas}
+
+%While regression over ordinary polynomials has a long and deep history, piecewise polynomial regression is less well-understood. The complexity of piecewise polynomial regression when the underlying partitions into polynomial segments are unknown has recently been addressed with a number of impressive results \cite{donoho1997cart,chatterjeeAdaptiveEstimationMultivariate2021,NEURIPS2021_dba4c1a1,wang2022denoising}. Likewise, the complexity of regression on the ReLU activation functions in deep learning, which are piecewise linear functions falling under the umbrella of tame functions, has recently been discussed in \cite{diakonikolas2023near}. See also \cite{de2019approximate} for  regression over semi-algebraic set
+
+
+
+
+
+% \gbmargincomment{TODO: finish pass on contribs and relworks.}
+\paragraph{Our contributions.}
+
+
+In this work, we combine these results from model theory, approximation theory and optimization theory to present:
+\begin{itemize}
+  \item the first theoretical bound on the approximation error of generic \emph{nonsmooth and nonconvex} tame functions by piecewise polynomial functions, see \cref{th:main};
+  \item a procedure to compute the best piecewise polynomial function, where each piece is a polyhedron defined by a number of affine inequalities, and the polynomial on each piece has a given degree.
+  % \jareplace{degree $\polyDeg$}{a given degree}.
+  % \jadelete{A variant with axis-aligned inequalities is detailed in \cref{appx:axisalign}.}
+\end{itemize}
+The latter procedure involves sampling the function, and then solving the mixed-integer optimization problem formulated in \cref{eq:OrtFormulationHplane},
+    which extends the OCT-H formulation of \citet{bertsimasOptimalClassificationTrees2017} to the regression task. Specifically, we propose a new MIP formulation for finding provably optimal regression trees with arbitrary hyperplane splits and polynomials of arbitrary degree in the partitions. In other words, the method finds optimal piecewise polynomial functions in any dimension and for any degree polynomials, with hierarchical partitioning of the space.
+We find that such mixed-integer programs can be solved by current solvers to global optimality with one hundred samples within one hour to global optimality to yield precise piecewise polynomial approximations with affine-hyperplane splits.
+   
+% combine results from approximation theory of smooth functions with the space decomposition into cells.
+% We show that doing so allows to approximate any tame functions by piecewise polynomials to any accuracy.
+% with the above mentioned variable partition of the space.
+% together with the piecewise nature of tame functions to show that tame functions can generally be well-approximated by piecewise polynomials.
+% Then, once we have the underlying partitioning, we can make use of ordinary polynomial regression on each piece to find the approximation of the underlying function.
+% In practice, approximating the (smooth) function on each piece is formulated as minimizing the mismatch between the function and the piecewise polynomial at a finite number of points.
+% \jncomment{I put the parentheses, since they are sometimes not samples, e.g. in \cref{fig:NN_intro} they are samples from a 15x15 grid}
+% The partitioning of the space and the polynomial on each partition are optimized jointly.
+% The two tasks \emph{(i)} and \emph{(ii)} are addressed jointly, in a mixed integer formulation.
+
+\Cref{fig:NN_intro} shows the output of the proposed procedure on a tame neural network involving sigmoid, $\tanh$ and ReLU activations.
+The left pane shows the level lines, and the nonsmooth points (in black)
+% \jareplace{that are the boundaries of the cells on which the function is smooth.}
+that constitute the boundaries of the cells on which the function is smooth.
+% , a cell decomposition of a tame function, in this case, a Neural Network with sigmoid, hyperbolic tangent, and ReLU activations. 
+The right pane shows the approximation found using the formulation proposed in \Cref{sec:mip-form} after one hour of computation.
+
+% \gbcomment{
+% We do so \emph{i.} theoretically, by proposing the first bound akin to \gbcomment{xxx approximating functions by piecewise polynomials}, and \emph{ii.} in practice, by proposing a procedure to build a piecewise polynomial approximant.
+% Following \citet{bertsimasOptimalClassificationTrees2017}, we seek piecewise polynomial whose domain is partitioned in a number of polyhedral regions.
+% In practice, the partition is encoded in a hierarchical tree structure, an example of which is displayed in \Cref{fig:NN_intro} (right pane).
+% We do so following the approach of \citet{bertsimasOptimalClassificationTrees2017}, which encodes the partition in a hierarchical tree structure.
+% }
+
+% Two tasks: approximating functions; approximating domains.
+% We propose two procedures that perform these tasks jointly.
+
+% % \textbf{Contributions and organization.}
+% In this paper, we show that:
+% \begin{itemize}
+%   \item theoretically, any tame function can be approximated to arbitrary precision by a piecewise polynomial function on full-dimensional cubic domains, see \cref{th:main};
+%   \item finding such a piecewise polynomial approximation formulates as solving a mixed-integer program, see \cref{eq:OrtFormulationHplane} for a partition in arbitrary polyhedral regions, as illustrated in \cref{fig:NN_intro} (right pane), and \cref{appx:axisalign} for a partition with axis-aligned boundaries;
+%   % \item such mixed-integer programs can be solved by current dedicated solvers to global optimality from hundreds (250) of samples within 5 minutes to global optimality when assuming axis-aligned splits, and thus yield precise piecewise polynomial approximants
+%   \item such mixed-integer programs can be solved by current solvers to global optimality with a hundred samples within one hour to global optimality to yield precise piecewise polynomial approximants with general affine hyperplane splits.
+  
+%   % from hundreds (250) of samples within 5 minutes to global optimality when assuming axis-aligned splits.
+%     % \jnmargincomment{Should I try to restate this so that it does not refer to the axis-aligned? I think I could try to see at which point the $\ell_{\infty}$ norm can be found optimal - for what $n$ and how much time}
+%     % The unaligned splits are not able to prove optimality even after 10 minutes on the l1 norm...
+%     % \gbmargincomment{Rephrasing this to avoid axis-aligned would be nice; if you can have these numbers $\ell_\infty$-norm, that'd be great!}
+% \end{itemize}
+
+% \old{
+% In the remainder of this section, we discuss related works and set notations.
+% In \cref{sec:background}, we review useful notions of o-minimal theory.
+% \Cref{sec:appr-defin-funct} shows the proof of the main theoretical result: any function definable in an o-minimal structure can be approximated by piecewise polynomial functions to any precision.
+% In \Cref{sec:mip-form}, we detail the two mixed integer formulations, and \Cref{sec:numericalexperiments} shows the applicability of the method on synthetic and denoising problems.
+% }
+% In particular, we consider approximation of a function on a continuous domain instead of a regular lattice of points as studied by \citet{donoho1997cart,chatterjeeAdaptiveEstimationMultivariate2021,NEURIPS2021_dba4c1a1}.
+
+% In this paper, we show that (i) approx theorem, (ii) practical MIP procedures to do pwp approximation.
+% propose procedures to build piecewise polynomial approximation of tame functions.
+%The theory of tame functions is in a sense a generalization of the theory of polynomials, or more generally of the semi-algebraic sets.
+%As such, let us stress that definable functions are generally nonsmooth.
+
+
+%Chatt do the statistical analysis of the Donoho DCART, and the Bertsimas ORT approaches.
+%Both axis aligned, on lattice of points.
+%We extend this to approximation of function on continuous domain, typically the cube $[0, 1]^d$, with AA or AH partition.
+
+%Bertsimas: it is possible to use MIP (efficiency gains over last $40$ years).
+%Demonstrate that this appoach is viable via extensive numerical experiments on real-world classification problems.
+
+%Chatt: on a lattice, the MIP solution can be found by a dynamic programming approach. In our case, not possible anymore.
+
+% \gbcomment{The MIP is tractable \cite{bertsimasOptimalClassificationTrees2017}.}
+
+
+
+\textbf{Notation.}
+$\C^{\smoothDeg}(A)$ is the set of $\smoothDeg$-times continuously differentiable functions from $A$ to $\bbR$. For a function $f:A\to\bbR$, we define $\diff(f)$ to be the subset of $A$ such that all of the $\smoothDeg$-th order partial derivatives of $f$ exist.
+For a real-valued function $f:A\to\bbR$ of a set $A$, we let $\|f\|_{\infty,A} \eqdef \sup_{x\in A} |f(x)|$. 
+% We drop the set $\appDom$ when it is clear from context.
+% The diameter of a compact set $\appDom\subset\bbR^{\ndim}$ is defined as $\diam(\appDom) = \sup_{x, y \in \appDom}\|x - y\|$.
+% $\cl(\appDom)$ denotes the closure of the set $\appDom$.
+% We use the subscript $+$ to denote the positive part of $\bbR$ and $\bbZ$, i.e., $\bbR_+$ and $\bbZ_+$ are the sets of positive real numbers and positive integers.
+For any positive integer $n\in\bbN$, $[n]$ denotes the set of integers from 1 to $n$.
+
+% \gbcomment{
+% TODO:
+% \begin{itemize}
+%   \setlength\itemsep{0.1pt}
+%    % \item Cite \cite{de2019approximate}; % I don't see how to cite.
+%   \item cite people knowledgeable in tame geometry (Pauwels, Bolte, Tam Le, ?)
+%   \item check words consisency% -> "region", "cell", "stratification".
+% \end{itemize}
+% }
+
+\section{Background on tame geometry}
+\label{sec:background}
+%\textcolor{red}{TODO (Johannes): Introduce the basics of o-minimality:definitions, examples, cell decompositions, polynomially bounded,}
+
+In this section, we outline the main ideas and intuitions of tame geometry, and present the main result of interest: cell decomposition.
+% and results from tame geometry.
+A more formal presentation is deferred to \Cref{appx:def}.
+
+
+\subsection{Definability in o-minimal structures}
+\label{sec:defin-o-minim}
+An o-minimal structure is a collection of certain subsets of $\bbR^m$ that are stable under a large number of operations. One of the key properties that it should have is that when considering one-dimensional sets, they are only given by \emph{finite} unions of intervals and points. The structure is furthermore closed under Boolean operations, e.g. taking closures, unions or complements, as well as under projections to lower-dimensional sets, and elementary operations such as addition, multiplication and composition.%i.e., if we have a set $A\subset \bbR^{m+1}$ definable in our o-minimal structure, then projecting down on the first $m$ coordinates to $\bbR^m$ should preserve o-minimality. 
+
+We use the words \emph{definable} and \emph{tame} interchangeably to refer to sets or functions that belong to a given o-minimal structure. Tame functions are in general nonsmooth and nonconvex, but the tameness properties still make it possible to have some control when studying the behaviour of these functions. The function class is also broad enough to entail most of the cases that would appear in applications in a vast number of fields. For example, in machine learning, most functions that would appear as activation functions in neural networks are tame.
+
+%The definition of tame functions and sets are also quite robust in the sense that definability is closed under elementary manipulations, such as multiplication, taking inverses and composing tame maps. 
+%Let us begin with the definition of an o-minimal structure.
+%For simplicity, we restrict to working with structures over the real field $\bbR$.
+%\begin{definition}[o-minimal structure]\label{def:omin}
+%  An o-minimal structure on $\bbR$ is a sequence $\CS=(\CS_m)_{m\in\bbN}$ such that for each $m\geq 1$:
+%  \begin{enumerate}%\setlength\itemsep{0.5em}
+%    \item[{1)}] $\CS_m$ is a boolean algebra of subsets of $\bbR^m$;
+%    \item[{2)}] if $A\in\CS_m$, then $\bbR\times A$ and $A\times \bbR$ belongs to $\CS_{m+1}$;
+%    \item[{3)}] $\{(x_1,\dots,x_m)\in \bbR^m\,:\, x_1=x_m\}\in \CS_m$;
+%    \item[{4)}] if $A\in\CS_{m+1}$, and $\pi:\,\bbR^{m+1}\to\bbR^m$ is the projection map on the first $m$ coordinates, then $\pi(A)\in\CS_m$;
+%    \item[{5)}] the sets in $\CS_1$ are exactly the finite unions of intervals and points.
+%  \end{enumerate}
+%\end{definition}
+
+%\begin{definition}[definable set, function]
+%  A set $A\subseteq \bbR^m$ is said to be \emph{definable} in $\CS$ if $A$ belongs to $\CS_m$.
+
+%  Similarly, a map $f:\, A\to B$, with $A\subseteq \bbR^m$, $B\subseteq \bbR^n$, is said to be definable in $\CS$ if its graph $\Gamma(f) = \{(x,f(x))\in\bbR^{m+n}: x\in A\}$ belongs to $\CS_{m+n}$.
+%\end{definition}
+
+%A set or function definable in some o-minimal structure is often simply referred to as \emph{tame} when the specific structure is not important.
+% For this reason we will sometimes refer to the whole field of studying properties of o-minimal structures as \emph{tame geometry}.
+
+Due to the balance between being wild enough to include a large number of non-trivial applications while still being tame enough such that it is possible to derive qualitative results on their behaviour, the interest in tame functions has seen a recent surge in numerous fields. %In recent years, the use of o-minimal structures have seen a surge in numerous fields.
+In mathematical optimization, this framework allowed showing results that had proved elusive, notably on the convergence to critical points or escaping of saddle points for various (sub)gradient descent algorithms \citep{davisStochasticSubgradientMethod2020,joszGlobalConvergenceGradient2023,bianchiStochasticSubgradientDescent2021}.
+
+%Note that, due to the monotonicity and cell decomposition theorems of o-minimal structures, any function definable in some o-minimal expansion of the reals is piecewise/cellwise continuous (even $\mathcal{C}^1$). We can even require arbitrary level of smoothness (although not $\mathcal{C}^\infty$ in general). This means that we should be able to use the theorems of the previous section to say that they are piecewise approximated by polynomials. But we can probably make stronger statements, as we will see next.
+% In this section, we recall some results on approximations of functions definable in o-minimal expansions of the real field.
+
+
+
+\begin{example}[Analytic-exponential structure]
+  Probably the most important o-minimal structure for applications is the one consisting of the analytic-exponential sets, which forms a structure typically denoted \Ranexp.
+  An \emph{analytic-exponential set} in $\bbR^{\ndim}$ is defined as a finite union of sets of the form
+  \begin{equation*}
+      % \begin{aligned}
+          \{x\in \bbR^{\ndim} : \; f_1(x)=0,\dots,f_k(x)=0, g_1(x)>0,\dots, g_l(x)>0\},
+      % \end{aligned}
+  \end{equation*}
+  where $k,l$ are finite integers, and $f_i$ and $g_i$ are functions obtained by combining the following:
+  %\begin{equation}
+  %  \{x \in \bbR^{\ndim} : f(x) = 0, g_{1}(x) = 0, \ldots, g_{l}(x) = 0\},
+  %\end{equation}
+  %where $f$ and $g$'s are functions obtained by composition from
+  \begin{enumerate}[i.]
+    \item coordinate functions $x \mapsto x_{i}$ and polynomial/semialgebraic functions,
+    \item the restricted analytic functions: the functions $h:\bbR^{\ndim}\to\bbR$ such that $h|_{[-1,1]^{\ndim}}$ is analytic and $h$ is identically zero outside $[-1, 1]^{\ndim}$,
+    \item the inverse function $x \mapsto 1/x$, with the convention that $1/0 = 0$,
+    \item and the real exponential and logarithm function (the latter is extended to $\bbR$ by setting $\log(x) = 0$ for $x\le 0$). 
+  \end{enumerate}
+
+  In particular, any function built from the above rules is definable in the structure \Ranexp.
+  Examples include almost all deep learning architectures, but also conic convex functions, wave functions of small molecules, or the following contrived functions  $(x, y) \mapsto x^{2}\exp(-\frac{y^{2}}{x^{4} + y^{2}})$, $(x, y) \mapsto x^{\sqrt{2}}\ln(\sin y)$ for $(x,y)\in(0, \infty)\times (0, \pi)$, or $(x, y) \mapsto y / \sin(x)$ for $x\in(0, \pi)$ \citep[Sec. 1]{kurdykaGradientsFunctionsDefinable1998}.
+\end{example}
+
+\subsection{Tame functions are piecewise \texorpdfstring{$\mathcal{C}^\smoothDeg$}{Cr}}
+One of the central results in o-minimality theory is the cell decomposition theorem, and the related stratification theorems. These theorems give structural results on the graphs of tame functions by describing how the graph can be partitioned into smaller sets with some control on how the pieces fit together, as well as on the regularity of the function on each piece. In particular, it tells us that we can partition the graph into a finite number of pieces such that the function is $\mathcal{C}^{\smoothDeg}$, for any $\smoothDeg<\infty$, on each piece.  
+We introduce the result in a simplified form that best suits our needs. More detailed statements are given in \Cref{appx:def}. 
+
+% \gbcomment{explain more}
+
+\begin{proposition}[$\C^{\smoothDeg}$-cell decomposition]\label{prop:celldecomp}
+  Fix an o-minimal expansion of $\bbR$.
+  Consider a definable full-dimensional set $\appDom\subset\bbR^{\ndim}$ and a definable function $f:A \to \bbR$.
+  Then, for any positive integer $\smoothDeg$, there exists a finite collection $\Mcol$ of sets $\M\subset\bbR^{\ndim}$, called cells, such that
+  \begin{itemize}
+    \item each cell $\M\in\Mcol$ is open, definable, full-dimensional,
+    \item the sets of $\Mcol$ are pair-wise disjoint,
+    \item $\appDom$ is the union of the closures of the elements of $\Mcol$,
+    \item the restriction of $f$ to each cell $\M\subseteq\Mcol$ is $\mathcal{C}^{\smoothDeg}$.
+  \end{itemize}
+\end{proposition}
+\begin{proof}
+  This proposition is a direct corollary of the cell decomposition theorem and the Whitney stratification theorem of definable maps, recalled in \Cref{appx:def}, with $\Mcol$ corresponding to the set of all full-dimensional strata.
+  % Direct consequence of the Whitney stratification theorem, or cell-decomposition theorem.
+  % \gbcomment{TODO: check proposition, write up proof.}
+\end{proof}
+
+
+\begin{figure}[t]
+  % \vskip 0.2in
+  \begin{center}
+    \includegraphics[width=0.4\textwidth]{figures/figab.pdf}
+    \caption{Illustration of the ``cone'' function \eqref{eq:cone2dintro}, with $\sCone=\rCone=0.5$, showing \emph{(i)} the level lines of the function, and \emph{(ii)} the decomposition of the domain into cells on which the function is smooth, as provided by \cref{prop:celldecomp}; see \cref{table:conecells} for details.}
+    \label{fig:conelevelsjoint}
+  \end{center}
+  \vskip -0.2in
+\end{figure}
+
+\begin{example}\label{ex:conecelldecomp}
+  Consider the following tame (piecewise linear) function of $\bbR^2$:
+  \begin{equation}%
+    \label{eq:cone2dintro}
+    % \ifIsArxivVersion
+      \fCone(x) =
+      \begin{cases}
+        -\sCone x_{1} + \frac{1+\sCone }{\rCone }x_{2} & \text{ if } x_{1} > 0 \text{ and } 0 < x_{2} < \rCone  x_{1} \\
+        -\sCone x_{1} - \frac{1+\sCone }{\rCone }x_{2} & \text{ if } x_{1} > 0 \text{ and } -\rCone x_1 < x_{2} < 0 \\
+        \|x\|_{\infty} & \text{ else}
+      \end{cases}
+    % \else
+    %   \resizebox{0.40\textwidth}{!}{$
+    %     \fCone(x) =
+    %     \begin{cases}
+    %       -\sCone x_{1} + \frac{1+\sCone }{\rCone }x_{2} & \text{ if } x_{1} > 0 \text{ and } 0 < x_{2} < \rCone  x_{1} \\
+    %       -\sCone x_{1} - \frac{1+\sCone }{\rCone }x_{2} & \text{ if } x_{1} > 0 \text{ and } -\rCone x_1 < x_{2} < 0 \\
+    %       \|x\|_{\infty} & \text{ else}
+    %     \end{cases}
+    %     $}
+    % \fi
+  \end{equation}
+  When $\rCone=\sCone=0.5$, as guaranteed by \cref{prop:celldecomp}, the domain of the function splits in $7$ cells $(\M_{i})_{i\in[7]}$, on which the function behaves smoothly.
+  Here the pieces are polytopes, on which the function is linear.
+  \Cref{fig:conelevelsjoint} shows the landscape of the function, and collection of cells $\Mcol = (\M_{i})_{i\in[7]}$.
+  In addition, \cref{table:conecells} of \Cref{appx:def} summarizes the analytic expressions of the cells and of the (smooth) restriction of the function on each cell.
+  % Let us return to the two-dimensional cone function \eqref{eq:cone2dintro}, with.
+\end{example}
+
+
+
+
+%\begin{remark}
+%    We can actually exchange $\mathcal{C}^1$ with $\mathcal{C}^k$, for any positive integer $k$ (not equal to infinity).
+%\end{remark}
+
+%\gbcomment{Some thoughts:
+%  \begin{itemize}
+%    \item It'd be nice to actually have this with $\C^{r}$
+%    \item Perhaps the statement can be simplified, \eg{} do we need $(1)$?
+%  \end{itemize}
+%}
+
+%\old{
+%\begin{remark}
+%    When we increase the degree of regularity of the function in the  $\mathcal{C}^k$-cell decomposition, we most probably also increase the number of cells needed. It would be interesting to see how this increase in complexity compares with the increased rate of convergence guaranteed by the Jackson theorem.
+%\end{remark}
+%}
+
+\section{Approximation of tame functions}
+\label{sec:appr-defin-funct}
+
+% \gbcomment{TODO:
+% \begin{itemize}
+%   % \item distinguish between the domain of the function and the domain of approximation,
+%   % \item X add piecewise polynomial space definition,
+%   % \item take X as hypercube?
+% \end{itemize}
+% }
+
+In this section, we state our main theoretical result: any tame function can be approximated to an arbitrary precision by a piecewise polynomial function.
+
+
+\begin{definition}[Polynomial functions]
+  We let $\polySpace$ denote the set of polynomials of degree at most $\polyDeg$.  
+\end{definition}
+\begin{definition}[Piecewise-polynomial functions]\label{def:piecepolycuts}
+  We let $\piecePolySpaceCuts(\appDom)$ denote the set of functions that are piecewise polynomial on $\appDom$, such that
+  \begin{enumerate}
+    \item each piece $\piece$ is a polyhedron defined as the intersection of $\nCuts$ halfspaces, represented as one leaf of a complete binary tree of depth $\nCuts$ where each node collects an affine split of the space,
+    %\gbmargincomment{polyhedron def?}, and
+    \item the restriction of the function to each piece $\piece$ is a polynomial of degree at most $\polyDeg$.
+\end{enumerate}
+\end{definition}
+% \begin{definition}[(Piecewise) polynomial functions]
+%   We let $\polySpace$ denote the set of polynomials of degree at most $\polyDeg$, and $\piecePolySpace(\appDom)$ denote the set of functions that are piecewise polynomial on $\appDom$, with
+%   \begin{enumerate}
+%     \item at most $\nPieces$ pieces, each of which is a full-dimensional polyhedron, and
+%     %\gbmargincomment{polyhedron def?}, and
+%     \item the restriction of the function to each piece is a polynomial of degree at most $\polyDeg$.
+% \end{enumerate}
+%   % \gbcomment{Should we bound the complexity (number of faces) of the pieces? I guess this has no consequences for the approximation result. It may appear in the stat. side though.}
+% \end{definition}
+
+We are now ready to state our main result, which combines the cell decomposition, \cref{prop:celldecomp}, with a more classical result from smooth function approximation theory.
+%\gbcomment{This extends from $\cancube$ to $\appDom$ (A) under mild assumptions on A (compact, connected, whitney P)}
+
+\begin{restatable}[Main result]{theorem}{mainres}\label{th:main}
+  Consider a function $f:\cancube\to\bbR$, and a constant $K>0$ such that:
+  \begin{itemize}
+    \item $f$ is definable in an o-minimal structure, and
+    \item $f$ is $K$-Lipschitz on $\cancube$: for all $x$, $y\in\cancube$, $|f(x) - f(y)| \le K \|x-y\|$.
+    \item $\appDom$ is a connected compact subset of $\inputSpace$, such that any two points $x$ and $y$ in $\appDom$ can be joined by a rectifiable arc in $\appDom$ with length no greater that $\sigma\|x-y\|$, where $\sigma$ is a positive constant.
+  \end{itemize}
+  Then $f$ is piecewise approximable by piecewise polynomial functions (see \cref{def:piecepolycuts}): for any integers $\nCuts\ge 1$, $\polyDeg\ge 1$, and $\smoothDeg > 1$,
+  \begin{equation}\label{eq:them}
+    \inf_{p \in \piecePolySpaceCuts(\cancube)} \| f -    p\|_{\infty, \appDom} \le C_1 \polyDeg^{-\smoothDeg} + 
+C_2 \nCuts^{-\frac{2}{\ndim-1}}.
+  \end{equation}
+  where $C_1$ depends only on $\ndim$, $\smoothDeg$, $\cancube$, and $f$, and $C_2$ depends only on $\ndim$, $\smoothDeg$, and $f$.
+  % where $C_1$ and $C_2$ are constants that depend on $\ndim$, $\smoothDeg$, $K$, $\appDom$, and the $\smoothDeg$-th derivative of $f$.
+\end{restatable}
+
+% \begin{restatable}[Main result]{theorem}{mainres}\label{th:main}
+%   % Fix an o-minimal structure on $\bbR$.
+%   Consider a cubic set $\appDom=[0,1]^\ndim$,
+%   % = \bar{x} + \appDomRadius[-1, 1]^{\ndim}$ in $\bbR^{\ndim}$,
+%   % for some $\bar{x}$ and $\appDomRadius$, 
+%   a function $f:\appDom\to\bbR$, and a constant $K>0$ such that:
+%   \begin{itemize}
+%     \item $f$ is definable in an o-minimal structure, and
+%     % \item $\appDom$ is definable, compact and full-dimensional,
+%     % \item $\appDom$ is a full-dimensional cube: $\appDom = \bar{x} + \appDomRadius[-1, 1]^{\ndim}$ for some $\bar{x}\in\bbR^{\ndim}$ and $\appDomRadius>0$,
+%     \item $f$ is $K$-Lipschitz on $\appDom$: for all $x$, $y\in\appDom$, $|f(x) - f(y)| \le K \|x-y\|$.
+%   \end{itemize}
+%   % Then $f$ is piecewise approximable by polynomials: for any positive integer $\nslice$, $\nPieces = \nslice^{\ndim}$, and $\polyDeg \ge \smoothDeg > 1$, there exists some constant $\const>0$ such that
+%   Then $f$ is piecewise approximable by polynomials: for any integers $\nPieces\ge 1$, and $\polyDeg \ge \smoothDeg > 1$,
+%   \begin{equation*}
+%     \inf_{p \in \piecePolySpace(\appDom)} \| f -    p\|_{\infty, \appDom} \le
+%     \max\left( \frac{\const_1}{\nPieces^{\frac{\smoothDeg}{\ndim}} \polyDeg^{\smoothDeg-1}}, \frac{\const_2}{\nPieces^{1/\ndim}}\right),
+%   \end{equation*}
+%   where $C_1$ and $C_2$ are constants that depend on $\ndim$, $\smoothDeg$, $K$, $\appDom$, and the $\smoothDeg$-th derivative of $f$.
+% \end{restatable}
+
+% \gbcomment{Make constant $C$ independent of $r$ and $k$, \& extract $\diam(A)$ from the left term of bound.}
+% \gbcomment{Explain $\diam(A)$}
+
+\Cref{th:main} is our main approximation result so, before discussing its proof (which we carry out in detail in \Cref{sec:proof-th}), some remarks are in order. 
+
+
+Details of the dependence of the constants $C_1$ and $C_2$ on the problem parameters are given in \Cref{sec:proof-th}. 
+
+The definability assumption ensures that the graph of the function does not oscillate arbitrarily. 
+This allows us to use results from \cite{boissonnatTracingIsomanifoldsTime2021}, which do not hold for (not definable) $K$-Lipschitz functions. 
+
+%Instead of the domain $\cancube$ on which we approximate $f$ we can consider a more general domain $\appDom$ under some mild assumptions, namely that $\appDom$ is a connected compact subset of $\inputSpace$ that satisfies the Whitney P property. See \cite{bagbyMultivariateSimultaneousApproximation2002}. 
+
+
+
+\paragraph{Proof outline of \Cref{th:main}.}
+The bound is obtained by considering a piecewise linear approximation of the nonsmooth regions of the function constructed by intersecting $\nCuts$ halfplanes. The proof then splits into two parts, which correspond to the two terms in the bound in \eqref{eq:them}.
+
+Firstly, each polyhedral piece will intersect one `large' (full-dimensional) cell, where the function is $\Cm$. This cell is provided by the cell decomposition theorem.
+% the graph of the original function. Here, due to the cell decomposition theorem, we can require that the function is $\Cm$. 
+We can then make use of the Whitney extension theorem together with a Jackson-type theorem to get the first term of \eqref{eq:them}, which matches the fast approximation rates of smooth approximation theory. 
+
+Secondly, a polyhedral piece may also intersect with an additional (or more) cells.
+The challenge there is that the two cells are separated by nondifferentiability points, which incur a sharp change in the derivative of the function.
+The Jackson-type estimate can no longer provide the fast rate of approximation.
+% a precise piecewise linear estimation of the area of nondifferentiability 
+% , for the values where the linear piece lives in a different cell we can use the
+We propose to bound the rate of change using quantitative results on the construction of the piecewise-linear approximation, together with Lipschitz continuity of the function we are approximating.
+This allows us to bound the distance between the original function, its smooth extension from the first part, and finally its polynomial approximation, which results in the second term of \eqref{eq:them}. 
+
+
+
+
+%\old{The first term of the bound quantifies the approximation of $f$ on regions of $\appDom$ where $f$ is \emph{smooth}.
+%These regions correspond to the interior of the cells provided by \cref{prop:celldecomp}.
+%This term goes to zero as the degree $\polyDeg$ of the polynomial approximation increases, or as the smoothness $\smoothDeg$ of the underlying function increases.
+% --- which implies that $\polyDeg$ also increases, as $\polyDeg \ge \smoothDeg$.
+%Notably, when $f$ itself is polynomial on the cells and $\smoothDeg$ is high enough, the term $\const_1 \propto \|\frac{\partial^{\smoothDeg}f}{\partial x_{j}^{\smoothDeg}}\|_{\infty, \diff(f)}$ vanishes and the polynomial approximant matches $f$ exactly.
+%We use this fact for the exact recovery guarantees of \cref{sec:exact-recovery-mips}.
+
+%The second term of the bound quantifies the approximation of $f$ on \emph{nonsmooth} regions.
+%This term goes to zero as the size of the pieces of the polynomial that contain nondifferentiability points of $f$ goes to zero.
+%This is ensured by increasing the number of pieces $\nPieces$.}
+
+%\old{
+
+%The bound is obtained by considering polynomials of $\piecePolySpace(\appDom)$ such that their pieces are obtained by regularly slicing the domain $\nslice = \lfloor \nPieces^{1/\ndim}\rfloor$ times along each cartesian axis, leading to a partition of $\appDom$ in $\nslice^{\ndim}$ regular small cubes.
+% form a regular slicing of the cubic domain $\appDom$ in $\nslice^{\ndim}$.
+%The problem then reduces to finding the best degree $\polyDeg$ polynomial approximation of $f$ on each of the small slices.
+%Either \emph{(i)} $f$ is smooth on the given slice, in which case classical results of smooth approximation theory (\eg{} Jackson's theorem) provides a good degree $\smoothDeg$ polynomial approximation and a corresponding bound on the error, or \emph{(ii)} $f$ is nonsmooth on the slice.
+%In that case, as discussed in the introduction, high degree polynomials provide poor approximations.
+%We thus use a well-suited linear approximation, along with the Lipschitz property of the function.}
+
+% \begin{proof}[Proof of \cref{prop:Jackson}]
+%   blah
+% \end{proof}
+
+% \gbcomment{Proof TODO:
+%   \begin{itemize}
+%     \item{} extract a precise statement from Plesniak94.
+    % \item{} fix the $\C^{r}$ extension of $f$ on $\cl(\M)$.
+    % \item pass on notation
+    % \item{} [x] clarify that the cubes $c$ are closed, to apply theorem J.
+    % \item{} [-] comment on the theorem bound.
+  % \end{itemize}
+% }
+
+% We now proceed with the proof of \cref{th:main}.
+
+% \gbcomment{TODO: proof outline here}
+%\old{
+%\begin{remark}[Extensions to non-cubic domains]
+%  The domain $\cancube$ on which $f$ is approximated is a full-dimensional cube.
+%  However, one might use approximation of smooth multivariate functions on more general domains, \eg{} polyhedral or more general \citep{totik2020polynomial,dai2023polynomial}.
+%\end{remark}
+
+%\begin{remark}
+%    Our proof technique uses a regular partition of the approximation domain. It would be interesting to see if partitions of the domain adapted to the cell decomposition, \ie{} that approximate the boundaries between the cells, would improve on the bound of \cref{th:main}.
+%    Such adapted partitions are constructed in \eg{} \citet{boissonnatTracingIsomanifoldsTime2021}.
+%\end{remark}}
+
+%\begin{remark}[Lipschitzianity]
+%    We assume in the above that the underlying function is $K$-Lipschitz. However, \cite{FISCHER2014787} shows that any locally Lipschitz tame function  can be approximated by 
+%\end{remark}
+
+
+\section{Mixed-integer formulation of piecewise polynomial approximation}
+\label{sec:mip-form}
+
+In this section, we formulate the problem of piecewise polynomial regression as a mixed-integer program (MIP), inspired by the optimal classification trees framework \citep{bertsimasOptimalClassificationTrees2017}.
+% Besides, we establish its consistency.
+
+% \subsection{Mixed-integer formulation}
+% \label{sec:mixed-integ-form}
+
+The mixed-integer optimization problem expects as input $\nSample$ points $(x_{i})_{i\in[\nSample]}$ that belong to $\appDom$, and the corresponding function values $y_{i} = f(x_{i})$ for $i\in[\nSample]$.
+Without loss of generality, we assume that the sample points belong to $[0, 1]^{\ndim}$.
+% We introduce here the procedure to approximate a tame function $f$ on a domain $\appDom$.
+% The first step consists in sampling $\nSample$ points $(x_{i})_{i=1, \ldots, \nSample}$ uniformly on a domain $\appDom$, and computing the corresponding function values $y_{i} = f(x_{i})$ for $i=1,\ldots,\nSample$.
+% We assume that the domain on which $f$ is approximated is scaled to $[0, 1]^{\ndim}$.
+The output is a piecewise polynomial function; the boundaries of the smooth pieces are defined by affine hyperplanes.
+\Cref{table:hyperparam,table:variablesaffhyp} summarize the hyperparameters and variables of the mixed-integer formulation; we now explain the formulation details.
+% is obtained by formulating and solving the following mixed integer optimization problem.
+
+% \subsection{Axis-aligned regression tree formulation}
+% In this section, we introduce the mixed-integer formulation for fitting a piecewise polynomial function to the data points $(x_{i}, y_{i})_{i\in[\nSample]}$, such that the pieces of the polynomials have axis-aligned boundaries.
+% \Cref{table:hyperparam,table:variablesaxisaligned} summarize the hyperparameters and variables of the mixed-integer formulation.
+
+\textbf{Binary tree.} We consider a fixed binary tree of depth $D$.
+The tree has $T = 2^{D+1}-1$ nodes, indexed by $t=1, \ldots, T$ such that all branching nodes are indexed by $t=1, \ldots, 2^{D}-1$ and leaf nodes are indexed by $t=2^{D}, \ldots, 2^{D+1}-1$.
+The sets of branching nodes and leaf nodes are denoted $\bNode$ and $\lNode$ respectively.
+Besides, the set of ancestors of node $t$ is denoted $A(t)$.
+This set is partitioned into $A_{L}(t)$ and $A_{R}(t)$, the subsets of ancestors at which branching was performed on the left and right respectively.
+% \Cref{fig:tree} shows a tree of depth $D = 2$ and illustrates these notions.
+\Cref{fig:tree} shows a tree of depth $D = 2$ where
+\eg{} the ancestors of node $6$ are $A(6) = \{1, 3\}$, and left and right branching ancestors are $A_{L}=\{3\}$ and $A_{R}=\{1\}$.
+Each leaf corresponds to an element of the partition, defined by the inequalities of its ancestors \eg{} leaf $6$ corresponds to $\{x\in\bbR^{\ndim} : a_{1}^{\top}x \ge b_{1}, a_{3}^{\top}x < b_{3}\}$.
+
+% \begin{figure}[t]
+%   \begin{center}
+%     \resizebox{0.48\textwidth}{!}{
+%       \begin{forest}
+%         [1 ,for tree={s sep=1.4in,l=12ex},
+%         [2 ,edge label={node[draw,fill=white,midway]{\footnotesize{$a_{1}^{\top}\cdot - b_{1} < 0$}}}
+%         [4 ,edge label={node[draw,fill=white,midway] {\footnotesize{$a_{2}^{\top}\cdot - b_{2} < 0$}}}
+%         ]
+%         [5 ,edge label={node[draw,fill=white,midway] {\footnotesize{$a_{2}^{\top}\cdot - b_{2} \ge 0$}}}
+%         ]
+%         ]
+%         [3 ,edge label={node[draw,fill=white,midway]{\footnotesize{$a_{1}^{\top}\cdot - b_{1} \ge 0$}}}
+%         [6 ,edge label={node[draw,fill=white,midway] {\footnotesize{$a_{3}^{\top}\cdot - b_{3} < 0$}}}
+%         ]
+%         [7 ,name=P2right,edge label={node[draw,fill=white,midway] {\footnotesize{$a_{3}^{\top}\cdot - b_{3} \ge 0$}}}
+%         ]
+%         ]
+%         ]
+%         % \draw[dashed] (P2left) --  node[above] {P2} (P2right);
+%       \end{forest}
+%     }
+%   \end{center}
+%   \caption{\label{fig:tree}
+%     Binary tree structure and partition of the space. The ancestors of node $6$ are $A(6) = \{1, 3\}$, and left and right branching ancestors are $A_{L}=\{3\}$ and $A_{R}=\{1\}$.
+%     To each leaf is associated an element of the partition, defined by the inequalities of its ancestors.
+%     The set corresponding to leaf $6$ is $\{x\in\bbR^{\ndim} : a_{1}^{\top}x \ge b_{1}, a_{3}^{\top}x < b_{3}\}$.
+%   }
+% \end{figure}
+
+% \begin{table}[t]
+%   \caption{Summary of the hyperparameters\label{table:hyperparam}}
+%   \begin{center}
+%     \resizebox{0.48\textwidth}{!}{
+%       \begin{tabular}{ll}
+%         \toprule
+%         parameter & interpretation \\ \midrule
+%         $D$ & depth of the binary tree \\
+%         $N_{min}$& minimal number of points allowed in a nonempty leaf \\
+%         $\polyDeg$ & maximum degree of the polynomial on each piece \\
+%         \bottomrule
+%       \end{tabular}
+%     }
+%   \end{center}
+% \end{table}
+
+\ifthenelse{\boolean{IsArxivVersion}}{
+\begin{figure}[t]
+        \begin{forest}
+          [1 ,for tree={s sep=1.4in,l=12ex},
+          [2 ,edge label={node[draw,fill=white,midway]{\footnotesize{$a_{1}^{\top}\cdot - b_{1} < 0$}}}
+          [4 ,edge label={node[draw,fill=white,midway] {\footnotesize{$a_{2}^{\top}\cdot - b_{2} < 0$}}}
+          ]
+          [5 ,edge label={node[draw,fill=white,midway] {\footnotesize{$a_{2}^{\top}\cdot - b_{2} \ge 0$}}}
+          ]
+          ]
+          [3 ,edge label={node[draw,fill=white,midway]{\footnotesize{$a_{1}^{\top}\cdot - b_{1} \ge 0$}}}
+          [6 ,edge label={node[draw,fill=white,midway] {\footnotesize{$a_{3}^{\top}\cdot - b_{3} < 0$}}}
+          ]
+          [7 ,name=P2right,edge label={node[draw,fill=white,midway] {\footnotesize{$a_{3}^{\top}\cdot - b_{3} \ge 0$}}}
+          ]
+          ]
+          ]
+          % \draw[dashed] (P2left) --  node[above] {P2} (P2right);
+        \end{forest}
+      \caption{\label{fig:tree}%
+        Binary tree and corresponding partition.
+        % The ancestors of node $6$ are $A(6) = \{1, 3\}$, and left and right branching ancestors are $A_{L}=\{3\}$ and $A_{R}=\{1\}$.
+        % To each leaf is associated an element of the partition, defined by the inequalities of its ancestors.
+        % The set corresponding to leaf $6$ is $\{x\in\bbR^{\ndim} : a_{1}^{\top}x \ge b_{1}, a_{3}^{\top}x < b_{3}\}$.
+  }
+\end{figure}
+\begin{table}
+      \begin{tabular}{ll}
+        \toprule
+        parameter & interpretation \\ \midrule
+        $D$ & depth of the binary tree \\
+        $N_{min}$& minimal number of points allowed in a nonempty leaf \\
+        $\polyDeg$ & maximum degree of the polynomial on each piece \\
+        \bottomrule
+      \end{tabular}
+      \caption{Summary of the hyperparameters\label{table:hyperparam}}%
+\end{table}}{
+\begin{figure}[t]
+  \begin{floatrow}
+    \ffigbox{%
+      \resizebox{0.48\textwidth}{!}{%
+        \begin{forest}
+          [1 ,for tree={s sep=1.4in,l=12ex},
+          [2 ,edge label={node[draw,fill=white,midway]{\footnotesize{$a_{1}^{\top}\cdot - b_{1} < 0$}}}
+          [4 ,edge label={node[draw,fill=white,midway] {\footnotesize{$a_{2}^{\top}\cdot - b_{2} < 0$}}}
+          ]
+          [5 ,edge label={node[draw,fill=white,midway] {\footnotesize{$a_{2}^{\top}\cdot - b_{2} \ge 0$}}}
+          ]
+          ]
+          [3 ,edge label={node[draw,fill=white,midway]{\footnotesize{$a_{1}^{\top}\cdot - b_{1} \ge 0$}}}
+          [6 ,edge label={node[draw,fill=white,midway] {\footnotesize{$a_{3}^{\top}\cdot - b_{3} < 0$}}}
+          ]
+          [7 ,name=P2right,edge label={node[draw,fill=white,midway] {\footnotesize{$a_{3}^{\top}\cdot - b_{3} \ge 0$}}}
+          ]
+          ]
+          ]
+          % \draw[dashed] (P2left) --  node[above] {P2} (P2right);
+        \end{forest}
+      }
+    }{\caption{\label{fig:tree}%
+        Binary tree and corresponding partition.
+        % The ancestors of node $6$ are $A(6) = \{1, 3\}$, and left and right branching ancestors are $A_{L}=\{3\}$ and $A_{R}=\{1\}$.
+        % To each leaf is associated an element of the partition, defined by the inequalities of its ancestors.
+        % The set corresponding to leaf $6$ is $\{x\in\bbR^{\ndim} : a_{1}^{\top}x \ge b_{1}, a_{3}^{\top}x < b_{3}\}$.
+  }}
+    \capbtabbox{%
+    \resizebox{0.48\textwidth}{!}{%
+      \begin{tabular}{ll}
+        \toprule
+        parameter & interpretation \\ \midrule
+        $D$ & depth of the binary tree \\
+        $N_{min}$& minimal number of points allowed in a nonempty leaf \\
+        $\polyDeg$ & maximum degree of the polynomial on each piece \\
+        \bottomrule
+      \end{tabular}
+      }
+    }{%
+      \caption{Summary of the hyperparameters\label{table:hyperparam}}%
+    }
+  \end{floatrow}
+\end{figure}
+}
+
+\begin{table}[t]
+  \caption{Summary of the variables of the affine-hyperplane regression tree formulation\label{table:variablesaffhyp}}
+  \begin{center}
+  \resizebox{0.6\textwidth}{!}{
+    \begin{tabular}{lll}
+      \toprule
+      variable & index domain & interpretation \\ \midrule
+      $l_{t} \in \{0, 1\}$ & $t\in\lNode$ & 1 iff any point is assigned to leaf $t$ \\
+      $z_{it} \in \{0, 1\}$ & $t\in\lNode$, $i\in[\nSample]$ & 1 iff point $x_{i}$ is assigned to leaf $t$ \\
+      $a_{m} \in \bbR^{\ndim}$ & \multirow{2}{*}{$m\in\bNode$} & \multirow{2}{*}{coefficients of the affine cut} \\
+      $b_{m} \in \bbR$ & & \\
+
+      $o_{jm} \in \{0, 1\}$ & $m\in\bNode$, $j\in[\ndim]$ & 1 iff coordinate $j$ of $a_{m}$ is positive \\
+      $a_{m}^{+},a_{m}^{-} \in \bbR$ & $m\in\bNode$ & the positive and negative part of $a_{m}$ \\
+
+      $\phi_{it} \in \bbR$ & $t\in\lNode$, $i\in[\nSample]$ & fit error of point $x_{i}$ by the polynomial of leaf $t$ \\
+      $\delta_{i} \in \bbR$ & $i\in[\nSample]$ & fit error of point $x_{i}$ by the piecewise polynomial function \\
+      $c_{t} \in \bbR^{\binom{\polyDeg + \ndim-1}{\ndim-1}} $ & $t\in\lNode$ & coefficients of the degree $\polyDeg$ polynomial associated with leaf $t$ \\
+      \bottomrule
+    \end{tabular}
+  }
+  \end{center}
+\end{table}
+
+\textbf{Affine-hyperplane partition of the space.}
+At each branching node $m\in\bNode$, a hyperplane splits the space in two subspaces
+\begin{equation}\label{eq:splitstrict}
+  a_m^{\top} x_i - b_{m}  < 0 \qquad a_m^{\top} x_i - b_{m}  \ge 0,
+\end{equation}
+that will be associated to the left and right children of node $m$.
+The parameters $a_{m}\in\bbR^{\ndim}$ and $b_{m}\in\bbR$ are variables of the mixed integer program.
+
+Making this formulation practical requires two precisions.
+First, in order to avoid scaling issues, we constrain $a_{m}$ to belong in $[-1,1]^{\ndim}$, such that $\|a_{m}\|_{1}=1$.\footnote{We depart here from the OCT-H formulation of \cite{bertsimasOptimalClassificationTrees2017}, which constrains the norm of $a_{m}$ to be at most $1$.}
+This formulates as
+\begin{align*}
+  \textstyle\sum_{j=1}^d{(a^+_{jt}+a^-_{jt})} = 1&&  \\
+  a_{jt} = a^+_{jt} - a^-_{jt} && \forall j \in [\ndim] \\
+  a^+_{jt} \le o_{jt} && \forall j \in [\ndim] \\
+  a^-_{jt} \le (1 - o_{jt}) && \forall j \in [\ndim]
+\end{align*}
+Furthermore, since $x_{i}\in[0, 1]^\ndim$, it holds that $a_{m}^{\top}x_{i}\in[-1, 1]$, so that $b_{m}$ is constrained to $[0, 1]$ without loss of generality.
+Second, we implement the strict inequality \eqref{eq:splitstrict} by introducing variable $z_{it}$ % t refers to a different node than m
+and a small constant $\mu>0$.
+% However, $a_{m}$ now takes real values in $[-1, 1]$.
+Noting that $a_t^{\top}x_i - b_t$ takes values in the interval $[-2, 2]$, the affine split inequalities \eqref{eq:splitstrict} now formulate as
+\begin{align*}
+  a_m^{\top} x_i &\ge b_m - 2(1 - z_{it}) & \forall m \in A_R(t)  \\%\forall i \in [\nSample], \; \forall t \in \mathcal{T}_L,\; \forall m \in A_R(t) \\
+  a_m^{\top} x_i + \mu &\le b_m + (2 + \mu)(1 - z_{it}) & \forall m \in A_L(t)  %\forall i \in [\nSample], \; \forall t \in \mathcal{T}_L, \; \forall m \in A_L(t)
+\end{align*}
+both for all $i$ in $[\nSample]$ and all $t$ in $\mathcal{T}_L$.
+
+\textbf{Regression on each partition element.}
+Each leaf $t\in\lNode$ corresponds to one element of the partition of $\appDom$ defined by the tree, and is associated with a degree $r$ polynomial $\textrm{poly}(\cdot; c_{t})$ whose coefficients are parameterized by variable $c_{t}$.
+The regression error of point $x_{i}$ by the polynomial associated with leaf $t$ is then $\phi_{it} = y_i - \textrm{poly}(x_{i}; c_{t})$.
+% \begin{equation}
+%   \phi_{it} = y_i - \textrm{poly}(x_{i}; c_{t}).
+% \end{equation}
+Each point $x_{i}$ is assigned to a unique leaf of the tree: for all $i\in[\nSample]$, $\sum_{t \in \lNode}{z_{it}} = 1$.
+% \begin{equation}
+%   \sum_{t \in \lNode}{z_{it}} = 1.
+% \end{equation}
+Furthermore, each leaf $t\in\lNode$ is either assigned zero or at least $N_{min}$ points: for all $i\in[\nSample]$, $\sum_{i=1}^{\nSample}{z_{it}} \ge N_{\min} l_t$ and $z_{it} \le l_{t}$.
+% \begin{equation}
+%  \sum_{i=1}^{\nSample}{z_{it}} \ge N_{\min} l_t \quad \text{ and } \quad z_{it} \le l_t \quad \text{for all } i \in [\nSample].
+% \end{equation}
+
+
+\textbf{Minimizing the regression error.}
+The objective is minimizing the average prediction error $\sum_{i=1}^{\nSample}|y_{i} - \textrm{poly}(x_{i}; c_{t(i)})|$, where $c_{t(i)}$ is the polynomial coefficients corresponding to the leaf to which $x_{i}$ belongs.
+We formulate this as minimizing $\nSample^{-1} \sum_{i=1}^{\nSample} \delta_{i}$,
+% \begin{equation}
+%   \frac{1}{\nSample} \sum_{i=1}^{\nSample} \delta_{i},
+% \end{equation}
+where $\delta_{i}$ models the absolute value of the prediction error for point $x_{i}$:
+% For each point $x_{i}$, $i\in[\nSample]$ and leaf $t\in\lNode$, the fit error is
+% Then, the prediction error for point $x_{i}$ is
+\begin{align*}
+  \delta_{i} &\ge \phantom{-}\phi_{it} - (1 - z_{it})M \quad \text{for all } t \in \lNode \\
+  \delta_{i} &\ge -\phi_{it} - (1 - z_{it})M \quad \text{for all } t \in \lNode
+\end{align*}
+where $M$ is a big constant that makes the constraint inactive when $z_{it} = 0$.
+Note that the above big-$M$ formulation can be replaced by indicator constraints, if the solver supports them, to encode that if $z_{it} = 1$, then $\delta_i \ge \phi_{it}$,  $\delta_i \ge -\phi_{it}$.
+We further note that the formulation could be changed to optimize the mean squared error, by changing the objective function to $\nSample^{-1}\sum_{i=1}^{\nSample} \delta_i^2$.
+
+% \gbcomment{
+% ``The used big-M constraints can be replaced with the use of indicator constraints, since the value of $M$ cannot be bound efficiently.'' Meaning?}
+% \jncomment{I am not sure how to describe it. $M$ would have to be a bound on the error, which can theoretically be infinitely high. So, in the implementation, I use indicator constraints \url{https://www.gurobi.com/documentation/current/refman/py_model_agc_indicator.html} in the following way:
+% \begin{subequations}
+%     \begin{align}
+%         z_{it} = 1 &\Rightarrow \delta_i \ge \phi_{it} \\
+%         z_{it} = 1 &\Rightarrow \delta_i \ge -\phi_{it}
+%     \end{align}
+% \end{subequations}
+% They are implemented with SOS constraints (\url{https://www.gurobi.com/documentation/current/refman/constraints.html}).}
+% \gbcomment{Right, thanks a lot!}
+
+
+Combining these elements yields the affine hyperplane formulation, summarized in \cref{eq:OrtFormulationHplane}, \cref{appx:affhyp}.
+% Replacing in \cref{eq:OrtFormulation} the axis-aligned formulation elements by the above ones yields the affine hyperplane splits formulation:
+
+\begin{remark}[Axis-aligned regression]
+  In \Cref{appx:axisalign}, we propose a version of \eqref{eq:OrtFormulationHplane} tailored to functions whose cells have boundaries aligned with cartesian axes.
+  Such functions appear in signal processing applications, and are the topic of recent works \citet{chatterjeeAdaptiveEstimationMultivariate2021,bertsimasOptimalClassificationTrees2017,NEURIPS2021_dba4c1a1}.
+  % consider cases where the function of interest admits a cell decomposition the boundaries of which align with the cartesian axes.
+\end{remark}
+
+% The formulation for training the optimal regression tree with general affine hyperplane splits.
+% The constraints in black type are the OCT-H of \cite{bertsimasOptimalClassificationTrees2017}, whereas the constraints and variables in violet are our modifications and extensions thereof.
+
+% \subsection{Asymptotic recovery of the tame function}
+% \label{sec:asympt-recov-tame}
+
+% % \gbcomment{
+% % for piecewise linear, we recover the function and thus the stratification exactly for large enough parameters.
+% % for nice enough more general functions, we have such a result asymptotically. The proof of the main theorem should to such a result.
+% % }
+
+% % \old{
+% % \begin{algorithm}[t]
+% %   \caption{Determistic approximation}
+% %   \label{alg:deter}
+% %   \begin{algorithmic}[1]
+% %     \REQUIRE tame function $f:\bbR^{\ndim}\to\bbR$, MIP parameters $(D, N_{min}, r)$, and lattice size $\nslice$.
+% %     \STATE Sample $f$ on regular lattice of $\nSample = \nslice^{\ndim}$ points.
+% %     \STATE Solve formulation \eqref{eq:OrtFormulationHplane}, and return the obtained piecewise polynomial function.
+% %   \end{algorithmic}
+% % \end{algorithm}
+
+% % \begin{algorithm}[t]
+% %   \caption{Randomized approximation}
+% %   \label{alg:rand}
+% %   \begin{algorithmic}[1]
+% %     \REQUIRE tame function $f:\bbR^{\ndim}\to\bbR$, MIP parameters $(D, N_{min}, r)$, and number of sample points $\nSample$.
+% %     \STATE Sample function on $\nSample$ points drawn i.i.d. uniformly in $\appDom$.
+% %     \STATE Solve formulation \eqref{eq:OrtFormulationHplane}, and return the obtained piecewise polynomial function.
+% %   \end{algorithmic}
+% % \end{algorithm}
+% % }
+
+% Here, we give a consistency result for the procedure presented above.
+
+% \gbmargincomment{To rework.}
+% \begin{corollary}[Consistency]\label{th:exactrecov}
+%     Consider a piecewise linear function $f:\bbR^\ndim \to \bbR$, and assume w.l.o.g. that $\appDom = [0, 1]^\ndim$.
+%     If the depth of the tree is larger than $fk$, then
+%     \begin{enumerate}[i.]
+%       \item \cref{eq:OrtFormulationHplane} with $\nSample = L^\ndim$ points on a regular lattice spanning $\appDom$ recovers $f$ asymptotically \old{on the approximation domain if $L \ge 0.5 (\min_i \Mrad_i)^{-1}$},
+%       \item \cref{eq:OrtFormulationHplane} with $\nSample \ge (\ndim+1)/\min_{i\in\Mcol} \Mvol_i$ points sampled uniformly in $\appDom$ recovers $f$ asymptotically.
+%     \end{enumerate}
+% \end{corollary}
+
+% % \old{
+% % Notation: $\Mvol_i$ volume of cell $i$, $\Mrad_i$ radius of largest ball in $\ell_1$ norm enclosed in cell $i$, $k = |\Mcol|$ the number of cells, $f_i$ number of faces of cell $i$.
+% % \begin{corollary}[Consistency]
+% %     Consider a piecewise linear function $f:\bbR^\ndim \to \bbR$, and assume w.l.o.g. that $\appDom = [0, 1]^\ndim$.
+% %     If the depth of the tree is larger than $fk$, then
+% %     \begin{enumerate}[i.]
+% %       \item \cref{eq:OrtFormulationHplane} with $\nSample = L^\ndim$ points on a regular lattice spanning $\appDom$ recovers $f$ asymptotically \old{on the approximation domain if $L \ge 0.5 (\min_i \Mrad_i)^{-1}$},
+% %       \item \cref{eq:OrtFormulationHplane} with $\nSample \ge (\ndim+1)/\min_{i\in\Mcol} \Mvol_i$ points sampled uniformly in $\appDom$ recovers $f$ asymptotically.
+% %     \end{enumerate}
+% % \end{corollary}
+% % Before discussing the proof of \cref{th:exactrecov}, some remarks are in order.
+% % }
+
+% % \old{
+% % The first algorithm requires a number of sample points that grows exponentially with space dimension.
+% % The second algorithm provides a guarantee \emph{linear in the ambiant space dimension}, and involves the volume of smallest cell of $f$.
+
+% % One important point is that the MIP formulation must allow for a deep enough tree, so that it contains a refinement of the partition of $f$.
+% % The technical result employed here is that every \gbcomment{to be continued}
+% % }
+
+% % \paragraph{Proof outline of \cref{th:exactrecov}.}
+
+% % \gbcomment{
+% % The space of functions spanned by the MIP formulation contains a refinement of the cell decomposition of $f$;
+% %     For this, we use a bound from the following proposition:
+% %     \begin{proposition}
+% %       Consider a partition of the hypercube in $k$ polytopes, each with at most $f$ faces.
+% %       Then there exists a hierarchical affine partition that refines this partition, with depth at most $kf$.
+% %     \end{proposition}
+% % There are enough sample points in each cell to determine exactly the linear slope. This is either deterministic or randomized.
+% % }
+
+% \old{See \cite{chatterjeeAdaptiveEstimationMultivariate2021,NEURIPS2021_dba4c1a1} for an analysis of their statistical performance.}
+
+
+
+\section{Numerical experiments}
+\label{sec:numer-exper}
+
+In this section, we demonstrate the applicability of the piecewise polynomial regression method developed in \cref{sec:mip-form}.
+\cref{sec:addit-deta-num,sec:numericalexperiments} contains complementary details and experiments.
+
+\paragraph{Setup.}
+We implement the affine-hyperplane formulation, detailed in \cref{eq:OrtFormulationHplane}, in Python and use Gurobi as the MIP solver.
+We present three applications: regression of the cone function \eqref{eq:cone2dintro}, regression of a Neural Network, and denoising of a piecewise constant 2d signal, following the experiments of \citep{NEURIPS2021_dba4c1a1}.
+% Denoising \cite{NEURIPS2021_dba4c1a1},
+% We present 3 applications. Denoising \cite{NEURIPS2021_dba4c1a1}, regression of the cone function \eqref{eq:cone} using randomly sampled points as input, and finally, approximation of a non-piecewise linear Neural Network using points sampled on a regular grid. % or lattice? 
+We use trees of varying depth $D \in \{2,3,4\}$ and polynomial degree $\polyDeg \in \{0,1,2\}$.
+We set $N_{\min}=1$ and $\mu=10^{-4}$ across all experiments, and run experiments on a personal laptop.
+% in \eqref{eq:OrtFormulationHplane}
+% and time limit.
+% Each optimization ran on a personal laptop.
+% All methods share the minimum number of points in a partition $N_{\min}=1$ and $\mu=10^{-4}$ in \eqref{eq:OrtFormulationHplane}.
+% We compare the performance of trees of depth $D=2$ to $4$; the minimum number of points per partition is $N_{min}=1$, and the regression polynomials have degree $\smoothDeg=1$.
+% Each optimization ran on a laptop with a 5-minute time limit. \gbmargincomment{To check.}
+% We let $\mu=10^{-4}$ in \eqref{eq:OrtFormulationHplane}.
+%, and round to $4$ decimals the scaled values $x_i \in [0, 1]^\ndim$.
+
+% The trees were parametrized with depth $D=2$, unless stated otherwise, meaning that we expect at most four regions.
+% We set the minimum number of points per region to $N_{min} = 1$, and the degree of the regression polynomials to $\smoothDeg=1$.
+% Finally, we set $\mu=10^{-4}$ in the affine-hyperplane formulation, and round to $4$ decimals the scaled values $x_i \in [0, 1]^\ndim$.
+
+\subsection{Regression of tame functions}
+\label{sec:regr-tame-funct}
+
+% \jnreplace{We consider the regression problem for three tame functions.
+% % Further, we consider 2 more advanced functions.
+% For two of the \jnmagincomment{I think like this it is ok, since the inftynorm has 4 partitions only and is thus quite simple} functions\jamargincomment{or should we add the infinity norm in the figure as well?}, we}
+We consider the regression problem for two tame functions and report in \cref{fig:regreexpes} the level lines of the original function and the level lines of the piecewise polynomial approximations provided by the affine-hyperplane formulation \eqref{eq:OrtFormulationHplane}.
+\Cref{table:expsregression} shows the error computed on a $1000 \times 1000$ grid of regularly spaced points. We divide the absolute errors by the maximal absolute value of the underlying ground truth.
+% We also report in \cref{table:expsregression} the error between each test function and the obtained piecewise polynomial approximation.
+
+% \jndelete{
+% \paragraph{Polyhedral norm}
+% Firstly, we consider $\|x\|_{\infty} = \max_{i \in [\ndim]} |x_i|$ as an example of a tame function with partitions unfit for trees with axis-aligned splits, \eg{} recent works of \citet{NEURIPS2021_dba4c1a1,chatterjeeAdaptiveEstimationMultivariate2021}.
+% When we fit a hundred points sampled from the $\|\cdot\|_{\infty}$, our approach \eqref{eq:OrtFormulationHplane} returns a nearly optimal solution in under 30 seconds, and the optimal within one hour.}
+
+% \jncomment{I suppose this should be combined with the notes on optimization, this was commmented out last I checked, so now I am not sure if this is WIP or not. It seems to be so, but let me know if I should do it.}
+
+
+\paragraph{Piecewise-affine function.}
+Firstly, we return to the ``cone'' function. %, introduced in \eqref{eq:cone2dintro}.
+% \begin{equation}%
+%     \label{eq:cone}
+%     \ifIsArxivVersion
+%       \fCone(x) =
+%       \begin{cases}
+%         -\sCone x_{1} + \frac{1+\sCone }{\rCone }x_{2} & \text{ if } x_{1} > 0 \text{ and } 0 < x_{2} < \rCone  x_{1} \\
+%         -\sCone x_{1} - \frac{1+\sCone }{\rCone }x_{2} & \text{ if } x_{1} > 0 \text{ and } -\rCone x_1 < x_{2} < 0 \\
+%         \|x\|_{\infty} & \text{ else}
+%       \end{cases}
+%     \else
+%       \resizebox{0.40\textwidth}{!}{$
+%         \fCone(x) =
+%         \begin{cases}
+%           -\sCone x_{1} + \frac{1+\sCone }{\rCone }x_{2} & \text{ if } x_{1} > 0 \text{ and } 0 < x_{2} < \rCone  x_{1} \\
+%           -\sCone x_{1} - \frac{1+\sCone }{\rCone }x_{2} & \text{ if } x_{1} > 0 \text{ and } -\rCone x_1 < x_{2} < 0 \\
+%           \|x\|_{\infty} & \text{ else}
+%         \end{cases}
+%         $}
+%     \fi
+%   \end{equation}
+This function is piecewise-linear and continuous; see \cref{fig:cone} (left pane) for an illustration.
+% and equals $\|\cdot\|_{\infty}$ on almost all the space, except on a small cone of radius $\rCone$ that goes along the ray $x_{1}\cdot \bbR_{+}$.
+% On this ray, the function is decreasing and equals $-\sCone x_{1}$; see \cref{fig:cone} (left pane) for an illustration.
+% This is a nonconvex function that may be worst-case for most regression methods (in terms of the number of samples required to obtain a good model of the function).
+This is a nonconvex function for which estimating the correct full-dimensional cells with a sampling scheme gets harder as $\rCone$ goes to zero or as the dimension of the space $\ndim$ increases.
+% that may be worst-case for most regression methods (in terms of the number of samples required to obtain a good model of the function).
+% In two dimensions, this function boils down to \eqref{eq:cone2dintro} of the introduction.
+
+\Cref{fig:cone} (middle and right pane) shows the obtained piecewise approximation of $\fCone$ (with $\rCone=\sCone=0.5$), for depth $2$ and $3$ approximation trees with time budget of 5 and 10 minutes.
+There are $\nSample = 250$ points sampled uniformly; the polynomial degree is $\polyDeg=1$.
+% \old{
+% The regression data is $\nSample = 250$ points sampled uniformly at random; the time budget for the trees are respectively 5 and 10 minutes.
+% % We fit linear segments ($\polyDeg = 1$) to the partitions.
+% }
+% In the center is the result of a tree with $D = 2$ after 5 minutes of optimization.
+The depth $D=2$ tree fails to recover an approximation of the cells, as it can only approximate $4$ cells while $\fCone$ has $7$ cells.
+% , indeed because the cone function contains more than 4 cells.
+The depth $D = 3$ recovers the cell decomposition well qualitatively, and reduces the error measures by a factor $2$; see \cref{table:expsregression}.
+% after 10 minutes of optimization.
+%
+% It has recovered the cells quite well.
+
+% \Cref{fig:cone} shows the results of the regression of \eqref{eq:cone} with $\rCone=\sCone=0.5$.
+% The affine-hyperplane fits the function better than the axis-aligned one, but still does not capture well the cells of the cone function with depth $D=2$.
+% This is reasonable, as the function contains more than $4$ cells.
+
+% \Cref{fig:cone_depth3} shows the output of the two regression models with depth $D=3$ (ran with a 10 minute time limit).
+% The obtained functions are much more accurate, although the cell decomposition of the function is still not obtained (this would require $D=4$).
+% We ran this with 10 minute time limit and obtained very accurate results (see )
+% , although .
+% This function contains more than 4 full-dimensional cells, so we also tested trees of depth equal to 3.
+% because the ground truth contains more than 4 regions.
+
+% \begin{figure}[t]
+%   \centering
+%   \includegraphics[width=\columnwidth]{figures/numres_plots/cone_depths.png}
+%   \caption{Cone function \eqref{eq:cone} and regression results for trees of depth 2 and 3. Red crosses are the coordinates of samples used for the training. Black lines show the partitioning of the space.}
+%   \label{fig:cone}
+%   \vskip -0.15in
+% \end{figure}
+% \begin{figure}[t]
+%   \centering
+%   \includegraphics[width=\columnwidth]{figures/numres_plots/NN_depths.png}
+%   \caption{Neural Network and regression results for trees of depth 2 and 3. Red crosses are the coordinates of samples used for the training. Black lines show the partitioning of the space.}
+%   \label{fig:NN_fit}
+%   \vskip -0.2in
+% \end{figure}
+
+\begin{figure}[t]
+  \centering
+  \begin{subfigure}{0.48\columnwidth}
+    \includegraphics[width=\textwidth]{figures/numres_plots/cone_depths.png}
+    \caption{The cone function \eqref{eq:cone2dintro}.}
+    \label{fig:cone}
+  \end{subfigure}
+  % \hfill
+  \begin{subfigure}{0.48\columnwidth}
+    \includegraphics[width=\textwidth]{figures/numres_plots/NN_depths.png}
+    \caption{The neural network from \cref{fig:NN_architecture}}
+    \label{fig:NN_fit}
+  \end{subfigure}
+  \caption{Tame functions and regression results for trees of depth 2 and 3. Red crosses are the coordinates of samples used for the training. Black lines show the decomposition of the space.\label{fig:regreexpes}}
+\end{figure}
+
+
+% \begin{figure}[ht]
+% \vskip 0.2in
+% \begin{center}
+% \centerline{\includegraphics[width=\columnwidth]{icml_numpapers}}
+% \caption{Historical locations and number of accepted papers for International
+% Machine Learning Conferences (ICML 1993 -- ICML 2008) and International
+% Workshops on Machine Learning (ML 1988 -- ML 1992). At the time this figure was
+% produced, the number of accepted papers for ICML 2008 was unknown and instead
+% estimated.}
+% \label{icml-historical}
+% \end{center}
+% \vskip -0.2in
+% \end{figure}
+
+% \begin{figure}[t]
+%     \centering
+%     \includegraphics[width=0.48\textwidth]{figures/numres_plots/cone_depth2.png}
+%     \caption{Cone function \eqref{eq:cone}. Red x symbols are the coordinates of samples used in the training. Black lines show the partitioning of the space.}
+%     \label{fig:cone}
+% \end{figure}
+% \begin{figure}[t]
+%     \centering
+%     \includegraphics[width=0.48\textwidth]{figures/numres_plots/cone_depth3.pdf}
+%     \caption{Cone function \eqref{eq:cone} for trees of depth 3. Red x symbols are the coordinates of samples used in the training. Black lines show the partitioning of the space.}
+%     \label{fig:cone_depth3}
+% \end{figure}
+
+
+\paragraph{Non-piecewise-linear Neural Network}
+
+We consider a small neural network, comprised of 27 parameters, sigmoid, $\tanh$, ReLU activations, and 1d max-pooling; see the architecture in \Cref{fig:NN_architecture}.
+
+The neural network is trained to approximate the 2d function $x\mapsto 2\sin{x_1} + 2\cos{x_2} + x_2 / 2$, from 15 random samples on the cube $[-2,2]^{2}$.
+The loss is the mean squared error over the 15 samples; it is optimized in a single batch for 5000 epochs using the \texttt{AdamW} algorithm.
+% The last example we present is the case of approximation of a Neural Network (NN) using the MIP formulation. We have a two-dimensional input space $(x_1, x_2) \in [-2,2]^2$, and we are estimating a function $$.
+% We train a small NN to approximate the function.
+% It has 27 parameters and is trained on 15 random samples from the input space to be trained in the overparametrized setting.
+% It has various activations and a 1D max-pooling layer.
+% Its architecture is shown in \Cref{fig:NN_architecture}.
+% We train the NN with all 15 samples in a single batch for 5000 epochs, using the \texttt{AdamW} optimizer.
+
+% We train two small NNs to approximate the function. A simpler one has 25 parameters (2 hidden layers with 4 and 2 neurons respectively) and is trained on 10 random samples from the input space. It contains only ReLU activations, which makes the approximation piece-wise linear. The other NN, with 27 parameters, is trained on 15 random samples from the input space. This second NN uses various activations and a 1D max-pooling layer. Its strucure is shown in \Cref{fig:NN_vis}.
+% We train both NNs in the same way, with all data in a single batch, for 5000 epochs, using \texttt{AdamW} optimizer.
+% The input space, target value, and sampled points are visualized in \Cref{fig:dl_example1,fig:dl_example2} in the first plots on the left.
+% The second plots, in the middle, show the approximation by the respective NNs.
+
+We approximate the output of the trained NN by taking $\nSample = 225 = 15^{2}$ points in a $15\times15$ regular grid over the approximation space and optimize the trees using that as input.
+% \jnmargincomment{Also maybe should decide on the grid/lattice and use only one}
+We set the polynomial degree $\polyDeg=2$.
+% and let the optimization time out after 30 and 60 minutes for trees of depth 2 and 3, respectively. % this is repeated right after this
+
+% \Cref{fig:NN_fit}
+
+\Cref{fig:NN_fit} (middle and right pane) shows the obtained piecewise approximation of the Neural Network, for depth $2$ and $3$ approximation trees with time budget of 30 and 60 minutes. 
+% There are $\nSample = 225 = 15^{2}$ points regularly spaced on a grid; the polynomial degree is $\polyDeg=2$.
+Increasing the depth from 2 to 3 reduces again the error measures by a factor of 2; see \Cref{table:expsregression}. 
+% The depth $D=2$ tree fails to recover an approximation of the cells, as it can only approximate $4$ cells while $\fCone$ has $7$ cells.
+% The depth $D = 3$ recovers the cell decomposition well qualitatively, and reduces the error measures by a factor $2$; see \cref{table:expsregression}.
+
+% We use the affine-hyperplane regression tree formulation for trees of depth 2 to fit the data. 
+% The third plot in \Cref{fig:dl_example1,fig:dl_example2} shows the result after a 5-minute timeout for the simpler and more complex NNs, respectively.
+
+
+% - denoising, [shows interest for Neurips community], small figure, table;
+% - cone function, depth 2\&3, only errors, no plot
+% - NN function, depth 2\&3, errors in table, plot as well.
+
+% \begin{figure*}
+%     \centering
+%     \includegraphics[width=0.9\textwidth]{figures/numres_plots/NN_various_depth2.pdf}
+%     \caption{Approximation of the more complex Neural Network. On the left is the original function, in the middle is the approximation of the function by a Neural Network (see \Cref{fig:ExampleNN} for its architecture), and finally, on the right is a resulting tree approximation of the Neural Network. The black lines show the partitioning of the space of the tree and the stratification of the NN output.}
+%     \label{fig:ExampleNN_res}
+% \end{figure*}
+
+% \paragraph*{Further notes}
+% The experiments are implemented in a public repository accessible from \url{https://github.com/Epanemu/picewise_poly_trees}.
+
+% results in 3D after a few minutes look rather confusing, would not help anyone
+% \begin{figure}
+%     \centering
+%     \includegraphics[width=0.8\textwidth]{figures/cone3D.png}
+%     \caption{Cone function ($\hat{f}(x)$) \eqref{eq:fhat} in 3D}
+%     % \label{fig:cone3d} % does not comile for some reason
+% \end{figure}
+
+
+\subsection{Denoising of a piecewise-constant 2d signal}
+\label{sec:deno-piec-const}
+
+\begin{figure}[t]
+  \centering
+  % \includegraphics[width=0.48\textwidth]{figures/numres_plots/denoising.png}
+  \includegraphics[width=0.5\columnwidth]{figures/numres_plots/denoising_1hour.png}
+  \caption{
+    Four denoising scenarios from \citet[Figure 3]{NEURIPS2021_dba4c1a1}.
+    The regression trees are restricted to axis-aligned splits and have depth 4.
+    First row: ground truth, second row: (corrupted) regression signal, third row: recovered signal from the mixed integer formulation.}
+  \label{fig:data_noisy}
+\end{figure}
+
+We consider now a slightly different set-up: following \citet{NEURIPS2021_dba4c1a1}, we consider four two-dimensional functions that are piecewise constant on a 25 by 25 grid, illustrated in \Cref{fig:data_noisy} (row one).
+% Following the denoising scenarios of
+The regression data is the function corrupted by an additive Gaussian with zero mean and standard deviation of $\sigma = 0.5$, illustrated in \Cref{fig:data_noisy} (row two).
+Row three of \Cref{fig:data_noisy} shows, for each scenario, the output of regression trees with depth $D=4$ and polynomial degree $\polyDeg=0$, with a time limit of 1 hour.
+
+The piecewise polynomial formulation used here is a simplified version of \Cref{eq:OrtFormulationHplane}, where the splits are restricted to align with the Cartesian axes; see \cref{appx:axisalign} for details.
+% It is based on the OCT formulation of \citet{bertsimasOptimalClassificationTrees2017}, and it is described in detail in \Cref{appx:axisalign}.
+\Cref{table:expsdenoising} shows the recovery error of the regression trees; the recovered signals are comparable in quality to Figure 3 in \citet{NEURIPS2021_dba4c1a1}.
+
+\subsection{Notes on the optimization process}
+\label{sec:note-optim-process}
+To study the MIP optimization process until completion, we choose the $\norm{\cdot}_{\infty}$ norm.
+% \jadelete{, \ie{} the cone function \eqref{eq:cone} with $\rCone = 0$ \jnmargincomment{Is this connection to cone function a helpful comment?}}
+This is a simple example of a tame function with partitions unfit for approximation by trees with axis-aligned splits, as in \eg{} the recent works of \citet{NEURIPS2021_dba4c1a1,chatterjeeAdaptiveEstimationMultivariate2021}.
+
+We optimize over $\nSample=100$ randomly sampled points with depth $D=2$ and polynomial degree $\polyDeg=1$. 
+In the Appendix,  \Cref{fig:mip_process} shows the evolution of objective value bounds: the blue curve shows the objective value of the best candidate found by the solver so far, the orange curve shows the best lower bound on the optimal objective value found so far.
+A candidate piecewise polynomial function is proved to be optimal when the two curves coincide.
+Here, the mixed-integer solver takes almost 50 minutes to find a candidate piecewise polynomial function \emph{and} prove its optimality.
+But already after 11 seconds, the candidate function has an objective value within $10^{-6}$ of the optimal objective value.
+Most of the effort in solving \eqref{eq:OrtFormulationHplane} is thus spent on proving optimality of the candidate function.
+% the incumbent solution has objective value, \ie{} the mean absolute error on training samples, within $10^{-6}$ of the optimum.\jnmargincomment{Is this understandable? the actual solution is found after about half an hour, but already after 10.9 seconds the optimal value is $< optimum + 10^{-6}$}
+% It takes over 40 minutes to find an improvement on the lower bound. 
+This is an even more extreme contrast between the optimization of the two bounds as compared to the results for OCT \cite{bertsimasOptimalClassificationTrees2017}.
+This suggests that although the rest of our results were not proven optimal, the solutions could be close to optimal after a short computing time.
+
+\section{Conclusions and limitations}
+
+Our numerical results showcase a proof-of-concept implementation, whose scalability (in terms of global optimality) is limited to low-dimensional functions, while a feasible solution can be found surprisingly quickly. Cf. \Cref{fig:mip_process} in the Appendix.  
+Improvements in the search for lower (dual) bounds is an important direction of future work.
+
+
+% \ifIsArxivVersion
+% \else
+%   \section*{Ethical and societal impact}
+%   This paper presents mainly theoretical work whose goal is to advance the field of Machine Learning. There are many potential societal consequences of our work, none which we feel must be specifically highlighted here.
+% \fi
+
+%%% Local Variables:
+%%% mode: latex
+%%% TeX-master: "main_neurips"
+%%% End:

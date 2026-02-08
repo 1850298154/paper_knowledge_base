@@ -1,0 +1,1459 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%2345678901234567890123456789012345678901234567890123456789012345678901234567890
+%        1         2         3         4         5         6         7         8
+
+\documentclass[letterpaper, 10 pt, conference]{ieeeconf}  % Comment this line out if you need a4paper
+
+%\documentclass[a4paper, 10pt, conference]{ieeeconf}      % Use this line for a4 paper
+
+\IEEEoverridecommandlockouts                              % This command is only needed if 
+                                                          % you want to use the \thanks command
+
+\overrideIEEEmargins                                      % Needed to meet printer requirements.
+
+%In case you encounter the following error:
+%Error 1010 The PDF file may be corrupt (unable to open PDF file) OR
+%Error 1000 An error occurred while parsing a contents stream. Unable to analyze the PDF file.
+%This is a known problem with pdfLaTeX conversion filter. The file cannot be opened with acrobat reader
+%Please use one of the alternatives below to circumvent this error by uncommenting one or the other
+%\pdfobjcompresslevel=0
+%\pdfminorversion=4
+
+% See the \addtolength command later in the file to balance the column lengths
+% on the last page of the document
+
+% The following packages can be found on http:\\www.ctan.org
+%\usepackage{graphics} % for pdf, bitmapped graphics files
+%\usepackage{epsfig} % for postscript graphics files
+%\usepackage{mathptmx} % assumes new font selection scheme installed
+%\usepackage{times} % assumes new font selection scheme installed
+%\usepackage{amsmath} % assumes amsmath package installed
+%\usepackage{amssymb}  % assumes amsmath package installed
+
+\usepackage[dvipsnames]{xcolor}
+\input{commands.tex}
+
+\makeatletter
+\let\NAT@parse\undefined
+\makeatother
+\usepackage[colorlinks=true, linkcolor=blue, citecolor=green, urlcolor=blue, 
+            bookmarks=false, hypertexnames=true]{hyperref}
+\hypersetup{
+    colorlinks=blue,
+    linkcolor=blue,
+    filecolor=magenta,      
+    urlcolor=blue,
+    % pdftitle={Overleaf Example},
+    pdfpagemode=FullScreen,
+    }
+
+\title{\LARGE \bf
+Distributed Model Predictive Covariance Steering
+}
+
+
+\author{Augustinos D. Saravanos$^{1}$, Isin M. Balci$^{2}$, Efstathios Bakolas$^{2}$ and Evangelos A. Theodorou$^{1}$ % <-this % stops a space
+% \thanks{This work was supported by the ARO Award $\#$W911NF2010151 and the Georgia COVID relief fund. The second and third authors acknowledge NSF support under award CMMI-1937957.}% <-this % stops a space
+\thanks{$^{1}$
+% Augustinos D. Saravanos and Evangelos A. Theodorou are with the
+Daniel Guggenheim School of Aerospace Engineering, Georgia Institute of Technology, GA, USA
+        {\tt\small \{asaravanos,evangelos.theodorou\}@gatech.edu}}%
+\thanks{$^{2}$
+% Isin M. Balci and Efstathios Bakolas are with with the 
+Department of Aerospace Engineering and Engineering Mechanics, University of Texas at Austin, TX, USA
+        {\tt\small \{isinmertbalci,bakolas@austin\}@utexas.edu, }}%
+}
+
+
+\begin{document}
+
+
+
+\maketitle
+\thispagestyle{empty}
+\pagestyle{empty}
+
+\begin{tikzpicture}[remember picture, overlay]
+    \node[anchor=north west, yshift=-8mm, xshift=17mm] at (current page.north west)
+    {\fontsize{8}{8}\selectfont Published at IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS) 2024. Preprint version.};
+\end{tikzpicture}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{abstract}
+This paper proposes Distributed Model Predictive Covariance Steering (DiMPCS) for multi-agent control under stochastic uncertainty. The scope of our approach is to blend covariance steering theory, distributed optimization and model predictive control (MPC) into a single framework that is safe, scalable and decentralized. Initially, we pose a problem formulation that uses the Wasserstein distance to steer the state distributions of a  multi-agent system to desired targets, and probabilistic constraints to ensure safety. We then transform this problem into a finite-dimensional optimization one by utilizing a disturbance feedback policy parametrization for covariance steering and a tractable approximation of the safety constraints. To solve the latter problem, we derive a decentralized consensus-based algorithm using the Alternating Direction Method of Multipliers. This method is then extended to a receding horizon form, which yields the proposed DiMPCS algorithm. Simulation experiments on a variety of multi-robot tasks with up to hundreds of robots demonstrate the effectiveness of DiMPCS. The superior scalability and performance of the proposed method is also highlighted through a comparison against related stochastic MPC approaches. Finally, hardware results on a multi-robot platform also verify the applicability of DiMPCS on real systems. 
+A video with all results is \href{https://youtu.be/tzWqOzuj2kQ}{available}.
+\end{abstract}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{INTRODUCTION}
+
+Multi-robot control is a domain with a significant variety of applications such as swarm robotics \cite{panagou_multiagent}, multi-UAV navigation \cite{maza2009multi}, motion planning \cite{kantaros_multirobot}, underwater vehicles \cite{kyriakopoulos_underwater}, and so forth. As the scale and complexity of such systems continuously increases, some of the most desired attributes for algorithms designed to control these systems include \textit{safety under uncertainty}, \textit{scalability} and \textit{decentralization}.
+
+Model predictive control (MPC) has found several successful multi-robot applications \cite{rey_lygeros2018fully, dai2017distributed, zhang2020improved}, thanks to its optimization-based nature and intrinsic feedback capabilities. 
+In the case where stochastic disturbances are present, several stochastic MPC (SMPC) approaches have been proposed for handling them such as \cite{p:yan2021stochasticMPC, p:arcari2022stochasticMPC, p:schildbach2014scenarioSMPC, p:oldewurtel2008tractableSMPC}. Nevertheless, the literature in combining MPC with the steering of the state distribution of a system to exact targets for enhancing safety remains quite scarce \cite{p:okamoto2019smpc-cs, balci2022csMPPI, yin2022csMPPI}.
+
+Covariance steering (CS) theory considers a class of stochastic optimal control problems, where the main objective is to steer the state mean and covariance of a system to desired targets. 
+While initial CS approaches had dealt with infinite-horizon problems for linear time-invariant systems \cite{p:skelton1987covcontroltheory, p:skelton1992improvedcovariance}, finite-horizon CS methods that also address linear time-variant dynamics, have recently gained attention such as \cite{p:chen2015covariance1, kotsalis2021convex, p:balci2022exactcovariancewasserstein, liu2022optimal}. Several successful robotics applications of CS can be found in motion planning \cite{p:okamoto2019pathplanning}, trajectory optimization \cite{balci2022csMPPI, yin2022csMPPI}, multi-agent control \cite{saravanos2021distributed, Saravanos-RSS-23}, etc.
+
+In SMPC based methods, it is typically the feed-forward control inputs that are treated as optimization variables, while the feedback gains are fixed to a stabilizing value for the closed-loop system \cite{p:arcari2022stochasticMPC}.
+However, the state covariance cannot actively be steered with such methods, while fixed static feedback gains might perform poorly for time-varying dynamics.
+Thus, control policies resulting from standard SMPC approaches might be suboptimal and/or overly conservative against safety criteria. On the contrary, CS methods yield the optimal feedback gains that steer the state covariance to the desired targets, thus providing more flexibility to satisfy optimality and safety guarantees at the same time. 
+
+\begin{figure}[!t]
+\centering
+\vspace{0.5cm}
+\setlength{\fboxrule}{1pt} % Adjust frame thickness
+\fbox{\includegraphics[width=0.46\textwidth, trim={9.5cm 2cm 8.5cm 2cm},clip]{images/IROS2024_IntroFig.pdf}}
+\caption{Sixteen unicycle robots safely guided with DiMPCS to their target distributions while avoiding collisions.}
+\label{fig_intro}
+\end{figure}
+
+% \begin{figure}[!t]
+% \centering
+% \includegraphics[width=0.46\textwidth, trim={0cm 0cm 0cm 0cm},clip]{images/Frame_t_047_v2.eps}
+% \caption{A system of 16 unicycle robots guided with DiMPCS.}
+% \label{fig_intro}
+% \end{figure}
+
+Although CS allows for finding the optimal control policies to steer the state statistics to desired values in the unconstrained case,  
+the latter might be unreachable in the presence of state and/or input constraints. 
+In MPC applications, especially, such infeasibilities can occur quite frequently, since the prediction horizon is usually much smaller than the total time horizon.
+Therefore, it would be desirable to penalize the deviation from the desired state statistics by utilizing a distance metric between distributions such as the Wasserstein distance \cite{givens1984class}, instead of imposing hard constraints \cite{p:okamoto2019smpc-cs}. 
+% In addition, a receding horizon formulation would be suitable for applying CS to large horizon problems since the number of decision variables increases quadratically with respect to the latter \cite{balci2021covariance}.
+% An attractive approach to achieve this is to use a recently proposed soft-constrained variation of CS which uses the Wasserstein distance to penalize the deviation between state distributions. 
+% In addition, as the number of decision variables for the CS increases quadratically with the problem horizon \cite{balci2021covariance}, an MPC formulation would be suitable for addressing large horizon problems by solving smaller problems in a receding horizon fashion. 
+
+
+In addition, the main limitation of applying CS methods to large-scale multi-robot systems lies in the fact that computational demands increase significantly with respect to the state/control dimension and time horizon.
+% to find state feedback policies due to the expansion of the number of the state dimensions.
+% It may be computationally expensive to compute the state feedback policies centrally for covariance steering for multi-robot systems due to the expansion of the number of the state dimensions. 
+Nevertheless, recent work \cite{saravanos2021distributed} has shown that this computational burden can be significantly alleviated by merging CS with the Alternating Direction Method of Multipliers (ADMM), an optimization procedure that has found several recent applications in decentralized control \cite{halsted2021survey, cheng2021admm, saravanos2022distributed_ddp, pereira2022decentralized}.
+
+In this paper, we propose Distributed Model Predictive Covariance Steering (DiMPCS) for safe and scalable multi-robot navigation. First, we provide a problem formulation which utilizes the Wasserstein distance for steering the robots to prescribed target distributions and probabilistic constraints for ensuring their safe operation. Subsequently, by exploiting CS theory, a suitable disturbance feedback policy parametrization, and an efficient approximation of the safety constraints, we transform the original problem into a finite-dimensional optimization one. To solve this, we propose an ADMM-based method for establishing consensus between neighboring robots and achieving decentralization. The latter method is then extended to an MPC scheme, which yields the final DiMPCS algorithm. Simulation experiments on several multi-agent navigation tasks with up to hundreds of robots illustrate the efficacy and scalability of DiMPCS. In addition, the advantages of the proposed method in terms of scalability and safety performance are also underlined through comparing with related SMPC approaches. Finally, we provide hardware experiments on a multi-robot platform which verify the effectiveness of DiMPCS on actual systems.
+\vspace{-0.3cm}
+% The rest of the paper is organized as follows. In Section \ref{sec: problem formulation}, the problem of interest is presented and mathematically formulated in the context of covariance steering theory. In Section \ref{sec: distributed cs}, we propose a distributed covariance steering method using the Wasserstein distance in a trajectory optimization format. In Section \ref{sec: distributed mpc cs}, we present we extend the method in an MPC setting. Simulation experiments are presented in Section \ref{sec: simulations}, while the conclusions of our work are stated in Section \ref{sec: conclusion}. 
+
+\section{Problem Description}
+\label{sec: problem formulation}
+
+\subsection{Notation}
+% The space of $n$-dimensional real vectors is denoted as $\mathbb{R}^{n}$. 
+The space of $n\times n$ symmetric, positive semi-definite (definite) matrices is denoted with $\mathbb{S}_{n}^{+}$ ($\mathbb{S}_{n}^{++}$). 
+The $n\times n$ identity matrix is denoted as $I_{n}$ whereas $\mathbf{0}$ denotes the zero matrix (or vector) with appropriate dimensions. 
+% For $A, B \in \mathbb{S}_n^{+}$, $A \succeq B$ means $A - B \in \mathbb{S}_{n}^{+}$.
+The trace operator is denoted with $\trace (\cdot)$. 
+% $\bdiag{A_1, A_2, \dots, A_{N}}$ denotes the block diagonal matrix whose diagonal blocks are the matrices $A_1, A_2, \dots, A_{N}$. 
+% Vertical concatenation of vectors $\{ x_i \in \mathbb{R}^n \}_{i=1}^N$ is denoted as $\vertcat{x_0, \dots, x_{N}}$.
+The expectation and covariance of a random variable (r.v.) $x \in \Rb^n$ are given by $\Eb[x] \in \Rb^n$ and $\cov[x] \in \Sb^+_n$, respectively.
+With $x \sim \calN (\mu, \Sigma) \in \Rb^n$, we refer to a Gaussian r.v. $x$ with $\Eb[x] = \mu$ and $\cov[x] = \Sigma$.
+With $\llbracket a, b \rrbracket$, we denote the integer set $[a,b] \cap \Zb$ for any $a,b \in \Rb$.
+The cardinality of a set $\calX$ is denoted with $|\calX|$. Finally, given a set $\calC$, we denote with $\calI_{\calC}(x)$ the indicator function such that $\calI_{\calC}(x) = 0$ if $x \in \calC$ and $\calI_{\calC}(x) = + \infty$, otherwise.
+
+\subsection{Problem Description}
+
+Let us consider a team of $N$ robots given by the set $\calV = \{ 1, \dots, N \}$. Each robot $i \in \calV$ is subject to the following  discrete-time, stochastic, nonlinear dynamics
+%
+% \begin{align}
+% & x_i(t+1) = f_i(x_i(t), u_i(t)) + w_i(t), 
+% \label{nonlinear dynamics}
+% \\
+% & x_i(0) = x_{i,0}, \quad x_{i,0} \sim \calN_{i,0} = \calN(\mu_{i,0},\Sigma_{i,0}),
+% % \quad t = \llbracket 0, T-1 \rrbracket,
+% \end{align}
+%
+% \begin{subequations}
+% \begin{align}
+% & x_{i,k+1} = f_i(x_{i,k}, u_{i,k}) + w_{i,k}, 
+% % \quad k = \llbracket 0,K-1 \rrbracket,
+% \\
+% & x_{i,0} \sim \calN_{i,0} = \calN(\mu_{i,0},\Sigma_{i,0}),
+% % \quad t = \llbracket 0, T-1 \rrbracket,
+% \end{align}
+% \label{nonlinear dynamics}
+% \end{subequations}
+%
+\begin{equation}
+x_{i,k+1} = f_i(x_{i,k}, u_{i,k}) + w_{i,k}, \quad 
+x_{i,0} \sim \calN_{i,0},
+\label{nonlinear dynamics}
+\end{equation}
+%
+for $k \in \llbracket 0, K \rrbracket$, where $K$ is the time horizon, $x_{i,k} \in \Rb^{n_i}$, $u_{i,k} \in \Rb^{m_i}$ and $f_i: \Rb^{n_i \times m_i} \rightarrow \Rb^{n_i}$ are the state, control input and transition dynamics of the $i$-th robot, and $w_{i,k} \sim \calN(0, W_i)$ with $W \in \Sb_{n_i}^+$. Each robot's initial state $x_{i,0} \sim \calN_{i,0} = \calN(\mu_{i,0}, \Sigma_{i,0})$ with $\mu_{i,0} \in \Rb^{n_i}$ and $\Sigma_{i,0} \in \Sb_{n_i}^{+}$.
+% with mean $ \in \Rb^{n_i}$ and covariance $\Sigma_{i,0} \in \Sb^{++}_{n_i}$. 
+
+The position of the $i$-th robot in 2D (or 3D) space is denoted with $p_{i,k} \in \Rb^{q}$ with $q=2$ (or $q=3$) and can be extracted with $p_{i,k} = H_i x_{i,k}$, where $H_i \in \Rb^{q \times n_i}$ is defined accordingly. Furthermore, the environment, wherein the robots operate, includes circle (in 2D) or spherical (in 3D) obstacles given by the set $\calO = \{ 1, \dots, O \}$, where each obstacle $o \in \calO$ has position $p_o \in \Rb^{q}$ and radius $r_o \in \Rb$. 
+
+We consider the problem of steering the state distributions of all robots $i \in \calV$ to the target Gaussian ones $\calN_{i,\mathrm{f}} = \calN (\mu_{i,\mathrm{f}}, \Sigma_{i, \mathrm{f}})$ with $\mu_{i,\mathrm{f}} \in \Rb^{n_i}$, $\Sigma_{i,\mathrm{f}} \in \Sb_{n_i}^{++}$. To penalize the deviation of the actual distributions from the target ones, we utilize the notion of the Wasserstein distance as a metric to describe similarity between r.v. probability distributions \cite{givens1984class}. In particular, we define the following cost:
+%
+\begin{equation}
+J_{i} := 
+\sum_{k=1}^{K} \calW_2^2(x_{i,k}, x_{i, \mathrm{f}}) + \Eb \Big[ \sum_{k=0}^{K-1} u_{i,k}^\T R_i u_{i,k} \Big],
+\end{equation}
+%
+for each robot $i \in  \calV$, where $x_{i,\mathrm{f}} \sim \calN_{i,\mathrm{f}}$, $\calW_2^2(x_a, x_b)$ is the squared Wasserstein distance between $x_a, x_b$ and $R_i \in \Sb_{m_i}^{++}$.
+
+The following probabilistic collision avoidance constraints between the robots and the obstacles are also imposed
+%
+\begin{align}
+& \Pb ( \| p_{i,k} - p_o \|_2  \geq d_{i,o} + r_o ) \geq 1-\alpha , \nonumber \\
+& \qquad \forall \ k \in \llbracket 0, K \rrbracket, \ i \in \calV, \ o \in \calO,
+\label{obs avoidance}
+\end{align}
+where $0 < \alpha < 0.5$ and $d_{i,o} \in \Rb$ is the minimum allowed distance between the center of robot $i$ and obstacle $o$. In addition, we also wish for all robots to avoid collisions with each other, through the following constraints
+%
+\begin{align}
+& \Pb ( \| p_{i,k} - p_{j,k} \|_2  \geq d_{i,j}) \geq 1-\alpha , \nonumber \\
+& ~ \forall \ k \in \llbracket 0, K \rrbracket, \ i \in \calV, \ j \in \calV \backslash \{i\},
+\label{collision avoidance}
+\end{align}
+%
+where $d_{i,j} \in \Rb$ is the minimum allowed distance between the centers of the robots $i$ and $j$. 
+% The problem that we wish to address in this work is initially formulated as follows.
+
+Let us also define the sets of admissible control policies of the robots.
+A control policy for robot $ i \in \calV$ is a sequence $\pi_i = \{ \tau_{i,0}, \tau_{i,1}, \dots, \tau_{i,K} \}$ where each $\tau_{i,k} : \mathbb{R}^{n_i(k + 1)} \rightarrow \mathbb{R}^{m_i}$ is a function of $\mathcal{X}_{i,0:k} = \{x_{i,0}, \dots, x_{i,k}\}$ that is the set of states already visited by robot $i$ at time $k$. 
+The set of admissible policies for robot $i$ is denoted as $\Pi_i$. Finally, any additional control constraints we wish to impose are represented as $u_{i,k} \in \calU_i$. The multi-robot distribution steering problem can now be formulated as follows. 
+
+\begin{problem}[Multi-Robot Distribution Steering Problem]
+\label{general problem}
+Find the optimal control policies $\pi_i^*, \ \forall i \in \calV$, such that 
+% Let $\mu_{i,0}, \mu_{i, \mathrm{f}}\in \mathbb{R}^{n_i}$, $\Sigma_{i,0}, \Sigma_{i, \mathrm{f}} \in \mathbb{S}_{n_i}^{++}$, for all $i \in \calV$ and $N \in \mathbb{N}^+$ be given.
+% Then, find the optimal control policies $\pi^\star_i \in \Pi_i$ for each robot $i \in \calV$ such that:
+% \begin{align}
+%     & \min_{\pi_{i} \in \Pi} ~~ \sum_{i\in \calV} J_i(\pi_{i}) \\
+%     \text{s.t.} & ~~ \eqref{nonlinear dynamics}, \eqref{obs avoidance}, \eqref{collision avoidance}, \nonumber \\
+%     & ~~ u_{i,k} = \tau_{i,k}(\mathcal{I}_{i}^{k}), ~~ u_{i,k} \in \calU_i, \label{eq:control-input-constr}
+% \end{align}
+\begin{align*}
+    & ~~~~~~~~~~ \{ \pi_i^* \}_{i \in \calV} = \argmin \sum_{i\in \calV} J_i(\pi_{i}) \\
+    \mathrm{s.t.} & ~~ \eqref{nonlinear dynamics}, \eqref{obs avoidance}, \eqref{collision avoidance}, ~ u_{i,k} = \tau_{i,k}(\mathcal{X}_{i}^{k}) \in \Pi_i, ~ u_{i,k} \in \calU_i, \ i \in \calV. \label{eq:control-input-constr}
+\end{align*}
+\end{problem}
+
+% \begin{problem}[Multi-Robot Distribution Steering Problem]
+% % \label{general problem}
+% Find the optimal control policies $\pi_{i, k} : \mathcal{I}_i^k \rightarrow \mathbb{R}^{m_i}$ where $\mathcal{I}_i^k = \{x_{i,0}, \dots, x_{i,k}, w_{i, 0} \dots, w_{i, k-1} \}$ for steering the distributions of the states $x_{i,k}$ of all robots $i \in \calV$, over a finite time horizon, to their prescribed target Gaussian distributions $\calN_{i,\mathrm{f}} = \calN(\mu_{i,\mathrm{f}}, \Sigma_{i,\mathrm{f}})$, while also ensuring with a high probability that all robots will avoid collisions with each other and all obstacles in their environment. 
+
+% \begin{align}
+%     \min_{\pi_{i, k} \in \Pi} & ~~ \sum_{i\in \calV} J_i(\pi_{i}) \\
+%     \text{s.t.} & ~~ \eqref{nonlinear dynamics}, \eqref{obs avoidance}, \eqref{collision avoidance}, \nonumber \\
+%     & ~~ u_{i,k} = \pi_{i,k}(\mathcal{I}_{i}^{k}), \\
+%     & ~~ u_{i,k} \in \calU_i, \label{eq:control-input-constr}
+% \end{align}
+% where $J_i(\pi_i) = \calW()$ \textcolor{red}{Isin!!!}
+% \end{problem}
+
+\section{Multi-Agent Covariance Steering With Wasserstein Distance}
+
+The scope of this work is to address Problem \ref{general problem} through leveraging CS theory, MPC and distributed optimization. While CS methods have mainly been developed for linear dynamics, they can be extended for nonlinear ones by linearizing around the mean of some reference trajectory \cite{p:ridderhof2019nonlinearcovariance, p:bakolas2020greedynonlinearcovariance, p:yi2020ddpcovariance}.
+After linearization, 
+% the mean and covariance of the state  
+% can be expressed as a function of the policy parameters of choice. 
+we utilize a disturbance feedback policy parametrization which yields closed form expressions for the state means and covariances.
+Finally, we transform Problem \ref{general problem} to an approximate finite-dimensional optimization one over the new policy parameters. 
+
+\subsection{Dynamics Linearization}
+
+% Covariance steering generally considers linear dynamics and Gaussian uncertainty, which can allow for 
+% While covariance steering was initially developed for systems with linear dynamics \cite{}, recent extensions for nonlinear systems that rely on linearization techniques have also been proposed \cite{}. 
+% Towards this direction, it is necessary to first linearize the nonlinear dynamics in \eqref{nonlinear dynamics}. 
+By considering the first-order Taylor expansion of $f_i(x_{i,k}, u_{i,k})$ around some nominal trajectories $\bx_i' = [ x_{i,0}' ; \dots ; x_{i,K}' ], \ \bu_i' = [ u_{i,0}' ; \dots ; u_{i,K-1}' ]$, we obtain the discrete-time, stochastic, linear time-variant dynamics
+%
+% \begin{equation}
+% f_i(x_i(t), u_i(t)) = f_i(x_i'(t), u_i'(t)) + A_i(t) x_i(t) + B_i(t) u_i(t)
+% \end{equation}
+% %
+% with 
+%
+% \begin{subequations}
+% \begin{align}
+% & x_{i,k+1} = A_{i,k} x_{i,k} + B_{i,k} u_{i,k} + r_{i,k} + w_{i,k}, \\
+% & ~~~~~~~~ x_{i,0} \sim \calN_{i,0} = \calN(\mu_{i,0},\Sigma_{i,0}),
+% % \quad t = \llbracket 0, T-1 \rrbracket,
+% \end{align}
+% \end{subequations}
+\begin{equation}
+x_{i,k+1} = A_{i,k} x_{i,k} + B_{i,k} u_{i,k} + r_{i,k} + w_{i,k}, ~~~ x_{i,0} \sim \calN_{i,0},
+% \quad t = \llbracket 0, T-1 \rrbracket,
+\end{equation}
+%
+where $A_{i,k} \in \Rb^{n_i \times n_i}$, $B_{i,k} \in \Rb^{n_i \times m_i}$ and $r_{i,k} \in \Rb^{n_i}$ are given by
+%
+% \begin{equation}
+% A_i(t) = \left.\frac{\partial f}{\partial x(t)} \right|_{x(t)=x'(t), u(t)=u'(t)}, 
+% \quad
+% B_i(t) = \left.\frac{\partial f}{\partial u(t)} \right|_{x(t)=x'(t), u(t)=u'(t)}, 
+% \end{equation}
+%
+\begin{subequations}
+\begin{align}
+% \begin{equation}
+A_{i,k} &= \left.\frac{\partial f}{\partial x_k} \right|_{\substack{x_k=x_k' \\ u_k=u_k'}, },
+\quad
+B_{i,k} = \left.\frac{\partial f}{\partial u_k} \right|_{\substack{x_k=x_k' \\ u_k=u_k'}, },
+\label{linearization A B}
+\\[0.1cm]
+% \end{equation}
+%
+% and the residual terms  given by
+%
+% \begin{equation}
+r_{i,k} &= f_i(x_{i,k}', u_{i,k}') - A_{i,k} x_{i,k}' - B_{i,k} u_{i,k}'.
+\label{linearization residuals}
+% \end{equation}
+\end{align}
+\end{subequations}
+%
+Therefore, each state trajectory can be expressed as 
+%
+\begin{equation}
+\bx_i = \vG_{i,0} x_{i,0} + \vG_{i,u} \bu_i + \vG_{i,w} \bw_i + \vG_{i,w} \br_i,
+\label{state compact}
+\end{equation}
+%
+where $\bx_i = [x_{i,0}; \dots; x_{i,K}] \in \Rb^{(K+1)n_i}$, $\bu_i = [u_{i,0}; \dots; u_{i,K-1}] \in \Rb^{K m_i}$, $\bw_i = [w_{i,0}; \dots; w_{i,K-1}] \in \Rb^{K n_i}$, $\br_i = [r_{i,0}; \dots; r_{i,K-1}] \in \Rb^{K n_i}$, and the matrices 
+$\mathbf{G}_{i,0} 
+% \in \Rb^{(K+1)n_i \times n_i}
+$, 
+$\mathbf{G}_{i,u} 
+% \in \Rb^{(K+1)n_i \times K m_i}
+$ and 
+$
+\mathbf{G}_{i,w} 
+% \in \Rb^{(K+1)n_i \times K n_i}
+$ can be found in Eq. (9), (10) in \cite{balci2021letters}.
+% are defined in Appendix \ref{dynamics feedback appendix}.
+
+\subsection{Controller Parametrization}
+
+Let us now consider the following affine disturbance feedback control policies, introduced in \cite{balci2021covariance}, 
+%
+% \begin{equation}
+% u_{i,k} = \begin{cases} 
+% \begin{aligned} & \bar{u}_{i,k} + L_{i,k} (x_{i,0} - \mu_{i,0}) \\ & ~~~~~ +  \sum^{k-1}_{l=0} K_{i,(k-1,l)} w_{i,l} 
+% \end{aligned}
+% &\mbox{if} \ k \in \llbracket 1,K-1 \rrbracket
+% \\[0.7cm]
+% \bar{u}_{i,0} + L_{i,0} (x_{i,0} - \mu_{i,0}) & \mbox{if} \ k=0 
+% \end{cases} 
+% \end{equation}
+\begin{equation}
+u_{i,k} = \bar{u}_{i,k} + L_{i,k} (x_{i,0} - \mu_{i,0}) + \sum^{k-1}_{l=0} K_{i,(k-1,l)} w_{i,l},
+\end{equation}
+%
+where $\bar{u}_{i,k} \in \Rb^{m_i}$ are the feed-forward parts of the control inputs and $L_{i,k}, \ K_{i,(k-1,l)} \in \Rb^{m_i \times n_i}$ are feedback matrices. 
+Here, we assume perfect state measurements, such that the disturbances that have acted upon the system can be obtained.
+% {\color{blue} Add state perfect state measurement and now we recover the noise }
+It follows that
+%
+% \begin{equation}
+$
+\bu_i = \bar{\bu}_i + \vL_i (x_{i,0} - \mu_{i,0}) + \vK_i \bw_i,
+$
+% \end{equation}
+%
+where $\bar{\bu}_i = [\bar{u}_{i,0}; \dots; \bar{u}_{i,K-1}] \in \Rb^{K m_i}$ and $\vL_i \in \Rb^{K m_i \times n_i}$, $\vK_i \in \Rb^{K m_i \times K n_i}$ are given by
+%
+% \begin{equation*}
+% \vL_i = 
+% \begin{bmatrix}
+% L_{i,0}^\T & L_{i,1}^\T & \cdots & L_{i,K-1}^\T
+% \end{bmatrix}^{\T},
+% \end{equation*}
+%
+%
+$\vL_i = [L_{i,0}; \dots; L_{i,K-1}]$ and
+%
+\begin{equation*}
+\vK_i = 
+% {\small
+\begin{bmatrix}
+\vzero & \vzero & \dots & \vzero & \vzero
+\\
+K_{i,(0,0)} & \vzero & \dots & \vzero & \vzero
+\\
+K_{i,(1,0)} & K_{i,(1,1)} & \dots & \vzero & \vzero
+\\
+\vdots & \vdots & \ddots & \vdots & \vdots
+\\
+K_{i,(K-2,0)} & K_{i,(K-2,1)} & \dots & K_{i,(K-2,K-2)} & \vzero
+\end{bmatrix}.
+% }
+\end{equation*}
+%
+Thus, the state trajectory of the $i$-th robot is obtained with
+%
+\begin{align}
+\bx_i & = \vG_{i,0} x_{i,0} + \vG_{i,u} \bar{\bu}_i + \vG_{i,u} \vL_i (x_{i,0} - \mu_{i,0})
+\nonumber
+\\
+& ~~~~~~~~~~~~~~~~~~ + (\vG_{i,w} + \vG_{i,u} \vK_i) \bw_i + \vG_{i,w} \vr_i.
+\end{align}
+%
+Each state $x_{i,k}$ can be extracted with $x_{i,k} = \vT_{i,k} \bx_i$, where $\vT_{i,k} := \begin{bmatrix}
+\vzero, \dots, I, \dots, \vzero
+\end{bmatrix} \in \Rb^{n_i \times (K+1)n_i}$ is a block matrix whose $(k+1)$-th block is equal to the identity matrix and all the remaining blocks are equal to the zero matrix. Similarly, we also define $\vS_{i,k} \in \Rb^{m_i \times K m_i}$ such that $u_{i,k} = \vS_{i,k} \bu_i$.
+
+\subsection{State Mean and Covariance Expressions}
+%
+Given that each state trajectory $\bx_i$ has been approximated as an affine expression of the Gaussian vectors $x_{i,0}$ and $\bw_i$, it follows that $\bx_i$ is also Gaussian, i.e., $\bx_i \in \calN(\bmu_i, \bSigma_i)$. With similar arguments as in \cite[Proposition 1]{balci2021covariance}, its mean $\bmu_i = \beeta_i(\bar{\bu}_i)$ and covariance $\bSigma_i = \btheta_i(\vL_i, \vK_i)$ are given by
+%
+% \begin{equation}
+% \bmu_i = \beeta_i(\bar{\bu}_i), \quad 
+% \bSigma_i = \btheta_i(\vL_i, \vK_i),
+% \label{mean state traj}
+% \end{equation}
+%
+% with 
+%
+\begin{align*}
+\beeta_i(\bar{\bu}_i) & := \vG_{i,0} \mu_{i,0} + \vG_{i,u} \bar{\bu}_i + \vG_{i,w} \vr_i,
+\\
+\btheta_i(\vL_i, \vK_i) & := (\vG_{i,0} + \vG_{i,u} \vL_i) \Sigma_{i,0} (\vG_{i,0} + \vG_{i,u} \vL_i)^\T
+\nonumber
+\\
+& ~~~~ + (\vG_{i,w} + \vG_{i,u} \vK_i) \vW_i (\vG_{i,w} + \vG_{i,u} \vK_i)^\T,
+\end{align*}
+%
+where $\vW_i = \bdiag(W_i, \dots, W_i) \in \Rb^{K n_i \times K n_i}$. It follows that for each $x_{i,k} \sim \calN(\mu_{i,k}, \Sigma_{i,k})$, we have
+%
+% \begin{equation}
+$
+\mu_{i,k} = \vT_{i,k} \beeta_i(\bar{\bu}_i)
+$
+% , \quad 
+and
+$
+\Sigma_{i,k} = \vT_{i,k} \btheta_i(\vL_i, ) \vT_{i,k}^\T.
+$
+% \label{state cov}
+% \end{equation}
+%
+It is important to note that the mean states depend only on the feed-forward control inputs $\bar{\bu}_i$, while the state covariances depend only on the feedback matrices $\vL_i, \vK_i$. 
+
+\subsection{Problem Transformation}
+
+% The objective of our problem can be formulated mathematically as minimizing the sum of the squared Wasserstein distances $\calW_2^2(\calN_{i,k}, \calN_{i,\mathrm{f}})$ between each distribution $\calN_{i,k}, \ k \in \llbracket 1, K \rrbracket$ and the corresponding target distribution $\calN_{i,\mathrm{f}}$ for each robot $i \in \calV$. In other words, we can define the following cost function which we wish to minimize:
+%
+% \begin{equation}
+% J = \sum_{i=1}^N J_i
+% \end{equation}
+% %
+% with each component $J_i$ given by
+%
+% \begin{equation}
+% J_i 
+% = \sum_{k=1}^K \calW_2^2(\calN_{i,k}, \calN_{i,\mathrm{f}}) 
+% + \Eb \left[ \sum_{k=0}^{K-1} u_{i,k}^{\mathrm{T}} R_i u_{i,k} \right],
+% \label{J_i expression 1}
+% \end{equation}
+%
+% where the second term accounts for penalizing the control effort of each robot with $R_i \in \Sb_{m_i}^{++}$. 
+% Note that despite the fact that, in general, the Wasserstein distance does not admit a closed-form expression, in the case of two multivariate Gaussian distributions $\calN_{A}(\mu_A, \Sigma_A)$ and $\calN_{B}(\mu_B, \Sigma_B)$, it yields
+%
+% \begin{align}
+% \calW_2^2(\calN_A, & \calN_B) 
+% = \| \mu_A - \mu_B \|_2^2 
+% \nonumber
+% \\
+% & + \trace \left( \Sigma_A + \Sigma_B - 2 \left( \Sigma_B^{1/2} \Sigma_A \Sigma_B^{1/2} \right)^{1/2} \right).
+% \end{align}
+
+The fact that the distributions of the states $x_{i,k}$ can be approximated as multivariate Gaussian ones, is of paramount importance here, since the Wasserstein distance admits a closed-form expression for Gaussian distributions - which does not hold for any arbitrary probability distributions \cite{givens1984class}. Therefore, we can rewrite each cost $J_i(\bar{\bu}_i, \vL_i, \vK_i)
+= J_i^{\mathrm{dist}} (\bar{\bu}_i, \vL_i, \vK_i)
++ J_i^{\mathrm{cont}} (\bar{\bu}_i, \vL_i, \vK_i),$
+%
+% \begin{equation*}
+% J_i(\bar{\bu}_i, \vL_i, \vK_i)
+% = J_i^{\mathrm{dist}} (\bar{\bu}_i, \vL_i, \vK_i)
+% + J_i^{\mathrm{cont}} (\bar{\bu}_i, \vL_i, \vK_i),
+% \end{equation*}
+%
+where $J_i^{\mathrm{dist}}$ corresponds to the Wasserstein distances part and $J_i^{\mathrm{cont}}$ to the control effort part. Detailed expressions are provided in Appendix \ref{cost constraints appendix}.
+
+Since the control input $u_{i,k}$ is a Gaussian r.v. as well, the control constraint $u_{i,k} \in \calU_i$ cannot be a hard constraint. 
+For this reason, we use the following chance constraints instead,
+\begin{align}
+    \mathbb{P} ( \eta_{i,n}^\T u_{i,k} \leq \gamma_{i,n}) \geq 1 - \beta,
+    \quad n = 1, \dots, N_u,
+    % & = 1 - \mathbb{P}(u_{i,k}^{\mathrm{T}} R_i u_{i,k} \geq \gamma_i^2) \nonumber \\
+    % & \geq 1 - \Eb  \left[ u_{i,k}^{\mathrm{T}} R_i u_{i,k} \right] / \gamma_i^2 \geq 1 - \alpha
+    \label{control chance constraint}
+\end{align}
+% then we this constraint with the following inequality which can be derived using Markov inequality:
+% Furthermore, the following control constraints must also be satisfied at every time instant $k \in \llbracket, 1, K-1 \rrbracket$:
+%
+% which using the Markov inequality yields the constraint
+% %
+% \begin{equation}
+% \Eb \left[ u_{i,k}^{\mathrm{T}} R_i u_{i,k} \right] \leq \Tilde{\gamma}_i,
+% \label{control constraint}
+% \end{equation}
+% %
+% with $\tilde{\gamma}_i = \beta \gamma_i$ and $\beta < 0.5$.
+%
+which yields the following convex quadratic constraint through the following proposition.
+
+\begin{proposition}
+The constraint \eqref{control chance constraint} can be equivalently expressed as
+%
+\begin{equation}
+a_{i,n}(\bar{\bu}_i, \vL_i, \vK_i) \leq 0,
+\end{equation}
+%
+with 
+%
+% \begin{equation*}
+$
+a_{i,n} = 
+\eta_{i,n}^\T \vS_{i,k} \bar{\bu}_i - \gamma_{i,n} + \bar{\beta} \lVert \eta_{i,n}^\T \vS_{i,k} [\vL_i, \vK_i] \bPsi_i \rVert_2
+$
+% \end{equation*}
+%
+and $\bPsi_i = \bdiag(\Sigma_{i,0}^{1/2}, \vW_i)$.
+\end{proposition}
+\begin{proof}
+The proof is omitted as it follows similar steps as the one of \cite[Theorem 1]{okamoto2018optimal}.
+\end{proof}
+
+
+
+These constraints can be written more compactly for all $k \in \llbracket 0, K-1 \rrbracket$ as $a_i(\bar{\bu}_i, \vL_i, \vK_i) \leq 0$.
+% , with the exact expression provided in Appendix \ref{cost constraints appendix}.
+
+Finally, we also wish to express the collision avoidance constraints \eqref{obs avoidance}, \eqref{collision avoidance} w.r.t. the new decision variables. Starting from the obstacle avoidance ones, the chance constraint \eqref{obs avoidance} will always be satisfied if the following two constraints hold
+%
+% we wish for the following constraint to be satisfied regarding the distance between the $i$-th robot's mean position and the center of the obstacle: 
+%
+\begin{align}
+& \| \Eb[p_{i,k}] - p_o \|_2 \geq d_{i,o} + r_o, \quad \ i \in \calV, \ o \in \calO,
+\label{obs avoidance 2 mean}
+\\
+& ~~~ d_{i,o} \geq 
+\Bar{\alpha} \sqrt{ \lambda_{\mathrm{max}} \big(\bar{\Sigma}_{i,k} \big) },
+\quad \ i \in \calV, \ o \in \calO,
+\label{obs avoidance 2 covariance}
+\end{align}
+%
+where $\bar{\Sigma}_{i,k} = H_i \Sigma_{i,k} H_i^\T$ is the position covariance, $\bar{\alpha} = \varphi^{-1}(\alpha)$ and $ \varphi^{-1}(\cdot)$ is the inverse of the cumulative density function of the normal distribution with unit variance. 
+This is equivalent with enforcing that the $(\mu \pm \bar{\alpha} \sigma)$ confidence ellipsoid of the $i$-th robot's position is collision free.
+% of the $i$-th robot's position distribution will not collide with the obstacle. 
+In addition, since we are steering the covariances $\bar{\Sigma}_{i,k}$ to be as close as possible to the target $\bar{\Sigma}_{i,\mathrm{f}} = H_i \Sigma_{i,\mathrm{f}} H_i^\T$ through minimizing $J_i^{\mathrm{dist}} (\bar{\bu}_i, \vL_i, \vK_i)$, then assuming that the actual and target covariances will be close, we replace \eqref{obs avoidance 2 covariance} with 
+%
+% \vspace{-0.1cm}
+\begin{equation}
+d_{i,o} \geq 
+\Bar{\alpha} \sqrt{ \lambda_{\mathrm{max}} \big(\bar{\Sigma}_{i,\mathrm{f}} \big) },
+\quad \ i \in \calV, \ o \in \calO.
+\label{obs avoidance 2 covariance b}
+\end{equation}
+%
+Therefore, depending on the values of $\bar{\Sigma}_{i,\mathrm{f}}$ and $\bar{\alpha}$, we must choose a value for $d_{i,o}$ such that \eqref{obs avoidance 2 covariance b} will be satisfied, and then only the constraint \eqref{obs avoidance 2 mean} remains part of the optimization.
+
+% Since we wish for the distribution - and not only the mean - of the position to ``avoid'' a collision with the obstacle, the selection of the parameter $d_{i,o}$ is key here. 
+% In particular, since we wish to steer the covariances $\Sigma_{i,k}$ to be as close as possible to $\Sigma_{i,\mathrm{f}}$, then if we choose $d_{i,o}$ such that
+
+In a similar manner, the inter-robot collision avoidance chance constraints can be substituted with
+%
+\begin{equation}
+\| \Eb[p_{i,k}] - \Eb[p_{j,k}] \|_2 \geq d_{i,j},~~\ i \in \calV, \ j \in \calV \backslash \{i\},
+\label{collision avoidance 2 mean}
+\end{equation}
+%
+\begin{equation}
+d_{i,j} \geq 
+\Bar{\alpha} \sqrt{ \lambda_{\mathrm{max}} \big(\bar{\Sigma}_{i,\mathrm{f}} \big) }
++ 
+\Bar{\alpha} \sqrt{ \lambda_{\mathrm{max}} \big(\bar{\Sigma}_{j,\mathrm{f}} \big) },~~\ i \in \calV, \ j \in \calV \backslash \{i\}.
+\label{collision avoidance 2 covariance}
+\end{equation}
+%
+% and $\calV_i \subseteq \calV$ is set of neighbors of the $i$-th robot.
+The constraints \eqref{obs avoidance 2 mean} and \eqref{collision avoidance 2 mean} can be written as $b_i(\bar{\bu}_i) \leq 0$ and $c_{i,j}(\bar{\bu}_i, \bar{\bu}_j) \leq 0$, respectively, with the exact expressions provided in Appendix \ref{cost constraints appendix}. Therefore, we arrive to the following tranformation of Problem \ref{general problem}.
+%
+\begin{problem}[Multi-Robot Distribution Steering Problem II]
+\label{multi-robot problem 2}
+Find the optimal feed-forward control sequences $\bar{\bu}_i^*$ and feedback matrices $\vL_i^*, \vK_i^*, \ \forall i \in \calV$, such that
+%
+\begin{subequations}
+\begin{align}
+& \{ \bar{\bu}_i^*, \vL_i^*, \vK_i^* \}_{i \in \calV} = \argmin \sum_{i \in \calV} J_i(\bar{\bu}_i, \vL_i, \vK_i)
+\\
+\mathrm{s.t.} \quad & a_i(\bar{\bu}_i, \vL_i, \vK_i) \leq 0, \quad b_i(\bar{\bu}_i) \leq 0, \quad \ i \in \calV,
+\\
+& c_{i,j}(\bar{\bu}_i, \bar{\bu}_j) \leq 0, \quad i \in \calV, \ j \in \calV \backslash \{i\}.
+\label{collision avoidance compact}
+\end{align}
+\end{subequations}
+\end{problem}
+
+% {\color{red} Add remark about QCQP and being solved more efficiently compared to chance constraints. Maybe put it in subsection IV-C.}
+
+\section{Distributed Approach with ADMM}
+\label{sec: distributed cs}
+
+In this section, we present an ADMM-based methodology for solving Problem \ref{multi-robot problem 2} in a decentralized fashion. In this direction, we first introduce the notions of copy variables and consensus between neighboring robots, so that we can reformulate the problem in an equivalent form that is suitable for ADMM. Subsequently, the derivation of the ADMM updates is illustrated, yielding a distributed soft-constrained CS algorithm in a trajectory optimization format.  
+
+% \vspace{-0.7cm}
+\subsection{Decentralized Consensus Approach}
+\label{subsec: distributed cs a}
+
+Problem 1 cannot be solved directly in a distributed manner due to the inter-robot constraints \eqref{collision avoidance compact}. To address this issue, we first make the relaxation that each robot $i \in \calV$ only considers inter-robot constraints with its closest neighbors given by the set $\calV_i \subseteq \calV$ - defined such that $i \in \calV_i$ as well. Hence, the constraints \eqref{collision avoidance compact} can be replaced with 
+%
+% \begin{equation}
+$c_{i,j}(\bar{\bu}_i, \bar{\bu}_j) \leq 0, \ j \in \calV_i \backslash \{ i \}, \ i \in \calV$.
+% \label{collision avoidance neigh}
+% \end{equation}
+%
+Subsequently, we introduce for each robot $i \in \calV$, the copy variables $\bar{\bu}_j^i$ regarding their neighbors $j \in \calV_i$. These copy variables can be interpreted as ``what is safe for robot $j$ from the perspective of robot $i$''. Thus, the augmented feed-forward control input $\bar{\bu}_i^{\mathrm{aug}} = [\{ \bar{\bu}_j^i \}_{j \in \calV_i}] \in \Rb^{K \tilde{m}_i}$ can be defined with $\tilde{m}_i = \sum_{j \in \calV_i} m_j$ . As a result, the inter-robot constraints can be rewritten from the perspective of the $i$-th robot as
+%
+% \begin{equation}
+$
+c_{i,j}(\bar{\bu}_i, \bar{\bu}_j^i) \leq 0, ~ j \in \calV_i \backslash \{ i \}, \ i \in \calV,
+$
+% \end{equation}
+%
+or more compactly as $c_i^{\mathrm{aug}}(\bar{\bu}_i^{\mathrm{aug}}) \leq 0, ~ i \in \calV.$
+%
+% \begin{equation}
+% c_i^{\mathrm{aug}}(\bar{\bu}_i^{\mathrm{aug}}) \leq 0, \quad i \in \calV.
+% \end{equation}
+
+Nevertheless, after the introduction of the copy variables, a requirement for enforcing a consensus between variables that refer to the same robot emerges. To accommodate this, let us define the global feed-forward control variable 
+%
+% \begin{equation}
+$
+\bg = [\bg_1; \dots; \bg_N] \in \Rb^{Km}
+$
+% \end{equation}
+%
+where $m = \sum_{i \in \calV} m_i$. The necessary consensus constraints can be formulated as 
+%
+% \begin{equation}
+$
+\bar{\bu}_j^i = \bg_j, \ j \in \calV_i \backslash \{i\}, \ i \in \calV,
+$
+% \end{equation}
+%
+or written more compactly as 
+%
+$
+% \begin{equation}
+\bar{\bu}_i^{\mathrm{aug}} = \tilde{\bg}_i$, $i \in \calV,
+% \end{equation}
+%
+$
+%
+where $\tilde{\bg}_i = [\{ \bg_j \}_{j \in \calV_i}] \in \Rb^{K \tilde{m}_i}$. Consequently, Problem \ref{multi-robot problem 2} can be rewritten in the following equivalent form. 
+% {\color{blue} Add remark that we only enforce a mean consensus in contrast with \cite{saravanos2021distributed} where we had to add copy variables for the feedback matrices as well.}
+%
+\begin{problem}[Multi-Robot Distribution Steering Problem III]
+\label{multi-robot problem 3}
+Find the optimal feed-forward control sequences $\bar{\bu}_i^{\mathrm{aug}*}$ and feedback matrices $\vL_i^*, \vK_i^*, \ \forall i \in \calV$, such that:
+% \vspace{-0.2cm}
+\begin{subequations}
+\begin{align}
+\{ \bar{\bu}_i^{\mathrm{aug}*}, & \vL_i^*, \vK_i^* \}_{i \in \calV} = \argmin \sum_{i \in \calV} J_i(\bar{\bu}_i, \vL_i, \vK_i)
+\\
+\mathrm{s.t.} \quad & a_i(\bar{\bu}_i, \vL_i, \vK_i) \leq 0,
+\quad b_i(\bar{\bu}_i) \leq 0,  
+\\
+& c_i^{\mathrm{aug}}(\bar{\bu}_i^{\mathrm{aug}}) \leq 0, \quad \bar{\bu}_i^{\mathrm{aug}} = \tilde{\bg}_i, \quad i \in \calV.
+\end{align}
+\end{subequations}
+\end{problem}
+%
+\vspace{0.2cm}
+%
+\begin{remark}
+Since the inter-robot constraints only involve the feed-forward control inputs $\bar{\bu}_i$, then it is sufficient to add copy variables only for the latter - and not for $\vL_i, \vK_i$ as well. This is an important advantage of the policy parametrization we have selected, as in previous work \cite{saravanos2021distributed} where a state feedback parametrization was used, there was a requirement for consensus between both the feed-forward control inputs and the feedback gains, even in the case of mean inter-agent state constraints. Therefore, the affine disturbance feedback parametrization allows to significantly reduce the amount of optimization variables that each robot contains.
+\end{remark}
+
+\vspace{-0.1cm}
+\subsection{Distributed Covariance Steering with Wasserstein Metric}
+\label{subsec: distributed cs b}
+
+Subsequently, let us proceed with the derivation of a decentralized ADMM algorithm for solving Problem \ref{multi-robot problem 3}. First, let us rewrite the problem in a more convenient form as
+%
+\begin{subequations}
+\begin{align}
+& \min \sum_{i \in \calV} J_i(\bar{\bu}_i, \vL_i, \vK_i) + \calI_{a_i}(\bar{\bu}_i, \vL_i, \vK_i) 
+\nonumber
+\\ & ~~~~~~~~~~~~~ + \calI_{b_i}(\bar{\bu}_i) 
++ \calI_{c_i^{\mathrm{aug}}}(\bar{\bu}_i^{\mathrm{aug}})
+\\[0.2cm]
+& ~~~~~~~~~~ \mathrm{s.t.} \quad 
+\bar{\bu}_i^{\mathrm{aug}} = \tilde{\bg}_i, \quad i \in \calV.
+\end{align}
+\end{subequations}
+%
+The augmented Lagrangian (AL) is given by
+%
+\begin{align*}
+\calL_{\rho} & = \sum_{i \in \calV} J_i(\bar{\bu}_i, \vL_i, \vK_i) + \calI_{a_i}(\bar{\bu}_i, \vL_i, \vK_i) 
++ \calI_{b_i}(\bar{\bu}_i) 
+\nonumber
+\\ & ~~~~~
++ \calI_{c_i^{\mathrm{aug}}}(\bar{\bu}_i^{\mathrm{aug}}) + \blambda_i^\T (\bar{\bu}_i^{\mathrm{aug}} - \tilde{\bg}_i)
++ \frac{\rho}{2} \| \bar{\bu}_i^{\mathrm{aug}} - \tilde{\bg}_i \|_2^2,
+\end{align*}
+%
+where $\blambda_i$ are the dual variables for the constraints $\bar{\bu}_i^{\mathrm{aug}} = \tilde{\bg}_i$ and $\rho > 0$ is a penalty parameter.
+
+\begin{algorithm*}[t]
+\caption{Distributed Model Predictive Covariance Steering (DiMPCS)}\label{DMPCS Algorithm}
+\begin{algorithmic}[1] 
+\State \textbf{Set:} $N_{\mathrm{total}}$, $N_{\mathrm{pred}}$, $N_{\mathrm{comp}}, \ \rho, \ \ell_{\mathrm{max}}, \ \mu_{i,\mathrm{f}}, \ \Sigma_{i, \mathrm{f}}, \ R_i, \ \gamma_i, \ \forall i \in \calV$
+% , $\mu_{i,\mathrm{f}}$, $\Sigma_{i,\mathrm{f}}, \ \forall i \in \calV$ 
+% \State \textbf{Set:} 
+\State $\hat{x}_{i,0} \leftarrow$ Measure initial robot states, $\forall i \in \calV$.
+\State \textbf{Initialize:} 
+$\ell \leftarrow 0$, $\bar{\bu}_{i|0}^{\mathrm{aug}} \leftarrow 0$, 
+$\vL_{i|0} \leftarrow 0$, 
+$\vK_{i|0} \leftarrow 0$,
+$ \bg_{i|0} \leftarrow 0$, 
+$ \blambda_{i|0} \leftarrow 0$,
+$\bmu_{i|0} \leftarrow [ \hat{x}_{i,0}; \dots; \hat{x}_{i,0} ],
+\ \forall i \in \calV$
+\For{$k = 0, \dots, N_{\mathrm{total}}$}
+\State $\hat{x}_{i,k} \leftarrow$ Measure current robot states, $\forall i \in \calV$.
+%
+\If{$\mathrm{mod}(k,N_{\mathrm{comp}}) == 0$}
+% \State $\bmu_{i, \llbracket k, k + N_{\mathrm{pred}} -1 \rrbracket } \leftarrow$ Compute mean state trajectories with \eqref{mean state traj} \textit{(in parallel $ \forall \ i \in \calV$)}.
+% \State $\{ A_{i,k'}, B_{i,k'}, r_{i,k'} \}_{k' \in \llbracket k, k + N_{\mathrm{pred}} -1 \rrbracket} \leftarrow $ Linearize dynamics using \eqref{linearization A B}, \eqref{linearization residuals}, around
+% $\{ \mu_{i,k'}, \bar{u}_{i,k'} \}_{k' \in \llbracket k, k + N_{\mathrm{pred}} -1 \rrbracket}$.
+%
+\State $\calV_{i|k}, \calP_{i|k} \leftarrow$ Adapt neighborhoods based on current positions $\hat{p}_{i|k}$.
+\Comment{In parallel $ \forall \ i \in \calV$}
+%
+\State
+\begin{varwidth}[t]{\linewidth}
+      $\{ A_{i,k'}, B_{i,k'}, r_{i,k'} \}_{k' \in \llbracket k, k + N_{\mathrm{pred}} -1 \rrbracket} \leftarrow $ Linearize dynamics using \eqref{linearization A B}, \eqref{linearization residuals}, around trajectories 
+      $~~~~~~~~~~~~~~~~~~{\color{white}.}$
+$\{ \mu_{i,k'}, \bar{u}_{i,k'} \}_{k' \in \llbracket k, k + N_{\mathrm{pred}} -1 \rrbracket}$. 
+\Comment{In parallel $ \forall \ i \in \calV$}
+      \end{varwidth}
+\vspace{-0.1cm}
+\State $\vG_{i,0|k}, \vG_{i,u|k}, \vG_{i,w|k} \leftarrow $ Construct using Eq. (9), (10) from \cite{balci2021letters}.
+% \eqref{G matrices}. 
+\Comment{In parallel $ \forall \ i \in \calV$}
+%
+\State $\mu_{i,k|k} \leftarrow \hat{x}_{i,k}, \ \Sigma_{i,k|k} \leftarrow 0, \ \ell \leftarrow 0$
+%
+\While{$\ell \leq \ell_{\mathrm{max}}$}
+\State $\bar{\bu}_{i|k}^{\mathrm{aug}}, \vL_{i|k}, \vK_{i|k} \leftarrow$ Solve local optimization problem \eqref{local problem}.
+% in parallel $ \forall \ i \in \calV$.
+\Comment{In parallel $ \forall \ i \in \calV$}
+%
+% \State \textit{Each agent $i \in \calV$ receives $\bar{\bu}_{i|k}^j$ from all $j \in \calP_{i|k} \backslash \{i\}$.} 
+\State \textit{All robots  $j \in \calP_{i|k} \backslash \{i\}$ send $\bar{\bu}_{i|k}^j$ to each robot  $i \in \calV$.} 
+\State $\bg_{i|k} \leftarrow$ Update with \eqref{global update}.
+\Comment{In parallel $ \forall \ i \in \calV$}
+% \State \textit{Each agent $i \in \calV$ receives $\bg_{j|k}$ from all $j \in \calN_{i|k} \backslash \{i\}$.}
+\State \textit{All robots  $j \in \calV_{i|k} \backslash \{i\}$ send $\bg_{j|k}$ to each robot  $i \in \calV$.} 
+\State $\blambda_{i|k} \leftarrow$ Update with \eqref{dual update}.
+\Comment{In parallel $ \forall \ i \in \calV$}
+\State $\ell \leftarrow \ell + 1$
+\EndWhile
+\State $\kappa \leftarrow k$
+\EndIf
+\State $u_{i,k} \leftarrow$ Compute with \eqref{mpc control policy} and apply control decision.
+\Comment{In parallel $ \forall \ i \in \calV$}
+\EndFor
+\end{algorithmic}
+\end{algorithm*}
+%
+% \vspace{1cm}
+
+In the first ADMM block, the AL is minimized w.r.t.  $\bar{\bu}_i^{\mathrm{aug}}$, $\vL_i$ and $\vK_i$, which yields the following $N$ local subproblems
+%
+% \begin{equation}
+% \bar{\bu}_i^{\mathrm{aug}*}, \vL_i^*, \vK_i^* \leftarrow
+% \argmin_{\bar{\bu}_i^{\mathrm{aug}}, \vL_i, \vK_i} \calL (\bar{\bu}_i^{\mathrm{aug}*}, \vL_i^*, \vK_i^*, \tilde{\bg}_i, \blambda_i)
+% \end{equation}
+%
+%
+\begin{align}
+& \bar{\bu}_i^{\mathrm{aug}}, \vL_i, \vK_i \leftarrow 
+\argmin_{\bar{\bu}_i^{\mathrm{aug}}, \vL_i, \vK_i} J_i(\bar{\bu}_i, \vL_i, \vK_i) + \blambda_i^\T (\bar{\bu}_i^{\mathrm{aug}} - \tilde{\bg}_i)
+\nonumber
+\\
+& ~~~~~~~~~~~~~~~~~~~~~~~ + \frac{\rho}{2} \| \bar{\bu}_i^{\mathrm{aug}} - \tilde{\bg}_i \|_2^2 \label{local problem}
+\\[0.2cm]
+& \mathrm{s.t.} \quad  a_i(\bar{\bu}_i, \vL_i, \vK_i) \leq 0, \  b_i(\bar{\bu}_i) \leq 0, \ 
+c_i^{\mathrm{aug}}(\bar{\bu}_i^{\mathrm{aug}}) \leq 0.
+\nonumber
+\end{align}
+%
+Note that each one of these subproblems can be solved in parallel by each robot $i$. Nevertheless, these are still non-convex problems due to the cost part $J_i^{\mathrm{dist}}$ and the constraints $b_i(\bar{\bu}_i) \leq 0$ and $c_i^{\mathrm{aug}}(\bar{\bu}_i^{\mathrm{aug}}) \leq 0$. In particular, as the cost $J_i^{\mathrm{dist}}$ is a sum of a convex and a concave term, we follow the same approach as in \cite{balci2021covariance} and solve the local problems with an iterative convex-concave procedure \cite{yuille2003concave}. In each such internal iteration, we also linearize the non-convex constraints around the previous mean trejectories as in \cite{augugliaro2012generation}. 
+
+% Once the problem is convexified by linearizing the nonconvex constraints \eqref{local problem obstacle}, \eqref{local problem collision} and concave part of the objective function in \eqref{local problem objective}
+
+\begin{remark}
+A significant advantage of using the squared Wasserstein distance as the measure of difference between actual and target distributions, is that 
+the convexified version of \eqref{local problem}
+% , that we obtain after linearizing the nonconvex constraints \eqref{local problem obstacle}, \eqref{local problem collision} and concave part of the objective function in \eqref{local problem objective}
+is a convex quadratically constrained quadratic program (QCQP). 
+This is in contrast with other CS approaches that yield semi-definite programs \cite{balci2021covariance, p:balci2022exactcovariancewasserstein, kotsalis2021convex} which are more computationally demanding to solve.
+\end{remark}
+
+
+In the second ADMM block, the AL is minimized w.r.t. $\bg$, which gives the ``per-robot'' update rules
+%
+\begin{equation}
+\bg_i \leftarrow \frac{1}{|\calP_i|} \sum_{j \in \calP_i} \bar{\bu}_i^j + \frac{1}{\rho} \blambda_i^j,
+\label{global update}
+\end{equation}
+%
+where $\calP_i = \{ j \in \calV : i \in \calV_j \}$ defines the set that contains all robots $j \in \calV$ that have $i$ as a neighbor, and $\blambda_i^j$ is the part of the dual variable $\blambda_i$ that corresponds to the constraint $\bar{\bu}_j^i = \bg_j$. Finally, the dual variables are updated as follows
+%
+\begin{equation}
+\blambda_i \leftarrow \blambda_i + \rho(\bar{\bu}_i^{\mathrm{aug}} - \tilde{\bg}_i),
+\label{dual update}
+\end{equation}
+%
+by all $i \in \calV$. The updates \eqref{local problem}, \eqref{global update} and \eqref{dual update} are repeated in the presented order until we reach to $\ell_{\mathrm{max}}$ iterations. 
+% Note that while it is possible to use a stopping criterion regarding the total primal/dual residuals of Problem \ref{multi-robot problem 3} such as in \cite{boyd2011distributed}, this would require gathering information from all agents, thus contravening the decentralized nature of the proposed approach. 
+
+%
+
+
+
+
+\section{Distributed Model Predictive \\ Covariance Steering}
+\label{sec: distributed mpc cs}
+
+This section presents Distributed Model Predictive Covariance Steering (DiMPCS) which uses the method proposed in Section \ref{sec: distributed cs} at its core, by extending it in a receding horizon fashion. The full algorithm is presented in Algorithm \ref{DMPCS Algorithm}. 
+
+Let us denote with $N_{\mathrm{total}}$ and $N_{\mathrm{pred}}$, the total and prediction time horizons, respectively. With $N_{\mathrm{comp}} \ (\leq N_{\mathrm{pred}})$, we set how often a new MPC computation is performed.
+% , where . 
+% Selecting $N_{\mathrm{comp}} > 1$ can be practically useful if the computational time exceeds the system's time step. 
+After setting all parameters (Line 1) and measuring the initial states $\hat{x}_{i,0}$ (Line 2), we initialize all decision variables with zeros, and the mean state trajectories with $\bmu_{i|0} \leftarrow [ \hat{x}_{i,0}; \dots; \hat{x}_{i,0} ]$ (Line 3). With the notation $z_{\cdot|k}$ we refer to any quantity $z$ that is computed at time $k$. 
+
+% \vspace{-0.6cm}
+Then, the control procedure starts for $k = 0, \dots, N_{\mathrm{total}}$. After measuring the current state if $k>0$ (Line 5), a new MPC computation starts if $\mathrm{mod}(k,N_{\mathrm{comp}}) = 0$. In this case, the neighborhood sets of all robots $i \in \calV$ are first found, by identifying the ones that are in close distance, based on their current positions (Line 7). Subsequently, the dynamics linearizaton (Line 8)
+% around the previous trajectories $\{ \mu_{i,k'}, \bar{u}_{i,k'} \}_{k' \in \llbracket k, k + N_{\mathrm{pred}} -1 \rrbracket}$ (L8) 
+and the construction of the matrices $\vG_{i,0|k}, \vG_{i,u|k}, \vG_{i,w|k}$ (Line 9) take place. The mean $\mu_{i,k|k}$ is always initialized being equal with $\hat{x}_{i,k}$, while the initial covariance is set to $\Sigma_{i,k|k} = 0$ (Line 10) since in this MPC format, we have perfect information of the initial state $x_{i,k}$ before the optimization starts.
+
+% \begin{figure*}[!t]
+% \centering
+% \hfil
+% \subfloat{
+% \begin{tikzpicture}
+%     \node[anchor=south west,inner sep=0] at (0,0){    \includegraphics[width=0.485\textwidth, trim={6.0cm 4.0cm 5cm 3cm},clip]{images/BottleCS_t_020.eps}};
+%     % \node[align=center, text=NavyBlue] (c) at (8.09, 0.5) {$k = 0$};
+% \end{tikzpicture}
+% \label{fig_bottle_1}
+% }
+% \hfil
+% \subfloat{
+% \begin{tikzpicture}
+%     \node[anchor=south west,inner sep=0] at (0,0){    \includegraphics[width=0.485\textwidth, trim={6.0cm 4.0cm 5cm 3cm},clip]{images/BottleCS_t_035.eps}};
+% \end{tikzpicture}
+% \label{fig_bottle_2}}
+% \hfil
+% \\
+% \hfil
+% \subfloat{
+% \begin{tikzpicture}
+%     \node[anchor=south west,inner sep=0] at (0,0){    \includegraphics[width=0.485\textwidth, trim={6.0cm 4.0cm 5cm 3cm},clip]{images/BottleCS_t_090.eps}};
+% \end{tikzpicture}
+% \label{fig_bottle_3}}
+% \hfil
+% \subfloat{
+% \begin{tikzpicture}
+%     \node[anchor=south west,inner sep=0] at (0,0){    \includegraphics[width=0.485\textwidth, trim={6.0cm 4.0cm 5cm 3cm},clip]{images/BottleSMPC_t_035.eps}};
+% \end{tikzpicture}
+% \label{fig_bottle_4}}
+% \hfil
+% \caption{....}
+% \label{fig_bottle}
+% \end{figure*}
+
+\begin{figure*}[!t]
+     \centering
+     \begin{subfigure}[b]{0.19\textwidth}
+         \centering 
+         % \includegraphics[width=\textwidth, trim={0cm 0cm 0cm 0cm},clip]{images/simulations/Swap16robots/Frame_t_001.eps}
+         \begin{tikzpicture}
+        \node[anchor=south west,inner sep=0] at (0,0){    \includegraphics[width=\textwidth, trim={0cm 0cm 0cm 0cm},clip]{images/simulations/Swap16robots/Frame_t_001.pdf}};
+        \node[align=center, text=NavyBlue] (c) at (2.9, 0.3) {\small{$k = 0$}};
+        \end{tikzpicture}
+         % \caption{}
+        \label{fig_swap_1}
+        \end{subfigure}
+     \begin{subfigure}[b]{0.19\textwidth}
+         \centering 
+         % \includegraphics[width=\textwidth, trim={0cm 0cm 0cm 0cm},clip]{images/simulations/Swap16robots/Frame_t_021.eps}
+          \begin{tikzpicture}
+        \node[anchor=south west,inner sep=0] at (0,0){    \includegraphics[width=\textwidth, trim={0cm 0cm 0cm 0cm},clip]{images/simulations/Swap16robots/Frame_t_021.pdf}};
+        \node[align=center, text=NavyBlue] (c) at (2.8, 0.3) {\small{$k = 20$}};
+        \end{tikzpicture}
+         % \caption{}
+        \label{fig_swap_2}
+    \end{subfigure}
+     \centering
+     \begin{subfigure}[b]{0.19\textwidth}
+         \centering 
+         % \includegraphics[width=\textwidth, trim={0cm 0cm 0cm 0cm},clip]{images/simulations/Swap16robots/Frame_t_041.eps}
+          \begin{tikzpicture}
+        \node[anchor=south west,inner sep=0] at (0,0){    \includegraphics[width=\textwidth, trim={0cm 0cm 0cm 0cm},clip]{images/simulations/Swap16robots/Frame_t_041.pdf}};
+        \node[align=center, text=NavyBlue] (c) at (2.8, 0.3) {\small{$k = 40$}};
+        \end{tikzpicture}
+         % \caption{}
+        \label{fig_swap_3}
+    \end{subfigure}
+     \begin{subfigure}[b]{0.19\textwidth}
+         \centering 
+         % \includegraphics[width=\textwidth, trim={0cm 0cm 0cm 0cm},clip]{images/simulations/Swap16robots/Frame_t_061.eps}
+          \begin{tikzpicture}
+        \node[anchor=south west,inner sep=0] at (0,0){    \includegraphics[width=\textwidth, trim={0cm 0cm 0cm 0cm},clip]{images/simulations/Swap16robots/Frame_t_061.pdf}};
+        \node[align=center, text=NavyBlue] (c) at (2.8, 0.3) {\small{$k = 60$}};
+        \end{tikzpicture}
+         % \caption{}
+        \label{fig_swap_4}
+    \end{subfigure}
+     \begin{subfigure}[b]{0.19\textwidth}
+         \centering 
+         % \includegraphics[width=\textwidth, trim={0cm 0cm 0cm 0cm},clip]{images/simulations/Swap16robots/Frame_t_145.eps}
+          \begin{tikzpicture}
+        \node[anchor=south west,inner sep=0] at (0,0){    \includegraphics[width=\textwidth, trim={0cm 0cm 0cm 0cm},clip]{images/simulations/Swap16robots/Frame_t_150.pdf}};
+        \node[align=center, text=NavyBlue] (c) at (2.72, 0.3) {\small{$k = 150$}};
+        \end{tikzpicture}
+         % \caption{}
+        \label{fig_swap_5}
+    \end{subfigure}
+    \vspace{-0.3cm}
+\caption{A task with $16$ robots that must reach a target distribution at a diametrically opposite location while avoiding collisions. Each snapshot shows their positions and the $(\mu \pm 3 \sigma)$ confidence regions of planned distribution trajectories. The target distributions are shown as dashed ellipses with ``x'' at the center.}
+\label{fig_sim_swap}
+\end{figure*}
+
+\begin{figure*}[!t]
+     \centering
+     \begin{subfigure}[b]{0.32\textwidth}
+         \centering 
+         % \includegraphics[width=\textwidth, trim={6.0cm 4.0cm 5cm 3cm},clip]{images/BottleCS_t_20.eps}
+         \begin{tikzpicture}
+        \node[anchor=south west,inner sep=0] at (0,0){    \includegraphics[width=\textwidth, trim={6.0cm 4.0cm 5cm 3cm},clip]{images/simulations/Bottle25robots/BottleCS_t_20.pdf}};
+        \node[align=center, text=NavyBlue] (c) at (5.1, 0.32) {\small{$k = 20$}};
+        \end{tikzpicture}
+         % \caption{}
+        \label{fig_bottle_1}
+    \end{subfigure}
+     \begin{subfigure}[b]{0.32\textwidth}
+         \centering 
+         % \includegraphics[width=\textwidth, trim={6.0cm 4.0cm 5cm 3cm},clip]{images/simulations/Bottle25robots/BottleCS_t_040.eps}
+         \begin{tikzpicture}
+        \node[anchor=south west,inner sep=0] at (0,0){    \includegraphics[width=\textwidth, trim={6.0cm 4.0cm 5cm 3cm},clip]{images/simulations/Bottle25robots/BottleCS_t_040.pdf}};
+        \node[align=center, text=NavyBlue] (c) at (5.1, 0.32) {\small{$k = 40$}};
+        \end{tikzpicture}
+         % \caption{}
+        \label{fig_bottle_2}
+    \end{subfigure}
+     \centering
+     \begin{subfigure}[b]{0.32\textwidth}
+         \centering 
+         % \includegraphics[width=\textwidth, trim={6.0cm 4.0cm 5cm 3cm},clip]{images/simulations/Bottle25robots/BottleCS_t_090.eps}
+         \begin{tikzpicture}
+        \node[anchor=south west,inner sep=0] at (0,0){    \includegraphics[width=\textwidth, trim={6.0cm 4.0cm 5cm 3cm},clip]{images/simulations/Bottle25robots/BottleCS_t_090.pdf}};
+        \node[align=center, text=NavyBlue] (c) at (5.1, 0.32) {\small{$k = 90$}};
+        \end{tikzpicture}
+         % \caption{}
+        \label{fig_bottle_3}
+    \end{subfigure}
+    \vspace{-0.3cm}
+\caption{A task with $25$ robots required to pass through a narrow bottleneck before reaching their targets.}
+\label{fig_sim_bottle}
+\end{figure*}
+
+The execution of the proposed ADMM method of Section \ref{sec: distributed cs} follows. First, the local decision variables $\bar{\bu}_{i|k}^{\mathrm{aug}}, \vL_{i|k}, \vK_{i|k}$ of each robot are obtained (Line 12) through solving the local CS problems \eqref{local problem} as explained in Section \ref{subsec: distributed cs b}. Afterwards, each robot $i$ receives the copy variables $\bar{\bu}_{i|k}^j$ from all $j \in \calP_{i|k} \backslash \{i\}$ (Line 13), so that it can compute $\bg_{i|k}$ (Line 14) with \eqref{global update}. Subsequently, each robot $i$ receives the variables $\bg_{j|k}$ from all $j \in \calV_{i|k} \backslash \{i\}$ (Line 15), so that  $\tilde{\bg}_{i|k}$ is constructed and the dual updates \eqref{dual update} take place (Line 16). This iterative ADMM procedure is terminated after $\ell_{\mathrm{max}}$ iterations. Finally, the control input of each robot is computed (Line 19) through
+%
+\begin{align}
+u_{i,k|\kappa} &= \bar{u}_{i,k|\kappa} + L_{i,k|\kappa} (\hat{x}_{i,\kappa} - \mu_{i,\kappa|\kappa})
+\nonumber
+\\
+& ~~~~~~~~~~~~~~~~~~~~~~~~~~ + \sum^{k-1}_{l=0} K_{i,(k-1,l)|\kappa} \ w_{i,l} 
+\label{mpc control policy}
+\end{align}
+%
+where $\kappa$ is the last time $k$ that an MPC cycle took place. Note that in the special case where we assign $\hat{x}_{i,\kappa} = \mu_{i,\kappa|\kappa}$, the second term in the RHS of \eqref{mpc control policy} becomes zero but this can change if the assumption of $\Sigma_{i,k|k} = 0$ is relaxed.
+% Each control input is applied to  {\color{blue} Write about L and maybe K. Consult with Isin.}
+
+\begin{remark}
+All computations in DiMPCS (Lines 7-9,12,14,16,19) can be performed in parallel by every robot $i \in \calV$. In addition, all necessary communication steps (Lines 13,15) take place locally between neighboring robots. Therefore, the proposed algorithm is \textit{fully distributed} in terms of computational and communication requirements.
+\end{remark}
+\begin{remark}
+The neighborhood adaptation, during the beginning of every MPC cycle, is an important advantage compared to the trajectory optimization approach followed in \cite{saravanos2021distributed}, as it allows for using smaller adjustable neighborhoods. 
+% and considering only collision avoidance constraints that are currently relevant. 
+% Except for enhancing safety, this also allows for using less copy variables, which further reduces dimensionality and computational demands.
+\end{remark}
+\vspace{-0.09cm}
+
+
+
+% {\color{blue}
+% Time-varying topologies. 
+
+% Explain why SC-CS and MPC are a good fit. Explain what initializations and targets we assign at each MPC call.
+
+% \textbf{Show final algorithm (without big timestep part).}
+% }
+
+
+
+\section{Simulation Experiments}
+\label{sec: simulations}
+
+
+
+
+
+
+
+This section presents simulation experiments that demonstrate the effectiveness and scalability of DiMPCS. In the main paper, we provide snapshots of the tasks, while we refer the reader to the \href{https://youtu.be/tzWqOzuj2kQ}{supplementary video} for a full demonstration. All robots have unicycle dynamics with states $x_{i,k} = [ \mathrm{x}_{i,k}; \mathrm{y}_{i,k}; \theta_{i,k}; v_{i,k}]
+\in \Rb^4$ 
+and inputs 
+$\bu_{i,k} = [
+a_{i,k}; \omega_{i,k}]
+\in \Rb^2$, 
+where $(\mathrm{x}_{i,k}, \mathrm{y}_{i,k})$, $\theta_{i,k}$ $v_{i,k}$, $\omega_{i,k}$, $a_{i,k}$ are their 2D position coordinates, angles, linear and angular velocities and linear accelerations, respectively. In all experiments, we use $N_{\mathrm{pred}} = 7$ and $N_{\mathrm{comp}} = 2$. The discretization time step is $dt = 0.05$. The process noise covariance is $W_i = \diag(0.02,0.02,\pi/180,0.2)$. We set the control cost matrix $R_i = \diag(10^{-2}, 10^{-2})$. We also enforce control limits $a_{\text{max}} = - a_{\text{min}} = 5 \text{m/s}^2$ and $\omega_{\text{max}} = - \omega_{\text{min}} = 4 ~\text{rad/s}$ through the chance constraints \eqref{control chance constraint} with $\beta = 0.997$. For the collision avoidance constraints, we select $d_{i,o} = 0.75\text{m}$, $d_{i,j} = 1.5\text{m}$ and $\bar{\alpha} = \varphi^{-1}(0.997) = 3$. Finally, we set $\rho = 10^{-2}, \ \ell_{\mathrm{max}} = 30$ and $|\calV_i| = 6$ for all tasks. 
+
+% \vspace{-0.3cm}
+\subsection{Small-Scale Tasks}
+
+In the first task, 16 robots need to reach to their target distributions at the diametrically opposite locations, while avoiding collisions with each other. In Fig. \ref{fig_sim_swap}, the performance of DiMPCS is demonstrated through five different snapshots that show the positions and planned distribution trajectories of the robots. All robots are able to successfully reach to their targets and avoid collisions throughout the task. In the next scenario (Fig. \ref{fig_sim_bottle}), 25 robots must reach to their targets while passing through a narrow ``bottleneck'' and avoiding collisions. Despite the difficulty of this task, all robots are again safely navigated to their targets.
+% For comparison purposes, in Fig. \ref{fig_bottle_4}, we show a snapshot of the robots when using a standard SMPC approach that only optimizes for the feed-forward control inputs while using a fixed stabilizing feedback gain as in \cite{p:arcari2022stochasticMPC}. Unlike the CS approach, the standard SMPC  cannot actively steer the covariances of the robots which leads to collisions as shown in the snapshot.
+
+\subsection{Large-Scale Task}
+
+Subsequently, we highlight the scalability of DiMPCS to large-scale multi-robot problems. In particular, we consider a problem with 256 robots that need to move from one $16 \times 16$ square grid to another one while avoiding collisions with each other and the obstacles in between. Figure \ref{fig_formation} shows a snapshot of the task, while the full task is available in the supplementary video. All robots are successfully driven to their targets while maintaining their safe operation.
+
+\subsection{Comparison with Other Stochastic MPC Approaches}
+
+Next, we illustrate the computational and performance advantages of DiMPCS against related SMPC approaches. All comparisons are on the same task as in Fig. \ref{fig_formation}. Initially, we compare against an equivalent centralized approach for solving Problem \ref{multi-robot problem 2}. We observe that as the number of robots grows (Table \ref{tab: comp times}), DiMPCS remains scalable, while the increasing dimensionality of the multi-robot problem makes the centralized approach computationally intractable. We should also highlight that hard-constrained CS approaches that lead to SDPs are excluded from this comparison, as their computational demands are much higher, in addition to their need for a distribution path before performing MPC.
+
+Furthermore, we provide a performance comparison of DiMPCS against standard SMPC methods in terms of collision percentages and control efforts (Table \ref{tab: performance}). Each algorithm is tested for 5 trials. First, we compare against solving the MPC problems with LQG control instead. While the latter method also yields safe solutions, it reduces the variance of the states more aggressively which requires excessive control effort. We also compare with standard SMPC approaches which only optimize for the feed-forward controls, while selecting a fixed stabilizing gain for the initial linearized dynamics \cite{p:arcari2022stochasticMPC}. Although such approaches involve less decision variables, the fact that the covariance is not actively steered leads to either unsafe solutions (Case I) or relatively safe solutions that require significant control effort (Case II). Therefore, the fact that DiMPCS actively steers the state distributions to match target distributions, while computing a sequence of feedback gains, provides the most advantageous combination of safety and control effort.
+
+\begin{figure}[!t]
+\centering
+% \includegraphics[width=0.49\textwidth, trim={6.1cm 3.0cm 5cm 3cm},clip]{images/FormationCS_t_040.eps}
+\begin{tikzpicture}
+\node[anchor=south west,inner sep=0] at (0,0){    \includegraphics[width=0.49\textwidth, trim={6.1cm 3.0cm 5cm 3cm},clip]{images/FormationCS_t_040.pdf}};
+\node[align=center, text=NavyBlue] (c) at (8.1, 0.45) {\small{$k = 40$}};
+\end{tikzpicture}
+% \vspace{-0.3cm}
+\caption{A large-scale task with 256 robots.
+% multi-robot task where DiMPCS steers 256 robots to their desired targets while ensuring their safety.
+}
+\label{fig_formation}
+\end{figure}
+
+
+
+
+
+
+\section{Hardware Experiments}
+
+Finally, we validate the applicability of the proposed distributed algorithm on a multi-robot system in the Robotarium platform \cite{wilson2020robotarium} at Georgia Tech. For the dynamics of the robots, the reader is referred to \cite{wilson2020robotarium}. In addition to collision and obstacle avoidance constraints with $d_{i,o} = 0.1\text{m}$, $d_{i,j} = 0.2\text{m}$, all robots are subject to the following control constraints, 
+%
+% \begin{equation}
+$
+- \bb_{\text{max}} \leq \vG \bu_i  \leq \bb_{\text{max}}, 
+$
+% \label{wheel constraints}
+% \end{equation}
+%
+with 
+$
+\vG = (1/2R) [2, L ; 2 , -L]
+$
+and
+$
+\bb_{\text{max}} = [v_{\text{wheel}}^{\text{max}}; v_{\text{wheel}}^{\text{max}}]
+$,
+%
+% \begin{equation}
+% \vG = \frac{1}{2R} \begin{bmatrix} 2  & L \\ 2 & -L  \end{bmatrix}, \quad \bb_{\text{max}} = \begin{bmatrix} v_{\text{wheel, max}} \\ v_{\text{wheel, max}}
+% \end{bmatrix},
+% \end{equation}
+%
+where $R = 0.016$m is the wheel radius, $L = 0.11$m is the axle length and $v_{\text{wheel}}^{\text{max}} = 12.5$ \text{rad/s} is the maximum wheel speed.
+%
+The control constraints are handled as chance constraints of the form \eqref{control chance constraint} with $\beta = 0.997$. The timestep is $dt = 330\text{ms}$, while we set $N_{\mathrm{pred}} = 7$ and $N_{\mathrm{total}} = 100$.
+
+We first apply the proposed algorithm on a task where three robots are required to reach to their target distributions while avoiding the obstacles in the middle of the field. As illustrated in Fig. \ref{fig: robotarium_obs_1}, the robots are able to successfully complete the task while avoiding collisions. Next, we demonstrate in Fig. \ref{fig: robotarium_obs_2}, a task where five robots must reach to the diametrically opposite positions while avoiding collisions with the rest of the robots. Again, all robots are safely driven to their destinations without colliding with each other. 
+
+\begin{table}[!t]
+\vspace{-0.1cm}
+\centering
+\begin{tabular}{@{}ccccc@{}}
+\hline 
+Method & $N=4$ & $N=16$ & $N=64$ & $N=256$ \\
+\hline 
+\textbf{DiMPCS (Proposed)} & \textbf{321ms} & \textbf{534ms} & \textbf{1.02s} & \textbf{2.05s}  \\
+% \hline
+Centralized MPCS & 1.54s & 32s & 9m 49s & 1h 22s  \\
+\hline
+\end{tabular}
+\caption{Computational times per MPC cycle of DiMPCS and an equivalent centralized approach.}
+% \vspace{-0.3cm}
+\label{tab: comp times}
+\end{table}
+
+\begin{table}[!t]
+\centering
+\begin{tabular}{@{}ccc@{}}
+\hline 
+Method & Collisions \% & Control effort  \\
+\hline 
+\textbf{DiMPCS (Proposed)} & \textbf{0} $\%$ & \textbf{180.55}
+\\
+SMPC with LQG & 0 $\%$ & 263.83
+\\
+SMPC with fixed feedback (I) & 5.47 $\%$ & 78.49
+\\
+SMPC with fixed feedback  (II) & 0.33 $\%$ & 244.73
+\\
+\hline
+\end{tabular}
+\caption{Performance comparison between DiMPCS and other SMPC approaches.}
+\vspace{-0.2cm}
+\label{tab: performance}
+\end{table}
+
+\begin{figure*}[!t]
+     \centering
+     \begin{subfigure}[b]{0.19\textwidth}
+         \centering 
+         % \includegraphics[width=\textwidth, trim={0.0cm 0.0cm 0cm 0cm},clip]{images/hardware/Obstacles_3robots/DistrMPCS_3robotsObs_t_0s_edit.png}
+         \begin{tikzpicture}
+        \node[anchor=south west,inner sep=0] at (0,0){    \includegraphics[width=\textwidth, trim={0cm 0cm 0cm 0cm},clip]{images/hardware/Obstacles_3robots/DistrMPCS_3robotsObs_t_0s_edit.jpg}};
+        \node[align=center, text=NavyBlue] (c) at (2.88, 0.27) {\small{$t = 0\text{s}$}};
+        \end{tikzpicture}
+         % \caption{}
+        \label{fig_bottle_4}
+    \end{subfigure}
+         \begin{subfigure}[b]{0.19\textwidth}
+         \centering 
+         % \includegraphics[width=\textwidth, trim={0.0cm 0.0cm 0cm 0cm},clip]{images/hardware/Obstacles_3robots/DistrMPCS_3robotsObs_t_05s_edit.png}
+      \begin{tikzpicture}
+        \node[anchor=south west,inner sep=0] at (0,0){    \includegraphics[width=\textwidth, trim={0cm 0cm 0cm 0cm},clip]{images/hardware/Obstacles_3robots/DistrMPCS_3robotsObs_t_05s_edit.jpg}};
+        \node[align=center, text=NavyBlue] (c) at (2.9, 0.27) {\small{$t = 5\text{s}$}};
+        \end{tikzpicture}
+         % \caption{}
+        \label{fig_bottle_4}
+    \end{subfigure}
+     \begin{subfigure}[b]{0.19\textwidth}
+         \centering 
+         % \includegraphics[width=\textwidth, trim={0.0cm 0.0cm 0cm 0cm},clip]{images/hardware/Obstacles_3robots/DistrMPCS_3robotsObs_t_08s_edit.png}
+       \begin{tikzpicture}
+        \node[anchor=south west,inner sep=0] at (0,0){    \includegraphics[width=\textwidth, trim={0cm 0cm 0cm 0cm},clip]{images/hardware/Obstacles_3robots/DistrMPCS_3robotsObs_t_08s_edit.jpg}};
+        \node[align=center, text=NavyBlue] (c) at (2.9, 0.27) {\small{$t = 8\text{s}$}};
+        \end{tikzpicture}
+         % \caption{}
+        \label{fig_bottle_4}
+    \end{subfigure}
+     \centering
+     \begin{subfigure}[b]{0.19\textwidth}
+         \centering 
+         % \includegraphics[width=\textwidth, trim={0.0cm 0.0cm 0cm 0cm},clip]{images/hardware/Obstacles_3robots/DistrMPCS_3robotsObs_t_11s_edit.png}
+       \begin{tikzpicture}
+        \node[anchor=south west,inner sep=0] at (0,0){    \includegraphics[width=\textwidth, trim={0cm 0cm 0cm 0cm},clip]{images/hardware/Obstacles_3robots/DistrMPCS_3robotsObs_t_11s_edit.jpg}};
+        \node[align=center, text=NavyBlue] (c) at (2.8, 0.27) {\small{$t = 11\text{s}$}};
+        \end{tikzpicture}
+         % \caption{}
+        \label{fig_bottle_4}
+    \end{subfigure}
+     \begin{subfigure}[b]{0.19\textwidth}
+         \centering 
+         % \includegraphics[width=\textwidth, trim={0.0cm 0.0cm 0cm 0cm},clip]{images/hardware/Obstacles_3robots/DistrMPCS_3robotsObs_t_20s_edit.png}
+        \begin{tikzpicture}
+        \node[anchor=south west,inner sep=0] at (0,0){    \includegraphics[width=\textwidth, trim={0cm 0cm 0cm 0cm},clip]{images/hardware/Obstacles_3robots/DistrMPCS_3robotsObs_t_20s_edit.jpg}};
+        \node[align=center, text=NavyBlue] (c) at (2.8, 0.27) {\small{$t = 20\text{s}$}};
+        \end{tikzpicture}
+         % \caption{}
+        \label{fig_bottle_4}
+    \end{subfigure}
+    \hfill
+    \vspace{-0.3cm}
+\caption{Hardware experiment with three robots that are required to reach their targets while avoiding collisions.}
+\label{fig: robotarium_obs_1}
+\end{figure*}
+
+\begin{figure*}[!t]
+\vspace{-0.1cm}
+     \centering
+     \begin{subfigure}[b]{0.19\textwidth}
+         \centering 
+         % \includegraphics[width=\textwidth, trim={0.0cm 0.0cm 0cm 0cm},clip]{images/hardware/Swapping_5robots/DistrMPCS_5robotsSwap_t_0s_edit.png}
+          \begin{tikzpicture}
+        \node[anchor=south west,inner sep=0] at (0,0){    \includegraphics[width=\textwidth, trim={0cm 0cm 0cm 0cm},clip]{images/hardware/Swapping_5robots/DistrMPCS_5robotsSwap_t_0s_edit.jpg}};
+        \node[align=center, text=NavyBlue] (c) at (2.88, 0.27) {\small{$t = 0\text{s}$}};
+        \end{tikzpicture}
+         % \caption{}
+        \label{fig_bottle_4}
+    \end{subfigure}
+         \begin{subfigure}[b]{0.19\textwidth}
+         \centering 
+         % \includegraphics[width=\textwidth, trim={0.0cm 0.0cm 0cm 0cm},clip]{images/hardware/Swapping_5robots/DistrMPCS_5robotsSwap_t_02s_edit.png}
+           \begin{tikzpicture}
+        \node[anchor=south west,inner sep=0] at (0,0){    \includegraphics[width=\textwidth, trim={0cm 0cm 0cm 0cm},clip]{images/hardware/Swapping_5robots/DistrMPCS_5robotsSwap_t_02s_edit.jpg}};
+        \node[align=center, text=NavyBlue] (c) at (2.88, 0.27) {\small{$t = 2\text{s}$}};
+        \end{tikzpicture}
+         % \caption{}
+        \label{fig_bottle_4}
+    \end{subfigure}
+     \begin{subfigure}[b]{0.19\textwidth}
+         \centering 
+         % \includegraphics[width=\textwidth, trim={0.0cm 0.0cm 0cm 0cm},clip]{images/hardware/Swapping_5robots/DistrMPCS_5robotsSwap_t_04s_edit.png}
+           \begin{tikzpicture}
+        \node[anchor=south west,inner sep=0] at (0,0){    \includegraphics[width=\textwidth, trim={0cm 0cm 0cm 0cm},clip]{images/hardware/Swapping_5robots/DistrMPCS_5robotsSwap_t_04s_edit.jpg}};
+        \node[align=center, text=NavyBlue] (c) at (2.88, 0.27) {\small{$t = 4\text{s}$}};
+        \end{tikzpicture}
+         % \caption{}
+        \label{fig_bottle_4}
+    \end{subfigure}
+     \centering
+     \begin{subfigure}[b]{0.19\textwidth}
+         \centering 
+         % \includegraphics[width=\textwidth, trim={0.0cm 0.0cm 0cm 0cm},clip]{images/hardware/Swapping_5robots/DistrMPCS_5robotsSwap_t_07s_edit.png}
+           \begin{tikzpicture}
+        \node[anchor=south west,inner sep=0] at (0,0){    \includegraphics[width=\textwidth, trim={0cm 0cm 0cm 0cm},clip]{images/hardware/Swapping_5robots/DistrMPCS_5robotsSwap_t_07s_edit.jpg}};
+        \node[align=center, text=NavyBlue] (c) at (2.88, 0.27) {\small{$t = 7\text{s}$}};
+        \end{tikzpicture}
+         % \caption{}
+        \label{fig_bottle_4}
+    \end{subfigure}
+     \begin{subfigure}[b]{0.19\textwidth}
+         \centering 
+         % \includegraphics[width=\textwidth, trim={0.0cm 0.0cm 0cm 0cm},clip]{images/hardware/Swapping_5robots/DistrMPCS_5robotsSwap_t_20s_edit.png}
+           \begin{tikzpicture}
+        \node[anchor=south west,inner sep=0] at (0,0){    \includegraphics[width=\textwidth, trim={0cm 0cm 0cm 0cm},clip]{images/hardware/Swapping_5robots/DistrMPCS_5robotsSwap_t_20s_edit.jpg}};
+        \node[align=center, text=NavyBlue] (c) at (2.78, 0.27) {\small{$t = 20\text{s}$}};
+        \end{tikzpicture}
+         % \caption{}
+        \label{fig_bottle_4}
+    \end{subfigure}
+    \hfill
+    \vspace{-0.3cm}
+\caption{Hardware experiment with five robots that are required to reach the diametrically opposite positions without collisions.}
+\label{fig: robotarium_obs_2}
+\end{figure*}
+
+
+
+
+\section{Conclusion}\label{sec: conclusion}
+In this work, we propose DiMPCS, a novel distributed SMPC algorithm for multi-robot control under uncertainty. 
+Our approach combines CS theory using the Wasserstein distance and ADMM into an MPC scheme, to ensure safety while achieving scalability and parallelization.
+Numerical simulations verify the effectiveness of DiMPCS in various multi-robot navigation problems compared to other approaches. 
+% The increased scalability and safety capabilities of the proposed method are also illustrated by comparing against related SMPC approaches. 
+Finally, the applicability of the method on real robotic systems is verified through hardware experiments.
+
+
+% \section*{Acknowledgments}
+
+\section*{Appendix}
+
+% \subsection{Dynamics and Feedback Matrices Expressions}
+% \subsection{Feedback Matrices Expressions}
+% \label{dynamics feedback appendix}
+
+% In Eq. \eqref{state compact}, the matrices $\mathbf{G}_{i,0}$, $\mathbf{G}_{i,u}$ and $\mathbf{G}_{i,w}$ are given by
+% %
+% \begin{subequations}
+% \label{G matrices}
+% \begin{align}
+%     & \mathbf{G}_{i,0} =
+%     \begin{bmatrix}
+%     I_{n_i} & \Phi_i^{(1,0) \T} & \cdots & \Phi_i^{(K,0) \T}
+%     \end{bmatrix}^{\T}, \\
+%     %
+%     & \mathbf{G}_{i,u} = \begin{bmatrix} \vzero & \vzero & \dots & \vzero \\
+%     B_{i,0} &  \vzero & \cdots & \vzero \\
+%     \Phi_i^{(2,1)} B_{i,0} & B_{i,1} & \cdots & \vzero \\
+%     \vdots & \vdots & \ddots & \vdots \\
+%     \Phi_i^{(K,1)} B_{i,0} & \Phi_i^{(K,2)} B_{i,1} &
+%     \cdots & B_{i,T-1} \end{bmatrix}, \\
+%     %
+%     &\mathbf{G}_{i,w} = \begin{bmatrix} \vzero & \vzero & \dots & \vzero \\
+%     I_{n_i} &  \vzero & \cdots & \vzero \\
+%     \Phi_i^{(2,1)} & I_{n_i} & \cdots & \vzero \\
+%     \vdots & \vdots & \ddots & \vdots \\
+%     \Phi_i^{(K,1)} & \Phi_i^{(K,2)} &
+%     \cdots & I_{n_i} \end{bmatrix},
+% \end{align}
+% \end{subequations}
+% %
+% with $\Phi_i^{(n,m)} = A_{i,n-1} \dots A_{i,m}$ and $\Phi_i^{(n,n)} = I_{n_i}$, for $n \geq m$. 
+
+
+\subsection{Cost and Constraints Expressions}
+\label{cost constraints appendix}
+
+Following a similar derivation as in \cite[Propositions 4,5]{balci2021covariance}, the terms $J_i^{\mathrm{dist}}$ and $J_i^{\mathrm{cont}}$ can be written equivalently as 
+%
+\vspace{-0.2cm}
+\begin{align*}
+& J_i^{\mathrm{dist}} (\bar{\bu}_i, \vL_i, \vK_i) = 
+\sum_{k=1}^K
+\| \vT_{i,k} \beeta_i(\bar{\bu}_i) - \mu_{i,\mathrm{f}} \|_2^2 
+\nonumber
+\\
+& + \| \bzeta_{i,k}(\vL_i, \vK_i) \|_F^2 + \trace(\Sigma_{i,\mathrm{f}}) 
+- 2 \|  \sqrt{\Sigma_{i,\mathrm{f}}} \bzeta_{i,k}(\vL_i, \vK_i) \|_*,
+\\[0.1cm]
+& J_i^{\mathrm{cont}} (\bar{\bu}_i, \vL_i, \vK_i) = 
+\bar{\bu}_i^\T \vR_i \bar{\bu}_i
++ \trace(\vR_i \vL_i \Sigma_{i,0} \vL_i^\T)
+\nonumber
+\\
+& ~~~~~ + \trace(\vR_i \vK_i \vW_i \vK_i^\T),
+\end{align*}
+%
+% \vspace{-0.2cm}
+%
+where $\vR_i = \bdiag(R_i, \dots, R_i) \in \Rb^{K m_i \times K m_i}$ and
+\vspace{-0.2cm}
+%
+\begin{equation*}
+\bzeta_{i,k}(\vL_i, \vK_i) = \vT_{i,k}
+\begin{bmatrix}
+\vG_{i,0} + \vG_{i,u} \vL_i & \vG_{i,w} + \vG_{i,u} \vK_i
+\end{bmatrix}.
+\end{equation*}
+% The proof for this expression consists of similar steps with the one in \cite[Proposition 5]{balci2021covariance} and is omitted due to space limitations.
+%
+% Before deriving the expression for $a_i(\bar{\bu}_i, \vL_i, \vK_i)$, let us first define the matrix $\vS_{i,k} \in \Rb^{m_i \times K m_i}$ such that $u_{i,k} = \vS_{i,k} \bu_i$ in a similar fashion as we have defined $\vT_{i,k}$. Thus, we can write 
+% %
+% \begin{align}
+% & \Eb \Big[ u_{i,k}^{\mathrm{T}} R_i u_{i,k} \Big] 
+% = \Eb \Big[ \trace \left( u_{i,k}^{\mathrm{T}} R_i u_{i,k} \right) \Big]
+% = \Eb \Big[ \trace \left( R_i u_{i,k} u_{i,k}^{\mathrm{T}}  \right) \Big]
+% \nonumber
+% \\
+% & ~~~~~~~~ = \trace \left( \Eb \left[  R_i u_{i,k} u_{i,k}^{\mathrm{T}} \right] \right)
+% = \trace \left( \Eb \left[  R_i \vS_{i,k} \bu_i \bu_i^\T \vS_{i,k}^\T \right] \right)
+% \nonumber
+% \\
+% & ~~~~~~~~ = \trace \big( \Eb \big[  R_i \vS_{i,k} (\bar{\bu}_i + \vL_i \tilde{x}_{i,0} + \vK_i \bw_i) 
+% \nonumber
+% \\ 
+% & ~~~~~~~~~~~~~~~~~~~~~~~~~~~ (\bar{\bu}_i + \vL_i \tilde{x}_{i,0} + \vK_i \bw_i)^\T \vS_{i,k}^\T \big] \big)
+% \nonumber
+% \\
+% & ~~~~~~~~ = \trace \big( \Eb \big[  R_i \vS_{i,k} (\bar{\bu}_i \bar{\bu}_i^\T + \vL_i \tilde{x}_{i,0} \tilde{x}_{i,0}^\T \vL_i^\T 
+% \nonumber
+% \\
+% & ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ + \vK_i \bw_i \bw_i^\T \vK_i^\T) \vS_{i,k}^\T \big] \big)
+% \nonumber
+% \\
+% & ~~~~~~~~ = \trace \big( R_i \vS_{i,k} (\bar{\bu}_i \bar{\bu}_i^\T + \vL_i \Sigma_{i,0} \vL_i^\T  + \vK_i \vW \vK_i^\T) \vS_{i,k}^\T \big)
+% \nonumber
+% \\
+% & ~~~~~~~~ = \bar{\bu}_i^\T \vS_{i,k}^\T R_i \vS_{i,k} \bar{\bu}_i 
+% + \trace(\vS_{i,k}^\T R_i \vS_{i,k} \vL_i \Sigma_{i,0} \vL_i^\T)
+% \nonumber
+% \\
+% & ~~~~~~~~~~~~~~~~~~~~~~~~~~ + \trace(\vS_{i,k}^\T R_i \vS_{i,k} \vK_i \vW_i \vK_i^\T),
+% \end{align}
+%
+% where $\tilde{x}_{i,0} = x_{i,0} - \mu_{i,0}$ the facts that $\Eb[\tilde{x}_{i,0}] = 0$, $\Eb[\tilde{x}_{i,0} \bw_i^\T] = 0$, $\Eb[\bw_i \bw_i^\T] = \vW_i$ and $\Eb[\tilde{x}_{i,0} \tilde{x}_{i,0}^\T] = \Sigma_{i,0}$. As a result, 
+% 
+% The constraint \eqref{control constraint} can be written as $a_i(\bar{\bu}_i, \vL_i, \vK_i) = [a_{i,0,}; \dots; a_{i,K-1} ]$ where each $a_{i,k}$ is given by
+% %
+% \begin{align*}
+% & a_{i,k}(\bar{\bu}_i, \vL_i, \vK_i) = \bar{\bu}_i^\T \vS_{i,k}^\T R_i \vS_{i,k} \bar{\bu}_i 
+% + \trace(\vS_{i,k}^\T R_i \vS_{i,k} \vL_i \Sigma_{i,0} \vL_i^\T)
+% \nonumber
+% \\
+% & ~~~~~~~~~~~~~~~~~~ + \trace(\vS_{i,k}^\T R_i \vS_{i,k} \vK_i \vW_i \vK_i^\T) - \gamma_i \leq 0.  %
+% \end{align*}
+%
+% \vspace{-0.15cm}
+Futhermore, the constraints \eqref{obs avoidance 2 mean}, \eqref{collision avoidance 2 mean} can be written as
+%
+\begin{align*}
+b_i(\bar{\bu}_i) 
+% & = d_{i,o} + r_o - \| \Eb[p_{i,k}] - p_o \|_2
+% \\
+& = d_{i,o} + r_o - \| H_i \vT_{i,k} \beeta_i(\bar{\bu}_i) - p_o \|_2 \leq 0,
+\\
+c_{i,j}(\bar{\bu}_i, \bar{\bu}_j) 
+% & = d_{i,j} - \| \Eb[p_{i,k}] - \Eb[p_{j,k}] \|_2
+% \\
+& = \| H_i \vT_{i,k} \beeta_i(\bar{\bu}_i) - H_j \vT_{j,k} \beeta_j(\bar{\bu}_j) \|_2 \leq 0.
+\end{align*}
+%
+% \vspace{-0.15cm}
+% Finally, the constraint \eqref{collision avoidance 2 mean} can be written as 
+% %
+% \begin{align*}
+% c_{i,j}(\bar{\bu}_i, \bar{\bu}_j) 
+% % & = d_{i,j} - \| \Eb[p_{i,k}] - \Eb[p_{j,k}] \|_2
+% % \\
+% & = \| H_i \vT_{i,k} \beeta_i(\bar{\bu}_i) - H_j \vT_{j,k} \beeta_j(\bar{\bu}_j) \|_2 \leq 0.
+% \end{align*}
+
+\addtolength{\textheight}{0cm}   % This command serves to balance the column lengths
+                                  % on the last page of the document manually. It shortens
+                                  % the textheight of the last page by a suitable amount.
+                                  % This command does not take effect until the next page
+                                  % so it should come on the page before the last. Make
+                                  % sure that you do not shorten the textheight too much.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% \begin{thebibliography}{99}
+
+% \bibitem{c1} G. O. Young, ÒSynthetic structure of industrial plastics (Book style with paper title and editor),Ó 	in Plastics, 2nd ed. vol. 3, J. Peters, Ed.  New York: McGraw-Hill, 1964, pp. 15Ð64.
+% \bibitem{c2} W.-K. Chen, Linear Networks and Systems (Book style).	Belmont, CA: Wadsworth, 1993, pp. 123Ð135.
+% \bibitem{c3} H. Poor, An Introduction to Signal Detection and Estimation.   New York: Springer-Verlag, 1985, ch. 4.
+% \bibitem{c4} B. Smith, ÒAn approach to graphs of linear forms (Unpublished work style),Ó unpublished.
+% \bibitem{c5} E. H. Miller, ÒA note on reflector arrays (Periodical styleÑAccepted for publication),Ó IEEE Trans. Antennas Propagat., to be publised.
+% \bibitem{c6} J. Wang, ÒFundamentals of erbium-doped fiber amplifiers arrays (Periodical styleÑSubmitted for publication),Ó IEEE J. Quantum Electron., submitted for publication.
+% \bibitem{c7} C. J. Kaufman, Rocky Mountain Research Lab., Boulder, CO, private communication, May 1995.
+% \bibitem{c8} Y. Yorozu, M. Hirano, K. Oka, and Y. Tagawa, ÒElectron spectroscopy studies on magneto-optical media and plastic substrate interfaces(Translation Journals style),Ó IEEE Transl. J. Magn.Jpn., vol. 2, Aug. 1987, pp. 740Ð741 [Dig. 9th Annu. Conf. Magnetics Japan, 1982, p. 301].
+% \bibitem{c9} M. Young, The Techincal Writers Handbook.  Mill Valley, CA: University Science, 1989.
+% \bibitem{c10} J. U. Duncombe, ÒInfrared navigationÑPart I: An assessment of feasibility (Periodical style),Ó IEEE Trans. Electron Devices, vol. ED-11, pp. 34Ð39, Jan. 1959.
+% \bibitem{c11} S. Chen, B. Mulgrew, and P. M. Grant, ÒA clustering technique for digital communications channel equalization using radial basis function networks,Ó IEEE Trans. Neural Networks, vol. 4, pp. 570Ð578, July 1993.
+% \bibitem{c12} R. W. Lucky, ÒAutomatic equalization for digital communication,Ó Bell Syst. Tech. J., vol. 44, no. 4, pp. 547Ð588, Apr. 1965.
+% \bibitem{c13} S. P. Bingulac, ÒOn the compatibility of adaptive controllers (Published Conference Proceedings style),Ó in Proc. 4th Annu. Allerton Conf. Circuits and Systems Theory, New York, 1994, pp. 8Ð16.
+% \bibitem{c14} G. R. Faulhaber, ÒDesign of service systems with priority reservation,Ó in Conf. Rec. 1995 IEEE Int. Conf. Communications, pp. 3Ð8.
+% \bibitem{c15} W. D. Doyle, ÒMagnetization reversal in films with biaxial anisotropy,Ó in 1987 Proc. INTERMAG Conf., pp. 2.2-1Ð2.2-6.
+% \bibitem{c16} G. W. Juette and L. E. Zeffanella, ÒRadio noise currents n short sections on bundle conductors (Presented Conference Paper style),Ó presented at the IEEE Summer power Meeting, Dallas, TX, June 22Ð27, 1990, Paper 90 SM 690-0 PWRS.
+% \bibitem{c17} J. G. Kreifeldt, ÒAn analysis of surface-detected EMG as an amplitude-modulated noise,Ó presented at the 1989 Int. Conf. Medicine and Biological Engineering, Chicago, IL.
+% \bibitem{c18} J. Williams, ÒNarrow-band analyzer (Thesis or Dissertation style),Ó Ph.D. dissertation, Dept. Elect. Eng., Harvard Univ., Cambridge, MA, 1993. 
+% \bibitem{c19} N. Kawasaki, ÒParametric study of thermal and chemical nonequilibrium nozzle flow,Ó M.S. thesis, Dept. Electron. Eng., Osaka Univ., Osaka, Japan, 1993.
+% \bibitem{c20} J. P. Wilkinson, ÒNonlinear resonant circuit devices (Patent style),Ó U.S. Patent 3 624 12, July 16, 1990. 
+
+
+\section*{Acknowledgment}
+
+This work was supported in part by NSF under grants 1936079 and 1937957, and by the ARO Award $\#$W911NF2010151. Augustinos Saravanos acknowledges financial support by the A. Onassis Foundation Scholarship.
+
+
+
+% \end{thebibliography}
+
+\bibliographystyle{IEEEtran}
+
+% \bibliographystyle{plainnat}
+\bibliography{references}
+
+
+\end{document}

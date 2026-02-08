@@ -1,0 +1,211 @@
+
+%
+\section{Approach}
+\label{sec:3}
+
+\subsection{Preliminaries}
+
+% Imagine that we have an excavation task and two robots are available, one with an excavating arm and the other with a bucket for hauling. It does not help if the robots arrive at the location at different times or if only one of the robots attends the task. All the necessary robots must be present simultaneously to start the task. Moreover, the robots may take longer to reach a task than their given estimations. On this premise, we generate a schedule for each robot, such that they complete all the tasks as soon as possible.
+
+% In our formulation, we consider that we know these things about the tasks: their locations, the time needed to complete them, and the skills they require. Similarly, we also need to know the robots' starting and ending locations and what skills each robot possesses.
+%Assuming that we know these things, we propose to generate schedules for each robot such that they complete all the tasks as soon as possible.
+
+We consider an environment in which a set of $m$ tasks is scattered. Each task requires a specific set of skills. A task can require any number of skills. In total, across all tasks, $l$ skills are required; some might be in higher demand than others. The mapping between tasks and required skills is captured by the binary matrix $R$, whose element $r_{js}$ is 1 if task $j$ requires skill $s$ and 0 otherwise.
+
+A swarm of $n$ robots is deployed in the environment and must perform the tasks as quickly as possible. The robots may start from the same `depot' or be scattered throughout the environment. We assume that each robot offers a subset of the possible skills, and the robots combined offer all the required skills for the tasks to be completed. We restrict each robot to have a maximum of $l/2$ skills. The binary matrix $Q$ encodes the mapping between robots and skills. An element $q_{is}$ is 1 if robot $i$ possesses skill $s$ and 0 otherwise. 
+
+\subsection{Optimal Formulation}
+We first discuss a Linear Program that produces the optimal solution to the problem. We use a binary assignment tensor  ($X$) for the formulation. In this tensor, if an element $x_{ijk}$ is 1, then robot $i$ attends task $k$ right after task $j$; otherwise the element is 0. We refer to the robot’s location at the start and the end of the experiment as ``task 0'' and ``task $m+1$'' respectively. 
+
+We denote with $T$ the cost tensor that stores the travel time from one task to another. Because the robots might start from different locations, the travel cost from task 0 to the other tasks differs from robot to robot. For this reason, $t_{ijk}$ denotes the travel time for robot $i$ to navigate from task $j$ to task $k$. Travel times at this stage are deterministic; we will explain how to handle stochastic times in Sec. \ref{subsec:stoch_time}.
+
+\begin{table}[!t]
+\caption{Table of parameters and variables}
+\begin{tabular}{ p{0.06\textwidth} p{0.375\textwidth} } 
+ \toprule
+ \textbf{Symbol} & \textbf{Description}\\ 
+\midrule
+$l$ & Total number of skills in a configuration\\
+$m$ & Total number of tasks in a configuration\\
+$n$ & Total number of robots in a configuration\\
+$Q$ & Binary matrix for mapping between robots and skills\\
+$R$ & Binary matrix for mapping between tasks and requirements\\
+$T$ & Cost tensor\\
+$T^s$ & Matrix for the stochastic buffer time for travel\\
+$T^e$ & Vector for execution time of the tasks\\
+$X$ & Binary assignment tensor\\
+$Y$ & Matrix for arrival times of the robots at tasks\\
+$Y^{\max}$ & Vector for the tasks' execution start times\\
+$Z$ & Matrix for how many robots offer each skill\\
+$Z^b$ & Matrix to denote excess skills at the tasks\\
+\bottomrule
+\end{tabular}
+\label{tab:params_and_vars}
+\end{table}
+
+%\paragraph{Constraints for task flow:}
+
+\subsubsection{Valid schedule generation}
+
+We now discuss the constraints necessary to generate valid schedules for the robots.
+%
+Every robot $i$ must start from task 0 (initial location) exactly once (Eq. \eqref{eq:start-any}) and finish its schedule at task $(m+1)$ (final location) exactly once (Eq. \eqref{eq:any-end}). Therefore, task 0 is exit-only (Eq. \eqref{eq:any-start}) and task $(m+1)$ is entry-only (Eq. \eqref{eq:end-any}).
+
+\begin{align}
+\forall i &\quad \sum^{m+1}_{k=1}x_{i0k} = 1 \label{eq:start-any}\\
+\forall i &\quad \sum^{m}_{j=0}x_{ij(m+1)} = 1 \label{eq:any-end}\\
+\forall i &\quad \sum^{m+1}_{j=1}x_{ij0} = 0 \label{eq:any-start}\\
+\forall i &\quad \sum^{m}_{k=0}x_{i(m+1)k} = 0 \label{eq:end-any}
+\end{align}
+
+For what concerns the other tasks $[1,m]$, we impose that a task cannot appear twice in a robot's schedule. To this effect, a robot can enter a task $k$ at most once (Eq. \eqref{eq:max_arrive}) and exit it at most once (Eq. \eqref{eq:max_leave}). In addition, if a robot has visited a task $j$, it must leave it, and it cannot leave it without first visiting it (Eq. \eqref{eq:in_out}). Finally, robots cannot dwell at a task after visiting it (Eq. \eqref{eq:not_stay}).
+\begin{align}
+\forall i \forall k \backslash \{0,m+1\} &\quad  \sum^{m}_{j=0}x_{ijk} \leq 1 \label{eq:max_arrive} \\
+\forall i \forall j \backslash \{0,m+1\} &\quad  \sum^{m+1}_{k=1}x_{ijk} \leq 1 \label{eq:max_leave} \\
+\forall i \forall j \backslash \{0,m+1\} &\quad  (\sum^{m}_{k=0}x_{ikj} = \sum^{m+1}_{k=1}x_{ijk}) \label{eq:in_out} \\
+\forall i \forall j  &\quad  x_{ijj} = 0 \label{eq:not_stay}
+\end{align}
+
+%These constraints produce schedules in which the robots might form loops across tasks. To solve this, we add ``lazy constraints'' that reject a candidate solution if it contains loops. The algorithm to detect loops is reported in Alg. \ref{alg:lazy_const}. Intuitively, the algorithm checks that, for every robot, the schedule starting from task 0 traverses all the tasks marked as visited in $X$.
+
+These constraints could result in schedules where a robot travels along multiple different paths at the same time. %such that there exists multiple paths for a single robot. 
+There might be one valid path, starting from task $0$ and ending at task $m+1$, and an invalid path, looping between three or more tasks. To solve this, we add ``lazy constraints'' that reject a candidate solution if it contains such loops. The algorithm to detect loops is reported in Alg. \ref{alg:lazy_const}. %Intuitively, the algorithm checks that any robot is not attending any tasks apart from the tasks covered in $0$ to $m+1$ chain.
+Intuitively, the algorithm checks the number of tasks covered in the valid path from $0$ to $m+1$. It then compares this number with the total number of tasks covered in the whole schedule. Dissimilarity in these two numbers indicates the existence of an invalid path in the schedule.
+
+\begin{algorithm}
+\begin{algorithmic}
+\For{\textbf{each} robot $i$}
+\State \textit{next} $\gets 0$
+\State \textit{count} $\gets 0$
+\While{\textit{next} \textbf{is not} $m+1$}
+\State \textit{next} $\gets \underset{k}{\arg\max} (x_{i,\textit{next},k}$)
+\State \textit{count} $\gets \text{\textit{count}}+1$
+\EndWhile
+\State \textit{visited} $\gets \sum^{m+1}_{j=0}\sum^{m+1}_{k=0}x_{ijk}$
+\If{\textit{count} $\neq$ \textit{visited}}
+\State \textbf{return} solution is not valid
+\EndIf
+\EndFor
+\State \textbf{return} solution is valid
+\end{algorithmic}
+\caption{Detecting loops in a candidate solution}\label{alg:lazy_const}
+\end{algorithm}
+
+\subsubsection{Skill allocation}
+
+To satisfy the skills required by the tasks, a robot $i$ must possess at least one of the required skills to attend a task $k \in [1,m]$.
+\begin{align}
+\forall i \forall k \backslash \{0,m+1\} \quad \sum^{m}_{j=0}x_{ijk} \leq \sum^{l}_{s=0}q_{is}r_{ks}. \label{eq:attnd_req}
+\end{align}
+
+% A schedule is valid if all the tasks' skills are covered by at least one robot. To ensure this, we introduce the matrix $Z$ whose elements $z_{ks}$ denote how many robots offer a certain skill $s$ required by task $k$ (Eq. \eqref{eq:arr_skill}). We then impose that every element of $Z$ is greater than or equal to the corresponding element of the skill requirement matrix $R$ (Eq. \eqref{eq:skill_req}).
+For a schedule to be valid, each task must have robots with the required skills. To achieve this, we introduce matrix $Z$, where $z_{ks}$ indicates the number of robots that offer skill $s$ required for task $k$ (Eq. \eqref{eq:arr_skill}). We ensure that each element in $Z$ is greater than or equal to the corresponding element in the skill requirement matrix $R$ (Eq. \eqref{eq:skill_req}).
+\begin{align}
+\forall s \forall k \backslash \{0,m+1\} &\quad z_{ks} = \sum^{n}_{i=0}\sum^{m}_{j=0} x_{ijk}q_{is} \label{eq:arr_skill}\\
+\forall s \forall k \backslash \{0,m+1\} &\quad z_{ks} \geq r_{ks}. \label{eq:skill_req}
+\end{align}
+
+The above constraints theoretically allow for a task to have more skills than required. In general this is unavoidable, because the robots contributing to a task might have overlapping skills while also contributing unique ones. However, there is a benefit in avoiding schedules where certain tasks are attended by superfluous robots, i.e., robots that have some of the required skills, but none of them is unique within the coalition. The benefit is that rejecting superfluous robots makes the search space much smaller, significantly reducing run-times as we empirically observed in the experiments we ran during early phases of this work.
+
+To identify superfluous robots, we use the binary matrix $Z^b$ (Eq. \eqref{eq:excess_skill}) where $z_{ks}^b$ equals 1 if skill $s$ is excessive for task $k$, and 0 otherwise.
+\begin{equation}
+\forall s \forall k \backslash \{0,m+1\} \quad z^b_{ks} = 
+\begin{cases}
+0                                      & \text{if } z_{ks} \leq r_{ks}\\
+1                                      & \text{otherwise}.
+\end{cases}
+\label{eq:excess_skill}
+\end{equation}
+We then impose that, if a robot $i$ attends a task $k$, the robot must have at least one skill that is not in excess. In Eq. \eqref{eq:avoid_excess} $z_{ks}^b q_{is}$ is 1 when a skill $s$ of robot $i$ is in excess for task $k$, and $\sum_s z_{ks}^b q_{is}$ is the number of redundant skills robot $i$ has for task $k$. %Analogously, $q_{is} r_{ks}$ is 1 when skill $s$ of robot $i$ is required by task $k$. 
+Due to constraint \eqref{eq:attnd_req}, if robot $i$ attends task $k$ then $\sum_s q_{is} r_{ks} \geq 1$, i.e., at least one of robot $i$'s skills is required by task $k$. We can then impose the following constraint:
+% We ensure that a robot attending a task has at least one non-redundant skill, given by $z_{ks}^b q_{is} \geq 0$ (Eq. \eqref{eq:avoid_excess}). Here, $z_{ks}^b$ is 1 if skill $s$ of robot $i$ is in excess for task $k$ and $\sum_s z_{ks}^b q_{is}$ denotes the number of redundant skills robot $i$ has for task $k$. The term $q_{is} r_{ks}$ is 1 if skill $s$ of robot $i$ is required by task $k$. We also use constraint \eqref{eq:attnd_req} to ensure that if robot $i$ attends task $k$, at least one of its skills is required by the task.
+% \begin{equation}
+
+\begin{multline}
+\forall i \forall k \backslash \{0,m+1\}  \sum^{m}_{j=0}x_{ijk}=1 \implies \\ \sum^{l}_{s=0} z^b_{ks}q_{is} \leq \bigg(\sum^{l}_{s=0}q_{is}r_{ks}\bigg)-1
+\label{eq:avoid_excess}
+\end{multline}
+% \end{equation}
+
+\subsubsection{Arrival times}
+\label{subsec:arrival_times}
+One of the core requirements in a coalition is the simultaneous presence of all its members. In this paper, we assume that the absence of even a single robot makes it impossible for a task to progress. Hence, a task can start when the last required robot has joined the coalition at the location.
+
+To express these requirements, we consider the arrival times of each robot. We introduce matrix $Y$ whose elements $y_{ik}$ store the arrival time of robot $i$ at task $k$. If a robot does not visit a task, its corresponding arrival time is set to 0:
+\begin{equation}
+\forall i, k \backslash \{0\} \quad  \sum^{m}_{j=0} x_{ijk} = 0 \implies y_{ik} = 0  \label{eq:y_zero}\\
+\end{equation}
+
+% The starting time of task $j$ is denoted by $y_j^{\text{max}}$ and it corresponds to the arrival time of the last robot to join the coalition:
+Task $j$ starts at the arrival time of the last robot to join the coalition, denoted by $y_j^{\text{max}}$.
+\begin{equation}
+\forall j \backslash \{0\} \quad y^{\max}_j = \underset{i}{\max} (y_{ij})  \label{eq:y_max}
+\end{equation}
+
+To calculate the arrival time $y_{ik}$ of robot $i$ at a task $k$, it is sufficient to sum the time of completion of the previous task $j$ with the travel time from task $j$ to task $k$ (denoted by $t_{ijk}$). The constraint is then
+\begin{multline}
+\forall i \forall j \backslash \{m+1\} \forall k \backslash \{0\} \ x_{ijk} = 1 \implies \\ y_{ik} = y^{\max}_{j} + t^{e}_{j} + t_{ijk} + t^s_{jk}
+\label{eq:y_value}
+\end{multline}
+where $t^{e}_{j}$ is the execution time of task $j$ and $y^{\max}_{j}$ indicates the starting time of the same task. The stochastic buffer time between the task $j$ and $k$ is given by $t^s_{jk}$ which will be covered in Sec. \ref{subsec:stoch_time}. A pictorial representation of this calculation is reported in Fig. \ref{fig:timing_explanation}. 
+
+
+% where $t^{e}_{j}$ is the execution time of task $j$ and $y^{\max}_{j}$ indicates the starting time of the same task. A pictorial representation of this calculation is reported in Fig. \ref{fig:timing_explanation}. The figure also includes stochastic aspects which will be covered in Sec. \ref{subsec:stoch_time}.
+
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.45\textwidth]{Images/timing_image.png}
+    \caption{Arrival times of robots $i_1$ and $i_2$. \textmd{Robot $i_1$ attends task $k$ after $j_1$, whereas the robot $i_2$ attends the same task after $j_2$. The duration of execution, travel, and stochastic buffer time are denoted by $t^e$, $t$, and $t^s$, respectively. Task $k$'s starting time is given by $y^{\max}_k$. Robot $i_2$ is the last to arrive at the task, so $y^{\max}_k$ is equal to its time of arrival $(y_{i_1k}$.)}}
+    \label{fig:timing_explanation}
+\end{figure}
+
+\subsubsection{Stochastic travel times}
+\label{subsec:stoch_time}
+In the quest for a problem formulation that incorporates as many realistic aspects as possible, we include the possibility for travel times to be known only probabilistically. To model travel times as stochastic processes, we assume that the delay can be captured as Gaussian noise $\mathcal{G}(\mu,\sigma)$. More specifically, if we denote with $t$ the ideal travel time between two tasks, then
+\begin{equation}
+t^* = t + \mathcal{G}(\mu,\sigma).
+\end{equation}
+
+For each robot in a coalition, we can express the need to arrive at the task as
+\begin{equation}
+P(t < \bar{t}) \geq \epsilon \label{eq:prob_constraint}
+\end{equation}
+where $\bar{t}$ is the hypothetical starting time of the task. We can develop Eq. \eqref{eq:prob_constraint} as follows:
+\begin{align*}
+t^* = t + \mathcal{G}(\mu,\sigma) &\leq \bar{t} \\
+\mathcal{G}(\mu,\sigma) &\leq \bar{t} - t \\
+\sigma^2\mathcal{G}(0,1)+\mu &\leq \bar{t} - t\\
+P \left( \sigma^2\mathcal{G}(0,1)+\mu \leq \bar{t} - t \right) &\geq \epsilon\\
+P \left( \mathcal{G}(0,1) \leq \frac{\bar{t} - t -\mu}{\sigma^2} \right) &\geq \epsilon\\
+\Phi \left(\frac{\bar{t} - t -\mu}{\sigma^2} \right) &\geq \epsilon\\
+\end{align*}
+where $\Phi(\cdot)$ denotes the cumulative distribution function of $\mathcal{G}(0,1)$. Therefore, indicating with $\Phi^{\text{inv}}(\cdot)$ the inverse of $\Phi(\cdot)$, we can write
+\begin{align*}
+\left(\frac{\bar{t} - t -\mu}{\sigma^2} \right) &\geq \Phi^{\text{inv}}(\epsilon)\\
+\bar{t} - t \geq \mu + \sigma^2 \Phi^{\text{inv}}(\epsilon)\\
+\end{align*}
+This calculation allows us to introduce the symbol $t^s$ defined as follows:
+\begin{equation}
+t^s = %\bar{t} - t^* \geq 
+\mu + \sigma^2 \Phi^{\text{inv}}(\epsilon)
+\label{eq:stoch_final}
+\end{equation}
+which indicates a ``safety margin'' to arrive on time at a task with probability $\epsilon$ given the mean and standard deviation $\mu, \sigma$ of the road to that task.
+
+%In our implementation, we consider $h(x)$ as the estimated travel time between two destinations. Then $\mu$ and $\sigma$ are the mean and variance of the possible delay. We set the value of $\mu$ to be a fixed fraction of the path length and vary $\sigma$ to be a random fraction of $\mu$. Finally, we consider the $\epsilon$ to be a high value. It represents the probability with which we will arrive within the calculated time. A high value of $\epsilon$ means that we almost always arrive within the calculated times. We can also assume this as considering a buffer of additional time on top of the expected travel time. Note that each path has its value of $\mu$ and $\sigma$. Therefore the stochastic buffer time is different for all the paths. The stochastic buffer time for a path from task $j$ to $k$ is given by:
+
+% This possibly should be in the experiments section
+% In our implementation, we will be fixing the values of $\epsilon$ to a high value and the value of $\mu$ as a fixed fraction of the path length. The values of $\sigma$ is set randomly as a fraction of the $\mu$ value. 
+
+
+\subsubsection{Objective}
+
+The cost function we aim to minimize is the total time taken by the robots to complete the tasks. This corresponds to the arrival time of the last robot at task $(m+1)$. The objective is therefore
+\begin{equation}
+\text{min} \; y_{m+1}^{\text{max}}
+\label{eq:objective}
+\end{equation}
+
+\subsubsection{Solving} We use Gurobi \cite{gurobi} to solve the optimization problem. This software is well-known to efficiently produce optimal solutions for convex problems. However, our problem is non-convex, and the objective function (Eq. \eqref{eq:objective}) hints that multiple equally good solutions will exist.
+%Thus, as the problem scales up, this method takes exponentially longer to produce a solution. This behavior can be seen in the result section of this paper. 

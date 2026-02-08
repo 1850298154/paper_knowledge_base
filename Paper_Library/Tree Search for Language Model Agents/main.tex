@@ -1,0 +1,866 @@
+
+\documentclass[10pt]{article} % For LaTeX2e
+% \usepackage{tmlr}
+% If accepted, instead use the following line for the camera-ready submission:
+\usepackage[accepted]{tmlr}
+% To de-anonymize and remove mentions to TMLR (for example for posting to preprint servers), instead use the following:
+% \usepackage[preprint]{tmlr}
+
+% Optional math commands from https://github.com/goodfeli/dlbook_notation.
+\input{math_commands.tex}
+
+\usepackage{hyperref}
+\usepackage{url}
+
+
+
+% Custom packages
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{subfigure}
+\usepackage{booktabs} % for professional tables
+
+\usepackage{wrapfig}
+\usepackage{multirow}
+
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage[inline]{enumitem}
+\usepackage{xspace}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{xcolor}
+\usepackage{colortbl}
+\usepackage{inconsolata}
+
+\title{Tree Search for Language Model Agents}
+
+% Authors must not appear in the submitted version. They should be hidden
+% as long as the tmlr package is used without the [accepted] or [preprint] options.
+% Non-anonymous submissions will be rejected without review.
+
+\author{\name Jing Yu Koh \email jingyuk@cs.cmu.edu \\
+      \addr Carnegie Mellon University
+      \AND
+      \name Stephen McAleer \email smcaleer@cs.cmu.edu \\
+      \addr Carnegie Mellon University
+      \AND
+      \name Daniel Fried  \email  dfried@cs.cmu.edu \\
+      \addr Carnegie Mellon University
+      \AND
+      \name Ruslan Salakhutdinov \email rsalakhu@cs.cmu.edu \\
+      \addr Carnegie Mellon University
+}
+
+% The \author macro works with any number of authors. Use \AND 
+% to separate the names and addresses of multiple authors.
+
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+
+\newcommand{\colorDelta}[1]{%
+  \ifnum#1>50\relax\cellcolor{green!65}+{#1}\%\else%
+  \ifnum#1>40\relax\cellcolor{green!40}+{#1}\%\else%
+  \ifnum#1>30\relax\cellcolor{green!30}+{#1}\%\else%
+  \ifnum#1>20\relax\cellcolor{green!20}+{#1}\%\else%
+  \ifnum#1>10\relax\cellcolor{green!10}+{#1}\%\else%
+  \ifnum#1>0\relax\cellcolor{green!5}+{#1}\%\else%
+  #1\%\fi\fi\fi\fi\fi\fi%
+}
+
+
+\def\month{09}  % Insert correct month for camera-ready version
+\def\year{2025} % Insert correct year for camera-ready version
+\def\openreview{\url{https://openreview.net/forum?id=QF0N3x2XVm}} % Insert correct link to OpenReview for camera-ready version
+
+
+\begin{document}
+
+
+\maketitle
+
+\begin{abstract}
+Autonomous agents powered by language models (LMs) have demonstrated promise in their ability to perform decision-making tasks such as web automation. However, a key limitation remains: LMs, primarily optimized for natural language understanding and generation, struggle with multi-step reasoning, planning, and using kenvironmental feedback when attempting to solve realistic computer tasks. 
+Towards addressing this, we propose an inference-time search algorithm for LM agents to explicitly perform exploration and multi-step planning in interactive web environments. 
+Our approach is a form of best-first tree search that operates within the actual environment space, and is complementary with most existing state-of-the-art agents. 
+It is the first tree search algorithm for LM agents that shows effectiveness on realistic web tasks. 
+On the challenging VisualWebArena benchmark, applying our search algorithm on top of a  GPT-4o agent yields a 39.7\% relative increase in success rate compared to the same baseline without search, setting a state-of-the-art success rate of 26.4\%. On WebArena, search also yields a 28.0\% relative improvement over a baseline agent, setting a competitive success rate of 19.2\%. 
+Our experiments showcase the effectiveness of search for web agents, and we demonstrate that performance scales with increased test-time compute. 
+% Our code and models are publicly released at \texttt{removed\_for\_review}
+\end{abstract}
+
+
+\section{Introduction}
+
+Building agents that can perceive, plan, and act autonomously has been a long standing goal of artificial intelligence research~\citep{russell1995artificial,franklin1996agent}. In recent years, the advent of large language models (LMs) with strong general capabilities has paved the way towards building language-guided agents that can automate computer tasks. However, the best LM agents today are still far worse than humans. On the realistic web benchmarks WebArena~\citep{zhou2023webarena} and VisualWebArena~\citep{koh2024visualwebarena}, humans succeed on 78\% and 89\% of tasks respectively, but agents --- even those powered by the latest frontier models --- are far worse, typically achieving success rates below 20\%. 
+One significant bottleneck in existing agents arises from their inability to leverage test-time computation for exploration and multi-step planning. Search and planning is especially important in open ended web environments, as the potential action space (i.e., all possible actions one can take on a webpage) is much larger than in most video games or text-based simulators. There are often multiple plausible actions that must be sequenced to reach a goal, and being able to efficiently explore and prune trajectories is essential. 
+% One promising direction for improving the performance of these agents is to take inspiration from cognitive science by introducing ``System 2'' thinking: more deliberate, logical, calculating forms of forming thoughts~\citep{kahneman2002representativeness,kahneman2011thinking,sloman1996empirical} and solving problems. 
+In artificial intelligence systems, one effective strategy for leveraging test-compute to improve results is search: iteratively constructing, exploring, and pruning a graph of intermediate states and possible solutions~\citep{newell1959report,silver2016mastering,laird2019soar}. The effectiveness of search algorithms has been shown time and time again, enabling models to achieve or surpass human-level performance on a variety of games, including Go~\citep{silver2016mastering,silver2017mastering}, poker~\citep{brown2018superhuman,brown2019superhuman}, and Diplomacy~\citep{gray2020human}.
+
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=\linewidth]{images/search_overview_v2.pdf}
+    \vspace{-0.25in}
+    \caption{Our proposed search algorithm. At each iteration, we pick the next state $s_p$ to expand from frontier $\mathcal{F}$ and compute a score $v$ for it using the value function. Then, we add the possible states that the agent can get to from $s_p$ to the frontier and repeat the search procedure. Faded nodes indicate explored and pruned states. 
+    % Several pruned parts of the search tree are omitted for clarity. 
+    % The formal search algorithm is provided in Appendix.~\ref{appendix:search_algorithm}. 
+    {\color{blue}{Blue dashed arrows}} indicate backtracking.
+    }
+    % \vspace{-0.05in}
+    % https://docs.google.com/drawings/d/1d8lQta1ov0Bg-jEqJtjryS78gWxdwleD4h2_HPp93-A/edit
+    \label{fig:method}
+\end{figure*}
+
+
+How might we apply search in the context of automating computer tasks, where the search space is large and --- unlike games --- there do not exist clear cut rewards and win conditions? Towards this goal, we propose a method to enable autonomous web agents to search over a graph that is iteratively constructed through exploration of an interactive web environment. This search procedure is grounded within the actual environment space, and is guided with environmental feedback. Our approach allows agents to enumerate a much larger number of potentially promising trajectories at test time, reducing uncertainty through explicit exploration and multi-step planning. To the best of our knowledge, this is the first time that inference-time search has been shown to improve the success rate of autonomous agents in realistic web environments. In order to handle the lack of clear cut rewards in these diverse environments, we propose a model-based value function to guide best-first search. The value function is computed by marginalizing over reasoning chains of a multimodal LM conditioned on the agent's observations, producing finegrained scores to effectively guide search. 
+
+Our experiments show that this search procedure is complementary with existing LM agents, and enables these models to perform better on harder and longer horizon tasks. On VisualWebArena~\citep{koh2024visualwebarena}, search improves the performance of a baseline GPT-4o~\citep{openai2024gpt4o} agent by 39.7\% relative to the baseline without search, setting a new state-of-the-art (SOTA) success rate of 26.4\%. On WebArena~\citep{zhou2023webarena}, search is also highly effective, contributing a 28.0\% relative improvement  (yielding a competitive success rate of 19.2\%). We also demonstrate that our search procedure benefits from scale: achieving improved performance as the agent is allotted greater amounts of test-time computation. Our code and models are publicly released at \href{https://jykoh.com/search-agents}{\texttt{jykoh.com/search-agents}}.
+
+
+\section{Background}
+
+\subsection{Realistic Simulated Web Environments}
+
+% There has been considerable recent interest in developing autonomous web agents powered by large language models. 
+Towards the goal of developing autonomous web agents powered by large language models, several prior works focused on building evaluation benchmarks for measuring the progress of models on web tasks. 
+Mind2Web~\citep{deng2023mind2web} is an evaluation benchmark that measures the ability of frontier models in predicting actions taken on static Internet pages. VisualWebBench~\citep{liu2024visualwebbench} introduced a multimodal benchmark for assessing the ability of models to understand web content. 
+Others have looked towards simulators (as opposed to static HTML content): MiniWoB~\citep{shi2017world,liu2018reinforcement} was one of the first interactive simulators for web tasks, but consisted of simplified environments that do not directly translate into real world performance. WebShop~\citep{yao2022webshop} simulates a simplified e-commerce site with real world data. WebLINX~\citep{lu2024weblinx} proposes a benchmark for tackling conversational web navigation, which involves communication between the agent and a human instructor. MMInA~\citep{zhang2024mmina} and OSWorld~\citep{xie2024osworld} propose benchmarks to measure the ability of agents to accomplish tasks by navigating across multiple computer applications. WorkArena~\citep{drouin2024workarena} is a simulated environment for tasks on the ServiceNow platform. 
+Outside of the web, environments such AndroidWorld~\citep{rawles2024androidworld} is a dynamic environment for measuring the performance of agents on mobile applications. 
+Several other work build comprehensive, highly realistic, fully-featured web simulators. 
+WebArena (WA)~\citep{zhou2023webarena} is a benchmark of 812 tasks across 5 realistic self-hosted re-implementations of popular websites (Shopping, Reddit, CMS, GitLab, Maps), each populated with real world data. VisualWebArena (VWA)~\citep{koh2024visualwebarena} is a multimodal extension to WebArena, consisting of 910 new tasks across realistic re-implementations of 3 popular real world sites (Classifieds, Reddit, Shopping). To solve tasks in VWA, agents must leverage visual grounding and understand image inputs --- a realistic and challenging test for multimodal agents. 
+
+
+\begin{wraptable}{r}{0.45\textwidth}
+\vspace{-0.15in}
+\centering
+% \resizebox{1.0\linewidth}{!}{%
+\begin{tabular}{ll}
+    \toprule
+    \textbf{Action Type $a$}\hspace{0mm} & \textbf{Description} \\
+    \midrule
+    \texttt{click [elem]} & Click on \texttt{elem}. \\
+    \texttt{hover [elem]} & Hover on \texttt{elem}. \\
+    \texttt{type [elem] [text]} & Type \texttt{text} on \texttt{elem}. \\
+    \texttt{press [key\_comb]} & Press a key combo. \\
+    \texttt{new\_tab} & Open a new tab. \\
+    \texttt{tab\_focus [index]} & Focus on the i-th tab. \\
+    \texttt{tab\_close} & Close current tab. \\
+    \texttt{goto [url]} & Open \texttt{url}. \\
+    \texttt{go\_back} & Click back. \\
+    \texttt{go\_forward} & Click forward. \\
+    \texttt{scroll [up|down]} & Scroll up or down. \\
+    \texttt{stop [answer]} & End with an output. \\
+    \bottomrule
+\end{tabular}
+% }
+% \vspace{-0.05in}
+\caption{Possible actions $A$ in the (Visual)WebArena environments. %Reproduced with permission from \cite{koh2024visualwebarena}. 
+}   \label{tab:actions}
+\vspace{-0.2in}
+\end{wraptable}
+
+% \begin{table}[t]
+% \centering
+% % \resizebox{0.75\linewidth}{!}{%
+% \begin{tabular}{ll}
+%     \toprule
+%     \textbf{Action Type $a$}\hspace{16mm} & \textbf{Description}\hspace{4mm} \\
+%     \midrule
+%     \texttt{click [elem]} & Click on \texttt{elem}. \\
+%     \texttt{hover [elem]} & Hover on \texttt{elem}. \\
+%     \texttt{type [elem] [text]} & Type \texttt{text} on \texttt{elem}. \\
+%     \texttt{press [key\_comb]} & Press a key combo. \\
+%     \texttt{new\_tab} & Open a new tab. \\
+%     \texttt{tab\_focus [index]} & Focus on the i-th tab. \\
+%     \texttt{tab\_close} & Close current tab. \\
+%     \texttt{goto [url]} & Open \texttt{url}. \\
+%     \texttt{go\_back} & Click back. \\
+%     \texttt{go\_forward} & Click forward. \\
+%     \texttt{scroll [up|down]} & Scroll up or down. \\
+%     \texttt{stop [answer]} & End with an output. \\
+%     \bottomrule
+% \end{tabular}
+% % }
+% % \vspace{-0.08in}
+% \caption{Set of possible actions $A$ in (Visual)WebArena. }   \label{tab:actions}
+% % \vspace{-0.23in}
+% \end{table}
+
+As the (V)WA environments are one of the most realistic and comprehensive evaluation suites for web tasks, we primarily benchmark our method on (V)WA. 
+We briefly describe the setting here but refer readers to \cite{zhou2023webarena} for additional context. The environment $\mathcal{E} = (\mathcal{S}, \mathcal{A}, \Omega, T)$ consists of a set of states $S$, actions $A$ (Tab.~\ref{tab:actions}), and a deterministic transition function $T: \mathcal{S} \times \mathcal{A} \rightarrow \mathcal{S}$ that defines transitions between states conditioned on actions. Each task in the benchmark consists of a goal specified with a natural language instruction $I$ (e.g., ``Find me the cheapest red Toyota car below \$2000.''). Each task has a predefined reward function $R: \mathcal{S} \times \mathcal{A} \rightarrow \{ 0, 1 \}$ which measures whether an agent's execution is successful. We implement our search algorithm on the (V)WA web simulators, but our method is fully general and can be applied to any setting with an interactive environment. % that the agent can freely explore. 
+
+
+
+\subsection{Language-Guided Autonomous Agents}
+
+% There has been substantial work towards building and improving language model agents on these web benchmarks. 
+Autonomous web agents, powered by frontier (multimodal) language models~\citep{team2023gemini,openai2024gpt4o,anthropic2024claude}, are the SOTA approaches for many of the above benchmarks. \citet{kim2024language} showed that large language models can be prompted to execute computer tasks on MiniWoB++~\citep{liu2018reinforcement}, requiring far fewer demonstrations than reinforcement learning methods. AutoWebGLM~\citep{lai2024autowebglm} collects web browsing data for curriculum training and develops a web navigation agent based off a 6B parameter language model that outperforms GPT-4 on WebArena. \citet{patel2024large} showed that a language model agent can improve its performance through finetuning on its own synthetically generated data. \citet{pan2024autonomous} show that introducing an automatic evaluator to provide guidance on task failure or success can improve the performance of a baseline Reflexion~\citep{shinn2024reflexion} agent. \citet{fu2024autoguide} extracts domain knowledge from offline data and provides this to the language agent during inference, to enable it to leverage helpful domain knowledge. SteP~\citep{sodhi2024step} and AWM~\citep{wang2024agent} propose methods to enable agents to dynamically compose policies to solve web tasks. 
+
+In the multimodal setting, WebGUM~\citep{furuta2023multimodal} finetuned a 3B parameter multimodal language model on a large corpus of demonstrations, achieving strong performance on MiniWoB and WebShop. 
+\citet{koh2024visualwebarena} showed that prompting multimodal language models with a Set-of-Marks~\citep{yang2023set} representation enables the model to navigate complex webpages more effectively than text-only agents. 
+SeeAct~\citep{zheng2024seeact} demonstrated that frontier multimodal models can be grounded and prompted to solve web tasks. ICAL~\citep{sarch2024ical} builds a memory of multimodal insights from demonstrations and human feedback. %, improving performance on VisualWebArena. 
+% SeeAct~\citep{zheng2024seeact} demonstrated that frontier multimodal models such as GPT-4V~\citep{yang2023dawn} and Gemini~\citep{team2023gemini}
+Our procedure is an inference-time approach that is compatible with many of these past approaches that focus on developing better base agents.
+
+
+\subsection{Search and Planning}
+
+Our method also draws inspiration from a rich history of search and planning algorithms in computer science. 
+Search algorithms such as breadth-first search, depth-first search, and A* search~\citep{hart1968formal} have long been used in artificial intelligence systems. \citet{newell1959report} and \citet{laird2019soar} cast goal-oriented behavior as search through a space of possible states. 
+\citet{dean1993planning} and \citet{tash1994control} proposed planning algorithms over a limited search horizon, and employed an expansion strategy to improve plans based off heuristics. %about the value of information. 
+\citet{tash1994control} showed that this allowed agents to provide appropriate responses to time pressure and randomness in the world. Deep Blue~\citep{campbell2002deep}, the chess engine which defeated world champion Kasparov in chess in 1997, was based on massive parallel tree search. Pluribus~\citep{brown2019superhuman} leverages search to find better multiplayer poker strategies for dynamic situations. 
+
+In deep learning, search algorithms with neural network components have been instrumental in achieving superhuman performance in many games. Monte-Carlo Tree Search (MCTS)~\citep{browne2012survey} was used to provide lookahead search in the AlphaGo~\citep{silver2016mastering,silver2017mastering} systems that achieved superhuman performance in the game of Go. 
+\cite{gray2020human} performs one-step lookahead search to achieve SOTA on no-press Diplomacy. 
+More recently, several papers~\citep{yao2024tree,besta2024graph} showed the potential of applying search to large language models to introduce exploration, enhancing performance on text based tasks that require non-trivial planning. Others have applied MCTS~\citep{hao2023reasoning,zhou2023language,xie2024monte,chen2024alphamath,zhang2024accessing,wang2024litesearch,zhang2024rest} to improve the performance of LMs on math and science benchmarks~\citep{cobbe2021training,wang2023scibench} or simplified environments~\citep{yao2022webshop,valmeekam2023planning,zhou2023language}. 
+% This differs from search in games, as text usually does not always have explicit win conditions or clear cut value functions. 
+% In contrast to these methods, our approach operates over the actual environmental space of the agent (in this case, the web). 
+
+In contrast to prior work, we search over the actual environment space of realistic, complex websites. This means that search mechanics need to incorporate not just the text outputs of the agent, but also external environmental feedback.% from a highly complex environment. 
+% While this offers more information for accurately evaluating the value of states, it also increases the complexity of computing the best-first search heuristic.
+% Our experiments show that our environmentally grounded tree search substantially improves the performance of language model agents on web tasks. 
+
+
+\section{Method}
+
+In this section, we describe the search procedure (Fig.~\ref{fig:method}) in detail. 
+Successfully solving a task in a web environment such as (V)WA can be interpreted as navigating to a goal state $s_*$ which gives a positive reward $R(s_*) = 1$. The agent starts at state $s_0$ (e.g., the homepage). Given a natural language instruction $I$, the agent's goal is to navigate to $s_*$ by executing actions $(a_0, \ldots, a_t) \in \mathcal{A}$. Each action produces a new state $s_{t+1} \in \mathcal{S}$ and observation $o_{t+1} \in \Omega$ from the environment. The transition $s_t \rightarrow s_{t+1}$ is governed by a deterministic transition function $T: \mathcal{S} \times \mathcal{A} \rightarrow \mathcal{S}$. 
+
+Most approaches treat this as a partially observable Markov decision process, and only condition on the current observation $o_t$ when predicting the next action $a_t$ to take. This has significant limitations: the error of the agent compounds with each step, and if an erroneous action is taken at time $t$, it cannot be easily rectified if this leads to a bad state. Our approach aims to alleviate this by explicitly conducting search and backtracking to identify better trajectories. %improving the performance of a base language model agent on tasks that require exploration or multi-step planning. 
+% There are several components involved which we describe in the following sections. %: the baseline agent model (Sec.~\ref{sec:method_agents}), the value function (Sec.~\ref{sec:method_vf}), and the search algorithm (Sec.~\ref{sec:method_search})
+
+
+\subsection{Agent Backbone}  \label{sec:method_agents}
+
+Most SOTA web agents are built through prompting large (multimodal) language models~\citep{zhou2023webarena,pan2024autonomous,fu2024autoguide,zheng2024seeact,koh2024visualwebarena}. 
+A pretrained language model or multimodal model $f_{\phi}$ is prompted with the current webpage observation $o_t$ and instructed to predict the next action $a_t$ to be executed. % by generating a sequence of text tokens, which are mapped to the appropriate action $a_t \in \mathcal{A}$. 
+% \begin{align*}
+% a_t = f_{\phi}(o_t)
+% \end{align*}
+It is common to leverage prompting techniques, such as ReAct~\citep{yao2022react}, RCI~\citep{kim2024language}, or Chain-of-Thought (CoT) prompting~\citep{wei2022chain}, to improve the performance of the agent. 
+ Language model agents also allow us to sample a diverse set of actions (e.g., with nucleus sampling~\citep{holtzman2019curious}), which is essential for creating plausible branches to explore during search (see Sec.~\ref{sec:method_search}). 
+% We sample multiple CoTs to extract out the $b$ most likely actions for branching during search. 
+Our proposed search algorithm can in principle be applied to any base agent. We show in Sec.~\ref{sec:experiments} that search improves inference-time performance on a range of models without retraining or finetuning $f_{\phi}$.
+
+
+\subsection{Value Function}  \label{sec:method_vf}
+
+We implement a best-first search heuristic using a value function $f_v$ which estimates the expected reward $\mathbb{E}[R(s_t)]$ of the current state $s_t$, where the ground truth goal state would provide perfect reward of 1. As the state $s_t$ of the simulator is not always accessible to the agent ($s_t$ may include private information such as site database entries), the value function computes the value $v_t$ using the current and previous observations, as well as the natural language task instruction $I$:
+\begin{align*}
+v_t = f_v(I, \{ o_1, \ldots, o_t \} ) \in [0, 1]
+\end{align*}
+In our experiments (Sec.~\ref{sec:implementation}), the value function is implemented by prompting a multimodal language model with the task instruction and observation screenshots.
+% We run ablation experiments in Sec.~\ref{sec:ablations} to show that having a good value function is essential.
+
+\subsection{Search Algorithm}  \label{sec:method_search}
+
+
+
+Our proposed search algorithm is a best-first search method loosely inspired by A* search~\citep{hart1968formal}, a classic graph traversal algorithm used widely in computer science. 
+We use a language model agent to propose candidate branches of the search tree. The search has hyperparameters depth $d$, branching factor $b$, and search budget $c$ which determine the maximum size of the search tree,\footnote{In Sec.~\ref{sec:ablations} we show that increasing the size of the search tree improves results by leveraging increased compute.} and termination threshold $\theta$. 
+The search procedure is summarized in Fig.~\ref{fig:method}. We describe it in detail in the following paragraphs and provide the formal algorithm in Appendix~\ref{appendix:search_algorithm}.
+% We describe the search algorithm in detail in the following paragraphs.
+
+At time $t$ in the execution trajectory, the agent has previously executed a sequence of actions to arrive at the current state $s_t$. We begin the search algorithm from $s_t$ by initializing the frontier $\mathcal{F} \leftarrow \{ \}$ (implemented as a max priority queue) which holds the set of states that we plan to evaluate, the best state found so far $\hat{s}_t \leftarrow s_t$, the score of the best sequence $\hat{v}_t \leftarrow 0$, and the search counter $s \leftarrow 0$. 
+
+At each iteration of the search process, we extract the next state from the frontier, $s_p \leftarrow \text{pop}(\mathcal{F})$. 
+% \dfried{it may not be clear that we're only executing these actions to re-reach an already-visited state; i.e. can we think of this as an implementation detail (albeit a very computationally expensive one), not a core part of the algorithm? And have the frontier contain states rather than action seqs.} 
+% We apply the value function to compute the score $v_p$ for state $s_p$, conditioned on the current observation $o_p$ and all previous observations $o_1, \ldots, o_{p-1}$. 
+We use the value function to compute the score for state $s_p$ (with observation $o_p$ and previous observations $o_1, \ldots, o_{p-1}$):
+\begin{align*}
+v_p = f_v(I, \{ o_1, \ldots, o_p \})
+\end{align*}
+
+Then, we increment $s$, and if $v_p$ is higher than the current best score $\hat{v}_t$, we update it and our best state accordingly:
+\begin{align*}
+s &\leftarrow s + 1 \\
+% \hat{v}_t &\leftarrow \max(\hat{v}_t, v_p) \\
+% \hat{s}_t &\leftarrow \argmax_{\{\hat{s}_t, s_p\}} \; \{\hat{v}_t, v_p\}
+\hat{s}_t &\leftarrow 
+\begin{cases} 
+s_p & \text{if } v_p > \hat{v}_t \\
+\hat{s}_t & \text{otherwise}
+\end{cases} \\
+\hat{v}_t &\leftarrow \max(\hat{v}_t, v_p)
+\end{align*}
+If $v_p \geq \theta$ (i.e., the agent is likely to have found a goal state) or $s \geq c$ (the search budget has been exceeded), we will terminate the search and navigate to the best state $\hat{s}_t$ found thus far. 
+Otherwise, if the current branch does not exceed the maximum depth (i.e., $| (s_0, \ldots, s_{p}) | < d$), we will generate plausible next actions for branching by obtaining $b$ candidate actions $\{ a_{p}^1, \ldots, a_{p}^b \}$ from the language model agent $f_{\phi}$. 
+For each $i$, we execute $a_p^i$ and add the resulting state $s_{p}^i$ to the frontier with the score of the current state\footnote{We opt for this approach instead of immediately computing the value for resulting states $s_{p}^i$ as immediate evaluation requires more backtracking calls, which would incur much more overhead in the (V)WA simulators.}:
+% \footnote{We opt for this approach instead of immediately computing the value for resulting states $s_{p}^i$ as immediate evaluation requires more backtracking calls, which would incur much more overhead in the (V)WA simulators. This is because the deterministic environments allow the partially observable states to be represented by the sequences of actions that reached them.}:
+\begin{align*}
+\mathcal{F} &\leftarrow \mathcal{F} \cup (v_p, s_p^i) \qquad \text{ for } i = 1, \ldots, b
+\end{align*}
+This concludes one iteration of search. If both termination conditions have not been reached, we backtrack and repeat this for the next best state from the updated frontier $\mathcal{F}$.
+
+
+\section{Experiments}  \label{sec:experiments}
+
+We run experiments on the full set of 910 VisualWebArena (VWA) and 812 WebArena (WA) tasks. The tasks are distributed across a set of diverse and realistic websites.
+
+% Classifieds, Reddit, Shopping for VWA, and Shopping, CMS, Reddit, GitLab and Maps for WA. 
+
+\subsection{Implementation Details} \label{sec:implementation}
+
+\paragraph{Baseline agent models} Our search algorithm is compatible with most off-the-shelf language model agents. In this work, we test it with simpler, more general, prompt-based agents, and leave incorporation of our method with more performant methods that incorporate domain-specific techniques~\citep{fu2024autoguide,sodhi2024step} for future work. We run several prompt-based agent baselines: 
+%with different input formats (full prompts provided in the appendix):
+\begin{itemize}
+    \item \textbf{Multimodal SoM:} For multimodal models that accept multiple image-text inputs, such as GPT-4o~\citep{openai2024gpt4o} (\texttt{gpt-4o-2024-05-13}), we run the multimodal agent from \citet{koh2024visualwebarena} with the same prompt. We similarly apply a preprocessing step to assign a Set-of-Marks (SoM)~\citep{yang2023set} representation to the webpage. This highlights every interactable element on the webpage with a bounding box and a unique ID. The input to the agent is a screenshot of the SoM-annotated webpage, and a text description of the elements on the page with their assigned IDs.
+    \item \textbf{Caption-augmented:} For base models that are not multimodal (e.g., Llama-3-70B-Instruct~\citep{dubey2024llama}), we run the caption-augmented agent with the same prompt from \citet{koh2024visualwebarena}. We generate captions for each image on the webpage using an off-the-shelf captioning model (in our case, BLIP-2;~\citealt{li2023blip}). The accessibility tree\footnote{\url{https://developer.mozilla.org/en-US/docs/Glossary/Accessibility_tree}} representation of the webpage is used as the input observation.
+    \item \textbf{Text-only:} On WebArena (which does not require visual grounding), we run text-only agents using the prompt from \citet{zhou2023webarena}, for both GPT-4o and Llama-3-70B-Instruct. 
+    % Similar to the caption-augmented baseline, 
+    This model uses an accessibility tree (w/o captions) of the current page as input. %(but this text-only baseline does not include image captions).
+\end{itemize}
+
+\paragraph{Search parameters} 
+% We run these agents with and without search. 
+Our search parameters are set to $d=5, b=5, c=20$, and we stop execution after a maximum of 5 actions. We enforce these constraints due to compute and budget limitations, though we expect that increasing these parameters is likely to further improve results (see Sec.~\ref{sec:ablations} for results on scaling search parameters). We note that the fairly strict limitations on maximum actions imply that there are certain tasks that are intractable (e.g., VWA tasks with ``hard'' action difficulty usually require humans to execute 10 or more actions to complete). Despite this, our results show that GPT-4o with search capped at 5 max actions still substantially outperforms the GPT-4o baseline (without search) with 30 max actions.
+
+\paragraph{Obtaining actions} We sample actions using nucleus sampling~\citep{holtzman2019curious} with a temperature of 1.0 and top-$p$ of 0.95 for all experiments. At each step of execution, we generate 20 outputs from the model by prompting it with CoT reasoning~\citep{wei2022chain}. We aggregate the count of the actions and use the top-$b$ actions for branching.
+
+\paragraph{Value function} As detailed in Sec.~\ref{sec:method_vf}, we require a value function which scores the likelihood that the current state $s_t$ is a goal state. We implement the value function by prompting a multimodal language model 
+% (in our experiments, this is  GPT-4o~\citep{openai2024gpt4o} (\texttt{gpt-4o-2024-05-13})) 
+with the task instruction $I$, screenshots of the agent's trajectory, previous actions the agent took, and the current page URL. The full prompt is provided in Appendix~\ref{appendix:vf_prompt}. The multimodal LM is instructed to output whether the current state is a success, a failure, and if it's a failure, whether it is on a trajectory towards success. These outputs are assigned values of 1, 0, and 0.5 respectively (and 0 for invalid output). 
+In order to get more finegrained and reliable scores, we leverage ideas from self-consistency prompting~\citep{wang2022self}, and sample multiple reasoning paths by prompting the multimodal LM with CoT~\citep{wei2022chain}. We sample 20 different paths from the GPT-4o model using ancestral sampling (temperature of 1.0 and top-$p$ of 1.0). 
+The final value assigned to state $s_t$, used in the best-first search heuristic, is computed by averaging the values from each of the 20 reasoning paths. 
+In our implementation, calling the value function is significantly cheaper than predicting the next action, as action prediction consumes more input tokens for few-shot examples and the representation of the page. 
+\footnote{We estimate the API cost of the GPT-4o SoM agent for action prediction to be approximately $2\times$ that of computing the value.}
+
+\subsection{Results}  \label{sec:results}
+
+% \begin{table}[t]
+% \centering
+% \resizebox{1.0\linewidth}{!}{%
+% \begin{tabular}{llccc}
+%   \toprule
+%   \textbf{Benchmark} & \textbf{Method} & \textbf{Max Actions}  & \textbf{Search} & \textbf{SR} ($\uparrow$) \\
+%   \midrule
+%   \multirow{6}{*}{VisualWebArena} & GPT-4o + SoM~\citep{koh2024visualwebarena} & 30 &  &  19.8\% \\
+%   & Llama-3-70B-Instruct~\citep{koh2024visualwebarena}  &  30 &  &  9.8\% \\
+%   \cmidrule(lr){2-5}
+%   & Llama-3-70B-Instruct & 5 &  & 7.6\% \\
+%   & Llama-3-70B-Instruct + Search (ours) & 5 & \checkmark  & {\color{red}{15.6\%}} \\
+%   & GPT-4o + SoM  & 5  &    &   18.6\% \\
+%   & GPT-4o + SoM + Search (ours) & 5  &  \checkmark  & \textbf{26.4\%} \\
+%   \midrule
+%   \multirow{6}{*}{WebArena}   & GPT-4o~\citep{zhou2023webarena}  & 30   &  &  13.1\%  \\
+%   & GPT-4 + Reflexion~\citep{pan2024autonomous}  & 30   &  &  15.6\%  \\
+%   & AutoWebGLM~\citep{lai2024autowebglm}  & 30   &  &  18.2\%  \\
+%   & GPT-4 + Reflexion + AutoEval~\citep{pan2024autonomous}  & 30   &  &  20.4\%  \\
+%   & SteP~\citep{sodhi2024step}  & 30   &  &  35.8\%  \\
+%   \cmidrule(lr){2-5}
+%   & GPT-4o & 5 &    & 15.0\%  \\
+%   & GPT-4o + Search (ours) & 5 &  \checkmark  & {\color{red}{\%}} \\
+%   \bottomrule
+% \end{tabular}
+% }
+% \caption{Success rates (SR) for baseline models and models that employ search on the VisualWebArena~\citep{koh2024visualwebarena} and WebArena~\citep{zhou2023webarena} benchmarks.}  \label{tab:results}
+% \end{table}
+
+
+% \begin{table}[t]
+% \centering
+% \resizebox{1.0\linewidth}{!}{%
+% \begin{tabular}{llccccc}
+%   \toprule
+%   \textbf{Benchmark} & \textbf{Agent Model} & \textbf{Max Actions}  & \textbf{No Search} & \textbf{+ Search} & \textbf{$\Delta$} \\
+%   \midrule
+%   \multirow{7}{*}{VisualWebArena} & Llama-3-70B-Instruct~\citep{koh2024visualwebarena}  &  \multirow{2}{*}{30}  & 9.8\% & - & - \\
+%   % & GPT-4o-mini + SoM & & 7.3\% & - & - \\
+%   & GPT-4o + SoM~\citep{koh2024visualwebarena} & & 19.8\% & - & - \\
+%   \cmidrule(lr){2-6}
+%   & Llama-3-70B-Instruct (ours, gpt-4o vf) & \multirow{5}{*}{5} & 7.6\% & 16.7\% & +119.7\% \\
+%   & Llama-3.1-70B-Instruct (ours, gpt-4o vf) & & \jykoh{X\%} & 16.2\% & \jykoh{+X\%} \\
+%   & Llama-3-70B-Instruct (ours, LLaVA vf) &  & 7.6\% & 13.5\% & +77.6\% \\
+%   & GPT-4o-mini + SoM (ours, gpt-4o-mini vf) & & \jykoh{X\%} & \jykoh{X\%} & \jykoh{X\%} \\
+%   & GPT-4o + SoM (ours, gpt-4o vf)  &   & 18.9\% & \textbf{26.4\%} & +39.7\% \\
+%   \midrule
+%   \multirow{10}{*}{WebArena}  
+%   & GPT-4o~\citep{zhou2023webarena}  & \multirow{7}{*}{30} & 13.1\% & - & - \\
+%   & GPT-4o~\citep{zhou2023webarena}  &  & 13.1\% & - & - \\
+%   % & GPT-4~\citep{zhou2023webarena}  &  & 14.9\% & - & - \\
+%   & GPT-4 + Reflexion~\citep{pan2024autonomous}  &  & 15.6\% & - & - \\
+%   & AutoWebGLM~\citep{lai2024autowebglm}  &  & 18.2\% & - & - \\
+%   & AutoEval~\citep{pan2024autonomous}  &  & 20.2\% & - & - \\
+%   & BrowserGym (GPT-4)~\citep{drouin2024workarena}  &  & 23.5\% & - & - \\
+%   & SteP~\citep{sodhi2024step}  &  & \textbf{35.8\%} & - & - \\
+%   \cmidrule(lr){2-6}
+%   & Llama-3-70B-Instruct (ours) & \multirow{2}{*}{5} & 7.6\% & 10.1\% & +32.3\% \\
+%   & GPT-4o (ours) &  & 15.0\% & 19.2\% & +28.0\% \\
+%   \bottomrule
+% \end{tabular}
+% }
+% \caption{Success rates (SR) and relative change ($\Delta$) for baseline models and models that employ search on the VisualWebArena~\citep{koh2024visualwebarena} and WebArena~\citep{zhou2023webarena} benchmarks. We also show other published approaches. Search substantially improves our baseline models, setting a new state-of-the-art on VisualWebArena.}
+% \label{tab:results}
+% \end{table}
+
+
+\begin{table*}[t]
+\centering
+\resizebox{1.0\linewidth}{!}{%
+\begin{tabular}{llcccccc}
+  \toprule
+   & \textbf{Agent Model} & \hspace{0mm}\textbf{Max Steps}\hspace{0mm}  & \hspace{0mm}\textbf{No Search}\hspace{0mm} & \hspace{0mm}\textbf{+ Search}\hspace{0mm} & \hspace{0mm}\textbf{$\Delta$}\hspace{0mm} \\
+  \midrule
+  \multirow{5}{*}{VWA}\hspace{4mm} & Llama-3-70B-Instruct + captions~\citep{koh2024visualwebarena} & \multirow{3}{*}{30}  & 9.8\% & - & - \\
+  & GPT-4o + SoM~\citep{koh2024visualwebarena} &  & 19.8\% & - & - \\
+  & ICAL~\citep{sarch2024ical} &  & 23.4\% & - & - \\
+  \cmidrule(lr){2-6}
+  & Llama-3-70B-Instruct + captions & \multirow{2}{*}{5} & 7.6\% & 16.7\% & +119.7\% \\
+  & GPT-4o + SoM &  & 18.9\% & \textbf{26.4\%} & +39.7\% \\
+  \midrule
+  \multirow{11}{*}{WA}  
+  & GPT-4o~\citep{zhou2023webarena} & \multirow{9}{*}{30} & 13.1\% & - & - \\
+  & GPT-4 + Reflexion~\citep{pan2024autonomous} &  & 15.6\% & - & - \\
+  & AutoWebGLM~\citep{lai2024autowebglm} &   & 18.2\% & - & - \\
+  & AutoEval~\citep{pan2024autonomous} &   & 20.2\% & - & - \\
+  & BrowserGym~\citep{drouin2024workarena} &  & 23.5\% & - & - \\
+  & SteP~\citep{sodhi2024step} &   & 33.5\% & - & - \\
+  & GUI-API Hybrid Agent~\citep{song2024beyond} &   & 35.8\% & - & - \\
+  & AgentOccam~\citep{yang2024agentoccam} &   & 43.1\% & - & - \\
+  & AgentOccam-Judge~\citep{yang2024agentoccam} &   & \textbf{45.7\%} & - & - \\
+  \cmidrule(lr){2-6}
+  & Llama-3-70B-Instruct  & \multirow{2}{*}{5} & 7.6\% & 10.1\% & +32.3\% \\
+  & GPT-4o  &  & 15.0\% & 19.2\% & +28.0\% \\
+  % & AgentOccam~\citep{yang2024agentoccam} &   & xx\% & \textbf{xx\%} & {+xx\%} \\
+  \bottomrule
+\end{tabular}
+}
+% \vspace{-0.1in}
+\caption{Success rates (SR) and relative change ($\Delta$) for baseline models and models that employ search on the VisualWebArena (VWA)~\citep{koh2024visualwebarena} and WebArena (WA)~\citep{zhou2023webarena} benchmarks. We also show other published approaches. Search substantially improves our baseline models, setting a new state-of-the-art on VWA.}
+\label{tab:results}
+% \vspace{-0.1in}
+\end{table*}
+
+
+Our results are summarized in Tab.~\ref{tab:results}. Introducing search increases success rate substantially across the board.  Search improves the success rate of the baseline GPT-4o + SoM agent on VWA by 39.7\% relatively (increasing from 18.9\% to 26.4\%), setting a new state-of-the-art on the benchmark. On WA, introducing search to the GPT-4o agent improves the success rate substantially as well, increasing it by 28.0\% relatively (15.0\% to 19.2\%). 
+% This is competitive with other prompt-based agents on WA, but in future work it will be interesting to explore search with stronger baseline agents that incorporate domain-specific techniques~\citep{,}.
+While other baseline agents obtain higher performance than our GPT-4o baseline through domain-specific techniques such as introducing website specific guidelines~\citep{sodhi2024step,fu2024autoguide} or engineering improved input spaces~\citep{song2024beyond,yang2024agentoccam}, these techniques are orthogonal to --- and potentially complementary with --- our search-based approach.
+
+With weaker base models, we also observe substantial improvements. 
+For the Llama-3 caption-augmented agent on VWA, introducing search improves the success rate on VWA by 119.7\% relative to the baseline (7.6\% to 16.7\%). %when GPT-4o is used as the value function, and by 77.6\% relatively (7.6\% to 13.5\%) when LLaVA-v1.6-34B~\citep{liu2024llavanext} is used as the value function. 
+% We attribute this to the GPT-4o model used for the value function being a generally stronger (multimodal) model than Llama-3. 
+With search, Llama-3-70B-Instruct achieves success rates that are close to the best frontier multimodal models that do not use search. 
+% We found during our experiments that the bulk of the API overhead comes from the agent (which has a much longer text prompt, due to few-shot examples and information from the SoM and accessibility tree) rather than from the value function calls. 
+On WebArena, we also see a substantial relative improvement of 32.2\% for the text-based Llama-3 agent (7.6\% to 10.1\%). 
+% As Llama-3 and LLaVA have openly available model weights, 
+The strong performance of the Llama-3-70B-Instruct agent with search can prove to be a cost effective agent model for iteration in future work that requires access to model internals. These results over a variety of model scales and capabilities demonstrate the generality and effectiveness of our approach.
+
+\section{Analysis}
+
+\subsection{Ablations} \label{sec:ablations}
+
+% \begin{figure}[t]
+%     \centering
+%     \vspace{-0.05in}
+%     \includegraphics[width=0.73\linewidth]{images/search_budget_0.4.pdf}
+%     \vspace{-0.1in}
+%     \caption{Success rate on a subset of 200 VWA tasks with search budget $c$. $c=0$ indicates no search is performed. Success rate generally increases as $c$ increases.
+%     }
+%     \vspace{-0.2in}
+%     \label{fig:search_budget}
+% \end{figure}
+
+% \begin{table}[t]
+%     \centering
+%     \resizebox{0.75\linewidth}{!}{
+%     \begin{tabular}{cccc}
+%         \toprule
+%         \textbf{Depth $d$} & \textbf{Branch $b$} & \hspace{3mm}\textbf{SR ($\uparrow$)}\hspace{3mm}  & \hspace{3mm}$\Delta$\hspace{3mm} \\
+%         \midrule
+%         0 & 1 & 24.5\% & \colorDelta{0} \\
+%         \cmidrule{1-4}
+%         \multirow{2}{*}{1} & 3 & 26.0\% & \colorDelta{6} \\
+%         & 5 & 32.0\% & \colorDelta{31}  \\
+%         \cmidrule{1-4}
+%         \multirow{2}{*}{2} & 3 & 31.5\% & \colorDelta{29} \\
+%         & 5 & 35.0\% & \colorDelta{43} \\
+%         \cmidrule{1-4}
+%         3 & 5 & 35.5\% & \colorDelta{45} \\
+%         \cmidrule{1-4}
+%         5 & 5 & \textbf{37.0\%} & \colorDelta{51} \\
+%         \bottomrule
+%     \end{tabular}
+%     }
+%     \vspace{-0.06in}
+%     \captionof{table}{Success rate (SR) and relative change ($\Delta$) over the baseline without search on a subset of 200 VWA tasks with varying search depth ($d$) and branching factor ($b$). $d=0$ indicates no search is performed. All methods use a max search budget $c=20$.}  \label{tab:search_hyperparams}
+% \vspace{-0.2in}
+% \end{table}
+
+\begin{figure}[t]
+    \centering
+    \begin{minipage}{0.46\textwidth}
+        \centering
+        % \includegraphics[width=\textwidth]{images/search_budget.pdf}
+        \includegraphics[width=\textwidth]{images/search_budget_0.4.pdf}
+        % \vspace{-0.23in}
+        \caption{Success rate on a subset of 200 VWA tasks with search budget $c$. $c=0$ indicates no search is performed. Success rate generally increases as $c$ increases.
+        }
+        \label{fig:search_budget}
+    \end{minipage}\hfill
+    \begin{minipage}{0.46\textwidth}
+        \centering
+        \resizebox{1.0\textwidth}{!}{
+        \begin{tabular}{cccc}
+            \toprule
+            \textbf{Depth $d$} & \textbf{Branch $b$} & \hspace{1.5mm}\textbf{SR ($\uparrow$)}\hspace{1.5mm}  & \hspace{1.5mm}$\Delta$\hspace{1.5mm} \\
+            \midrule
+            0 & 1 & 24.5\% & \colorDelta{0} \\
+            \cmidrule{1-4}
+            \multirow{2}{*}{1} & 3 & 26.0\% & \colorDelta{6} \\
+            & 5 & 32.0\% & \colorDelta{31}  \\
+            \cmidrule{1-4}
+            \multirow{2}{*}{2} & 3 & 31.5\% & \colorDelta{29} \\
+            & 5 & 35.0\% & \colorDelta{43} \\
+            \cmidrule{1-4}
+            3 & 5 & 35.5\% & \colorDelta{45} \\
+            \cmidrule{1-4}
+            5 & 5 & \textbf{37.0\%} & \colorDelta{51} \\
+            \bottomrule
+        \end{tabular}
+        }
+        % \vspace{-0.08in}
+        \captionof{table}{Success rate (SR) and relative change ($\Delta$) over the baseline without search on a subset of 200 VWA tasks with varying search depth ($d$) and branching factor ($b$). $d=0$ indicates no search is performed. All methods use a max search budget $c=20$.}  \label{tab:search_hyperparams}
+        \end{minipage}
+% \vspace{-0.15in}
+\end{figure}
+
+We conduct several ablations on a subset of 200 VWA tasks. % (the first 100 Shopping tasks, 50 Reddit task, and 50 Classifieds tasks).
+
+\paragraph{Search budget} We plot the success rate of the GPT-4o agent with search limited to varying budgets $c \in \{0, 5, 10, 15, 20\}$ in Fig.~\ref{fig:search_budget}. All experiments are conducted with search parameters of depth $d=5$ and branching factor $b=5$. The search budget specifies the maximum number of node expansions performed at each step. For example, a search budget of 10 indicates that at most 10 nodes will be expanded, after which the agent will commit to and execute the trajectory with the highest value. 
+% The results are summarized in Fig.~\ref{fig:search_budget}
+We observe that success rate generally increases as search budget increases. Notably, performing even very small amounts of search ($c=5$) substantially improves success rate by 30.6\% relative to not doing search (24.5\% to 32.0\%). When the budget is increased to $c=20$, this improves success rate by 51.0\% relative to not doing search (from 24.5\% to 37.0\%), highlighting the benefit of scaling the search budget. %Running experiments with an even greater search budget to evaluate scaling trends would be promising future direction to explore.
+
+\paragraph{Search depth and breadth} We run an ablation experiment varying the search branching factor $b$ and maximum depth $d$. The results are summarized in Tab.~\ref{tab:search_hyperparams}. We observe that in general, success rate increases as the size of search tree increases (along both $b$ and $d$ dimensions), and scaling both $b$ and $d$ is necessary to achieve strong performance.
+% If the search tree is too shallow ($d=1$) or too narrow ($b=3$), success rates are 
+
+
+\begin{wraptable}{r}{0.32\textwidth}
+\vspace{-0.15in}
+\centering
+\resizebox{0.32\textwidth}{!}{
+    \begin{tabular}{lccc}
+        \toprule
+        \textbf{Value Function} & \textbf{SR ($\uparrow$)} \\ %& \textbf{$\Delta$} \\
+        \midrule
+        None (no search)  & 24.5\% \\ %& \colorDelta{0} \\
+        LLaVA (w/ SC, $n=20$) & 30.0\% \\ %& \colorDelta{0} \\
+        GPT-4o (no SC) & 28.5\% \\ %& \colorDelta{51} \\
+        GPT-4o (w/ SC, $n=5$) & 32.5\% \\ %& \colorDelta{51} \\
+        GPT-4o (w/ SC, $n=20$) & 37.0\% \\ %& \colorDelta{51} \\
+        Groundtruth   & 43.5\% \\ %& \colorDelta{78} \\
+        \bottomrule
+    \end{tabular}
+}
+\vspace{-0.05in}
+\caption{Success rate of the GPT-4o agent with different value functions.}
+\label{tab:sr_vf_ablation}
+\vspace{-0.1in}
+\end{wraptable}
+
+
+\paragraph{Varying the value function} We ablate the multimodal model used for the value function, swapping out GPT-4o for (1) the LLaVA-v1.6-34B~\citep{liu2024llavanext} multimodal model prompted zero-shot (with only the current observation, as LLaVA only supports a single image input) and (2) the groundtruth reward from VWA (which is a sparse reward signal that returns either 0 or 1, and does not track partial progress), and (3) GPT-4o without self-consistency. The results are summarized in Tab.~\ref{tab:sr_vf_ablation}. We find that the GPT-4o value function significant outperforms the LLaVA model, improving the result of the agent from 30.0\% to 37.0\%. The groundtruth reward function achieves a success rate of 43.5\%. These results suggest that there is still significant headroom in improving the search algorithm with better value functions. We also observe that self-consistency is essential for good performance ($28.5\% \rightarrow 37.0\%$), which we attribute to it enabling marginalization over multiple reasoning chains, reducing noise during state evaluation. While we do not finetune custom value function models in this paper, we believe that this is a promising direction for future work, and may result in value function models that can outperform our current version.
+
+\pagebreak
+\paragraph{Comparison to Trajectory-Level Reranking}
+\begin{wrapfigure}{r}{0.48\textwidth}
+    \centering
+    % \vspace{-0.15in}
+    \includegraphics[width=\linewidth]{images/reranking.pdf}
+    \caption{Success rate of a trajectory re-ranking approach compared to our approach.}
+    \vspace{-0.1in}
+    \label{fig:reranking_results}
+\end{wrapfigure}
+% \begin{figure}[t]
+%     \centering
+%     \includegraphics[width=1.0\linewidth]{images/reranking.pdf}
+%     \caption{Success rate of a trajectory re-ranking approach compared to our approach.}
+%     % \vspace{-0.1in}
+%     \label{fig:reranking_results}
+% \end{figure}
+
+An alternative to tree search would be to generate multiple trajectories, re-rank, and commit to the best one as scored by the value function, similar to the methods proposed in \cite{chen2024tree} and \cite{pan2024autonomous} without their Reflexion~\citep{shinn2024reflexion} component. This is a less practical method, as it is harder to prevent destructive actions from being executed (see Sec.~\ref{sec:limitations} for more discussion) as the agent is required to take the trajectory to completion before it can be evaluated. It is also a more limited form of search, as it only considers entire trajectories and cannot backtrack to prune bad branches. Nevertheless, we perform an ablation where we sample $n$ trajectories from the GPT-4o agent (with nucleus sampling~\citep{holtzman2019curious} at each step using a temperature of 1.0 and top-$p$ of 0.95) and use the same value function to re-rank the trajectories, picking the best one out of $n$. %We choose 3 as this is the same number of trajectories that \cite{pan2024autonomous} use (performance for their approach peaks at 3 trajectories). 
+
+We observe that this re-ranking baseline starts to plateau around 7 runs, which achieves a success rate of 30\%. This underperforms our approach with search budget $c \geq 5$ (Fig.~\ref{fig:search_budget}). 
+For $c=5$ and $n=5$, the agent from these two approaches spend approximately equal inference compute.
+It is also substantially worse than our approach with $c=20$, which achieves a success rate of 37.0\% on the ablation subset.
+% In future work, it will be valuable to do a compute-matched study of both methods, as success rate may depend on the effectiveness of the value function (as discussed in \citealt{chen2024tree}).
+
+
+
+\subsection{Success Rate Breakdown}
+
+% \begin{table}
+% % \vspace{-0.15in}
+% \centering
+% \resizebox{0.76\linewidth}{!}{
+%     \begin{tabular}{lccc}
+%         \toprule
+%         \textbf{Difficulty} & \textbf{No Search} & \textbf{Search} & \textbf{$\Delta$} \\
+%         \midrule
+%         easy   & 34.2\% & 42.3\% & \colorDelta{24} \\
+%         medium & 12.7\% & 22.2\% & \colorDelta{75} \\
+%         hard   & 10.2\% & 14.9\% & \colorDelta{47} \\
+%         \bottomrule
+%     \end{tabular}
+% }
+% \vspace{-0.08in}
+% \caption{Success rates and relative change ($\Delta$) of the GPT-4o agent on VWA tasks of different action difficulty levels.}
+% \label{tab:sr_difficulty_level}
+% \vspace{-0.2in}
+% \end{table}
+
+
+\begin{wraptable}{r}{0.45\textwidth}
+\vspace{-0.15in}
+\centering
+\resizebox{0.45\textwidth}{!}{
+    \begin{tabular}{lccc}
+        \toprule
+        \textbf{Difficulty} & \textbf{No Search} & \textbf{Search} & \textbf{$\Delta$} \\
+        \midrule
+        easy   & 34.2\% & 42.3\% & \colorDelta{24} \\
+        medium & 12.7\% & 22.2\% & \colorDelta{75} \\
+        hard   & 10.2\% & 14.9\% & \colorDelta{47} \\
+        \bottomrule
+    \end{tabular}
+}
+\vspace{-0.05in}
+\caption{Success rates and relative change ($\Delta$) of the GPT-4o agent on VWA tasks of different action difficulty levels.}
+\label{tab:sr_difficulty_level}
+\vspace{-0.1in}
+\end{wraptable}
+
+\paragraph{Success rate by task difficulty} The VWA benchmark includes labels for the \textit{action difficulty} of each task. These labels are human annotated, and roughly indicate the number of actions a human would need to take to solve the tasks: easy tasks require 3 or fewer actions, medium tasks require 4--9 actions, and hard tasks demand 10 or more. These guidelines are approximate and devised by the human annotators of VWA, so there may exist more optimal solutions in practice. The increase in success rate from introducing search is summarized in Tab.~\ref{tab:sr_difficulty_level}. Introducing search improves performance across all difficulty levels, but introduces much greater gains in medium difficulty tasks, with a relative increase of 75\% in success rate (from 12.7\% to 22.2\%). We hypothesize that this is because our search parameters (max depth $d=5$) are beneficial for a large proportion of medium difficulty tasks. Conversely, achieving even better performance on hard tasks may require search over deeper trees. Easy tasks do not benefit as much from search, as they generally involve less planning (some can be solved with 1 or 2 actions), and baselines already have higher success rates.
+
+% \begin{table}[t]
+%     \centering
+%     \resizebox{0.76\linewidth}{!}{
+%         \begin{tabular}{lccc}
+%             \toprule
+%             \textbf{Website}\hspace{6mm} & \textbf{No Search} & \textbf{Search} & \textbf{$\Delta$} \\
+%             \midrule
+%             Classifieds   & 18.4\% & 26.5\% & \colorDelta{44} \\
+%             Reddit &  17.1\% & 20.5\% & \colorDelta{20} \\
+%             Shopping   & 20.0\% & 29.0\% & \colorDelta{45} \\
+%             \cmidrule{1-4}
+%             Overall   & 18.9\% & 26.4\% & \colorDelta{40} \\
+%             \bottomrule
+%         \end{tabular}
+%     }
+%     \vspace{-0.08in}
+%     \caption{Success rates and relative change ($\Delta$) of the GPT-4o agent on VWA websites.}
+%     \vspace{-0.1in}
+%     \label{tab:sr_websites_vwa}
+% \end{table}
+
+% \begin{table}[t]
+%     \centering
+%     \resizebox{0.76\linewidth}{!}{
+%         \begin{tabular}{lccc}
+%             \toprule
+%             \textbf{Website}\hspace{6mm} & \textbf{No Search} & \textbf{Search} & \textbf{$\Delta$} \\
+%             \midrule
+%             CMS & 11.0\% & 16.5\% & \colorDelta{50} \\
+%             Map            & 21.1\% & 25.8\% & \colorDelta{22} \\
+%             Shopping       & 24.0\% & 28.1\% & \colorDelta{17} \\
+%             Reddit         & 7.9\%  & 10.5\% & \colorDelta{33} \\
+%             Gitlab         & 10.2\% & 13.3\% & \colorDelta{30} \\
+%             \cmidrule{1-4}
+%             Overall & 15.0\% & 19.2\% & \colorDelta{28} \\
+%             \bottomrule
+%         \end{tabular}
+%     }
+%     \vspace{-0.08in}
+%     \caption{Success rates and relative change ($\Delta$) of the GPT-4o agent on WA websites.}
+%      \vspace{-0.2in}
+%    \label{tab:sr_websites_wa}
+% \end{table}
+
+
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\linewidth]{images/qualitative_48.pdf}  % https://docs.google.com/drawings/d/1O3A2P7Q_1QxKHAajqwbhY72opbFNGSV1onULM9IVnqE/edit
+    % \vspace{-0.3in}
+    \caption{Search can improve robustness by backtracking from bad actions. Shown above is a trajectory for VWA classifieds task \#48 where greedily picking the first sampled actions would have led to a failure (the path in the first row).}
+    %Search avoids this failure mode by exploring and pruning less promising paths, ultimately committing to the highlighted trajectory.}
+    \label{fig:qualitative_48}
+    % \vspace{-0.17in}
+\end{figure}
+
+\begin{table}[t]
+    \centering
+    \begin{minipage}{0.46\textwidth}
+        \centering
+        \resizebox{\textwidth}{!}{
+            \begin{tabular}{lccc}
+                \toprule
+                \textbf{Website} & \textbf{No Search} & \textbf{Search} & \textbf{$\Delta$} \\
+                \midrule
+                Classifieds   & 18.4\% & 26.5\% & \colorDelta{44} \\
+                Reddit &  17.1\% & 20.5\% & \colorDelta{20} \\
+                Shopping   & 20.0\% & 29.0\% & \colorDelta{45} \\
+                \cmidrule{1-4}
+                Overall   & 18.9\% & 26.4\% & \colorDelta{40} \\
+                \bottomrule
+            \end{tabular}
+        }
+        % \vspace{-0.1in}
+        \caption{Success rates and relative change ($\Delta$) of the GPT-4o agent on VWA websites.}
+        % \vspace{-0.2in}
+        \label{tab:sr_websites_vwa}
+    \end{minipage}%
+    \hfill
+    \begin{minipage}{0.45\textwidth}
+        \centering
+        \resizebox{\textwidth}{!}{
+            \begin{tabular}{lccc}
+                \toprule
+                \textbf{Website} & \textbf{No Search} & \textbf{Search} & \textbf{$\Delta$} \\
+                \midrule
+                CMS & 11.0\% & 16.5\% & \colorDelta{50} \\
+                Map            & 21.1\% & 25.8\% & \colorDelta{22} \\
+                Shopping       & 24.0\% & 28.1\% & \colorDelta{17} \\
+                Reddit         & 7.9\%  & 10.5\% & \colorDelta{33} \\
+                Gitlab         & 10.2\% & 13.3\% & \colorDelta{30} \\
+                \cmidrule{1-4}
+                Overall & 15.0\% & 19.2\% & \colorDelta{28} \\
+                \bottomrule
+            \end{tabular}
+        }
+        % \vspace{-0.1in}
+        \caption{Success rates and relative change ($\Delta$) of the GPT-4o agent on WA websites.}
+         % \vspace{-0.2in}
+       \label{tab:sr_websites_wa}
+    \end{minipage}
+\end{table}
+
+
+
+    
+% \begin{table}[t]
+%     \centering
+%     \begin{minipage}{0.45\textwidth}
+%         \centering
+%         \resizebox{\textwidth}{!}{
+%             \begin{tabular}{lccc}
+%                 \toprule
+%                 \textbf{Website} & \textbf{No Search} & \textbf{Search} & \textbf{$\Delta$} \\
+%                 \midrule
+%                 Classifieds   & 18.4\% & 26.5\% & \colorDelta{44} \\
+%                 Reddit &  17.1\% & 20.5\% & \colorDelta{20} \\
+%                 Shopping   & 20.0\% & 29.0\% & \colorDelta{45} \\
+%                 \cmidrule{1-4}
+%                 Overall   & 18.9\% & 26.4\% & \colorDelta{40} \\
+%                 \bottomrule
+%             \end{tabular}
+%         }
+%         \vspace{-0.1in}
+%         \caption{Success rates and relative change ($\Delta$) of the GPT-4o agent on VWA websites.}
+%         \vspace{-0.2in}
+%         \label{tab:sr_websites_vwa}
+%     \end{minipage}%
+%     \hfill
+%     \begin{minipage}{0.43\textwidth}
+%         \centering
+%         \resizebox{\textwidth}{!}{
+%             \begin{tabular}{lccc}
+%                 \toprule
+%                 \textbf{Website} & \textbf{No Search} & \textbf{Search} & \textbf{$\Delta$} \\
+%                 \midrule
+%                 CMS & 11.0\% & 16.5\% & \colorDelta{50} \\
+%                 Map            & 21.1\% & 25.8\% & \colorDelta{22} \\
+%                 Shopping       & 24.0\% & 28.1\% & \colorDelta{17} \\
+%                 Reddit         & 7.9\%  & 10.5\% & \colorDelta{33} \\
+%                 Gitlab         & 10.2\% & 13.3\% & \colorDelta{30} \\
+%                 \cmidrule{1-4}
+%                 Overall & 15.0\% & 19.2\% & \colorDelta{28} \\
+%                 \bottomrule
+%             \end{tabular}
+%         }
+%         \vspace{-0.1in}
+%         \caption{Success rates and relative change ($\Delta$) of the GPT-4o agent on WA websites.}
+%          \vspace{-0.2in}
+%        \label{tab:sr_websites_wa}
+%     \end{minipage}
+% \end{table}
+
+% \paragraph{Success rates by website} Tables~\ref{tab:sr_websites_vwa} and \ref{tab:sr_websites_wa} show the success rates on the various websites in the VWA and WA benchmarks. We observe an improvement in performance across all sites, which showcase the generality of our method. In particular
+
+\paragraph{Success rates by website} Tables~\ref{tab:sr_websites_vwa} and \ref{tab:sr_websites_wa} summarize the success rates across the various websites in the VWA and WA benchmarks. We observe an improvement in success rates across the board, demonstrating that our method generalizes across sites. 
+Specifically, the increase is most substantial on the Classifieds and Shopping sites in VWA, with relative increases of 44\% and 45\%, and the CMS site in the WA benchmark (relative improvement of 50\%). 
+% These results highlight the robustness and effectiveness of incorporating search functionality in enhancing the success rates of the GPT-4o agent on interactive web environments.
+
+
+% \paragraph{Importance of the value function} \jykoh{Comparison with different value functions: GPT-4o, Llava, groundtruth, noisy groundtruth}
+
+\subsection{Qualitative Results}  \label{sec:qualitative}
+
+
+% \begin{figure}
+%     \centering
+%     \includegraphics[width=\linewidth,height=3in]{images/qualitative_48.pdf}
+%     \caption{Search can improve the robustness and performance of agents. Shown above is a trajectory for a shopping task to add a vase to the wishlist. The baseline agent adds a vase but removes it from the wishlist at the end, leading to a failure, while the agent with search succeeds as it can explore and plan around this failure case caused by bad random samples from the language model.}
+%     \label{fig:uncertainty}
+% \end{figure}
+
+In this section, we discuss some qualitative examples of agent trajectories, and identify various failure modes that are solved when incorporating search.
+
+\paragraph{More robust multi-step planning} Many tasks in VWA and WA require an agent to keep a persistent memory of multiple previous actions and observations. A common failure mode amongst agents without search is that they tend to undo previous actions, or get stuck in loops (see Appendix C.4 of \citealt{koh2024visualwebarena}). An example for VWA shopping task \#256 is shown in Fig.~\ref{fig:method}, where the agent is tasked to add two different types of canned fruit from the same brand to the comparison list. The baseline agent successfully adds the first item, but fails to navigate to the second item, as it returns to the homepage in step 3 and gets confused. This is an example of compounding error leading to overall task failure, which is fairly common in existing baseline agents without search. 
+When search is introduced, the agent explores other plausible trajectories and backtracks when those eventually result in failure: 
+% With explicit search and evaluation over multiple steps  (up to trajectories of $d=5$ in our experiments), the value function can identify and prune inconsistent or bad trajectories. 
+the same GPT-4o agent with search is able to find a successful multi-step trajectory for the same task, which involves adding the first item (action \#1 in Fig.~\ref{fig:method}), typing in a search query (\#6), and adding the correct second item to the comparison list (\#9).
+
+
+
+\paragraph{Resolving uncertainty} An inherent issue with sampling actions from language models is that we are sampling from a distribution over text, and the first sample we generate may not always be the best action to take in the environment. Search allows us to evaluate each generated action concretely by executing it in the simulator, and use the received environmental feedback to make better decisions. One example is VWA classifieds task \#48 (Fig.~\ref{fig:qualitative_48}), which is to find a post containing a particular image. If the agent executes the first sampled action at every step (i.e., the sequence in the top row), it results in failure. Search allows the agent to explore and enumerate multiple possibilities. % by executing plausible actions and receiving environment feedback.
+% , which allows it to select the best (and in this case, successful) trajectory.
+% One example is shown in Fig.~\ref{fig:uncertainty} for VWA shopping task \#96, which is to add a vase to the user's wishlist. The baseline agent successfully adds a vase, but removes it at the end, which leads to a failure. However, when equipped with search, the agent is able to evaluate all the possible actions at the last step, and pick the best one rather than commit to the first action sampled.
+
+\subsection{Limitations}  \label{sec:limitations}
+
+While we have shown that introducing search to language model agents achieves promising results on web tasks, our approach does come with some practical considerations. %In this section we discuss some common failure modes and possible ways to address these.
+
+\paragraph{Search can be slow} Introducing search allows us to expend more compute at inference time to extract stronger results from the baseline LM agent. However, this results in trajectories taking significantly longer to execute, as the agent has to perform more exploration and hence more inference calls to the LM. 
+For example, a search budget of $c=20$ implies that an agent with search could potentially expand up to 20 states in each search iteration, which would use up to $20\times$ more LM calls than an agent without search. Research on improving the efficiency and throughput of machine learning systems~\citep{leviathan2023fast,dao2022flashattention,dao2023flashattention} will likely help with optimizing this, but for practical deployment one may need to carefully set the search parameters $b$, $d$, and $c$ to balance between achieving better results and overall time spent completing a task.
+
+In our approach, we implemented search by keeping track of the sequence of actions required to get to a state. During backtracking, we reset the environment and apply the same sequence after resetting the environment. This is necessary, as naively executing the \texttt{go\_back} action (Tab.~\ref{tab:actions}) may discard important information on the page, such as the scroll offset and already entered text. 
+% These environment calls for backtracking do introduce some additional overhead. %, which can be restrictive if environment calls are expensive.
+
+
+\paragraph{Destructive actions} For real world deployment, we will need to restrict the search space to actions that are not \textit{destructive}. Destructive actions are defined as actions that will irreversibly change the state of the website and are difficult to backtrack from. For example, placing an order on an e-commerce site is typically difficult to undo. 
+One way to address this is to introduce a classifier that predicts when certain actions are destructive, and prevent node expansion for those states. If we have specific domain knowledge about the downstream application (e.g., we know certain pages should be off limits), such rules can be manually enforced with high accuracy. 
+% One advantage of our method over trajectory level reranking (Sec.~\ref{sec:ablations}) 
+One advantage of tree search is that it is easier to incorporate such a constraint: it can be directly integrated into the value function to prevent execution of dangerous actions. 
+Another direction to handle this would be to train a world model~\citep{ha2018world} that we can use for simulations during search. %, and search over this rather than explore the real world. 
+Search may also be more easily implemented in offline settings where actions are non-destructive as they can always be undone or reset, such as programming~\citep{jimenez2023swe,yang2024swe} or Microsoft Excel~\citep{li2024sheetcopilot}.
+
+\paragraph{Domain Specific Value Functions} In this work, we only consider tree search in the context of agents operating in dynamic web environments, and our value function is tailored to capture the nuances of web navigation, incorporating features such as page content and navigation history (in the form of previously seen screenshots). This is likely to be less effective for other agentic domains, such as software engineering (SWE) agents~\cite{yang2024swe}. Although our overall tree search approach is generalizable, the value function may require adaptation to effectively incorporate domain-specific context: for example, code execution traces for SWE tasks. We leave detailed explorations for future work.
+
+
+\section{Conclusion}
+In this paper, we introduced an inference-time search algorithm designed to enhance the capabilities of language model agents on realistic web tasks. Our approach integrates best-first tree search with LM agents, enabling them to explore and evaluate multiple action trajectories to achieve superior performance on web tasks. This is the first time search has been shown to significantly improve the success rates of LM agents on realistic web environments, as demonstrated on the (Visual)WebArena benchmarks. Our search procedure is general, and it will be valuable to apply it to other domains in future work, or incorporate more sophisticated search algorithms such as MCTS. We believe that inference-time search will be a key component for building capable agents that can plan, reason, and act autonomously to perform computer tasks.
+
+\section*{Statement of Broader Impact}
+
+% In this paper, we introduced a tree search algorithm that improves the performance of language model agents on web navigation tasks. 
+As an active area of machine learning research, language model web agents present both opportunities and potential ethical considerations. Improved web agents could improve accessibility for users with disabilities, automate repetitive or tedious tasks, and potentially democratize access to complex web platforms. Our search method contributes towards making such benefits more reliable and widely available by improving the robustness and success rate of language model agents. However, we acknowledge several considerations of broader impact:
+
+\begin{itemize}
+    \item \textbf{Intended uses.} Our work is a research product that aims to advance the development of web agents that can help augment humans by automating computer tasks. It is not in its current state intended for deployment in practical scenarios. However, we acknowledge that as they get better, enhanced web agents might be leveraged for malicious purposes, such as more sophisticated phishing attempts or automated attacks on web services. As with all emerging technologies, developers deploying these technologies should incorporate consider potential misuse scenarios and implement the appropriate safeguards.
+    \item \textbf{Privacy:} More capable web agents could potentially be used to scrape personal information or navigate private areas of websites more effectively. We emphasize the importance of respecting user privacy and website terms of service in any real-world deployment of these technologies.
+    \item \textbf{Economic impact.} As web agents become more capable, there may be concerns about job displacement for roles that involve web-based tasks. We believe that web agents will augment human capability, and will be able to improve the overall quality of work by automating tedious computer tasks. However, as this technology starts being deployed more broadly, researchers and developers should proactively consider how to manage this transition and support affected workers.
+    \item \textbf{Fairness and bias.} As with any modern AI system, web agents may inherit or amplify biases present in their training data or underlying language models. Care must be taken to assess and mitigate unfair treatment or representation of different user groups. As an inference time algorithm, our approach can easily be applied to any off-the-shelf language model, and will likely benefit from upstream efforts on language model safety and alignment.
+\end{itemize}
+
+Our approach also potentially provides a framework that could help address some of these concerns. The value function in our tree search algorithm offers a natural way to encode safety constraints at inference time. For example, classifiers can be integrated with our proposed value function to prevent destructive actions or violations of privacy and security policies. We encourage further research into the ethical implications of web agents, and the development of guidelines and best practices for the responsible deployment of web agents.
+
+
+\bibliography{main}
+\bibliographystyle{tmlr}
+
+\pagebreak
+\appendix
+\input{appendix}
+
+\end{document}

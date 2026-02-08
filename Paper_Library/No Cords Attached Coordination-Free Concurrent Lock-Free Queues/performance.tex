@@ -1,0 +1,163 @@
+\hypertarget{performance-evaluation}{%
+\section{Performance Evaluation}\label{performance-evaluation}}
+
+We evaluate CMP against production-ready lock-free queue implementations
+deployed at scale to assess performance and scalability under real-world
+conditions. CMP was originally designed to meet production requirements
+in mesibo (real-time communication platform) and PatANN
+(high-performance vector search engine), both requiring unbounded,
+coordination-free queues to sustain high-throughput, low-latency
+workloads.
+
+Numerous academic prototypes (LCRQ \citep{morrison2013fast}, FAA-based
+queues \citep{yang2016wait}, and others) were excluded, as they either
+rely on non-portable primitives (e.g., DCAS or architecture-specific
+atomics unavailable on ARM and in managed languages) or remain research
+prototypes with no production adoption or large-scale deployment, making
+them unsuitable for representing real-world industry scenarios.
+
+\textbf{CMP Queue:} The CMP implementation with strict FIFO ordering and
+unbounded queue.
+
+\textbf{Moodycamel (MC) Concurrent Queue \citep{moodycamel_queue} }:
+Industry-standard lock-free queue implementation employing a relaxed
+ordering model that sacrifices strict FIFO semantics to maximize
+throughput, with optimized fast paths for single-producer,
+single-consumer settings.
+
+\textbf{Boost Lockfree Queue \citep{boost_lockfree}:} Based on the
+Michael \& Scott (M\&S) algorithm, using hazard pointers for memory
+safety and CAS for synchronization. It provides strict FIFO and serves
+as a baseline. CMP also builds on M\&S but replaces hazard pointers with
+cyclic memory protection, showing that modern reclamation schemes can
+improve both performance and simplicity.
+
+All experiments were conducted on a controlled testbed with round-robin
+sequencing of implementations to eliminate bias from CPU thermal
+throttling and dynamic frequency scaling. To reduce noise from OS
+preemption, interrupts, and memory traffic, we applied 3-sigma filtering
+uniformly across all implementations (CMP, Moodycamel, Boost): samples
+beyond \(\mu\) \(\pm\) 3\(\sigma\) were discarded, removing
+\textasciitilde{}0.3\% of anomalies and yielding stable, reproducible
+results. This standard practice \citep{georges2007statistically} ensures
+P99 values reflect queue performance under stable conditions rather than
+random OS or hardware artifacts. We report two regimes: baseline,
+measuring raw queue throughput; and synthetic load, where threads
+perform additional computation between operations to emulate realistic
+workloads.
+
+\hypertarget{performance-results}{%
+\subsection{Performance Results}\label{performance-results}}
+
+\hypertarget{throughput-performance}{%
+\paragraph{Throughput Performance}\label{throughput-performance}}
+
+Throughput under different producer-consumer configurations is shown in
+Table 1.
+
+\input{figure-throughput.tex}
+
+In the single-producer/single-consumer case (1P1C), CMP sustains 6.49M
+items/second, 72\% higher than Moodycamel and 188\% higher than Boost,
+reflecting CMP's reduced synchronization overhead when contention is
+minimal. At the largest configuration (64P64C), CMP reaches 1.19M
+items/second, 325\% higher than Boost and 892\% higher than Moodycamel,
+indicating exceptional scaling under extreme contention. Notably, at
+this extreme contention level, Boost outperforms Moodycamel by 2.3x in
+throughput, suggesting that Moodycamel's coordinated design suffers
+badly under maximum stress---a pattern that underscores the importance
+of CMP's coordination-free approach.
+
+For intermediate contention (2P2C---16P16C), CMP achieves 5---23\%
+higher throughput than Moodycamel while preserving strict FIFO ordering.
+This advantage demonstrates that CMP's coordination-free design not only
+maintains ordering but actually improves performance under moderate
+contention.
+
+Across all configurations, CMP outperforms Boost by 77---325\%,
+demonstrating efficient lock-free design while retaining correctness
+properties.
+
+\hypertarget{latency-analysis}{%
+\paragraph{Latency Analysis}\label{latency-analysis}}
+
+The following analysis examines operation costs under varying contention
+levels, reporting latency in nanoseconds for no contention (1P1C),
+balanced contention (4P4C), high contention (32P32C), and extreme
+contention (64P64C).
+
+\input{table-1p1c.tex}
+
+In the single-producer, single-consumer case, CMP achieves the lowest
+enqueue and dequeue latencies. Compared to Moodycamel, enqueue
+operations are 40\% faster on average, and dequeue operations are 50\%
+faster. These results indicate that CMP's coordination-free enqueue and
+dequeue mechanisms incur low overhead and latency in the baseline
+configuration.
+
+\input{table-4p4c.tex}
+
+With balanced producer---consumer load, CMP shows higher enqueue latency
+(50\% higher than Moodycamel) due to strict FIFO enforcement, but
+achieves 49\% lower dequeue latency. This trade-off results in overall
+performance advantages: despite slower enqueues, faster dequeues allow
+CMP to maintain competitive throughput while providing strict ordering
+guarantees.
+
+\input{table-32p32c.tex}
+
+Under high contention (32P32C and 64P64C), CMP consistently reduces both
+enqueue and dequeue latencies compared to Moodycamel. At 32P32C, CMP
+achieves 10\% lower enqueue latency and 70\% lower dequeue latency,
+while at 64P64C it maintains 14\% lower enqueue and 30\% lower dequeue
+latencies. CMP also demonstrates superior P99 characteristics across
+both configurations, underscoring its robustness under maximum stress
+conditions.
+
+\hypertarget{synthetic-workload-resilience-analysis}{%
+\paragraph{Synthetic Workload Resilience
+Analysis}\label{synthetic-workload-resilience-analysis}}
+
+To assess performance under realistic workloads, we applied a synthetic
+mixed workload by interleaving queue operations with additional
+computation, inducing memory pressure, cache contention, and scheduling
+interference. Retention is reported as the fraction of baseline
+throughput sustained under this load.
+
+\input{figure-synthetic.tex}
+
+CMP maintains 92\% of baseline performance at 8P8C, compared to
+Moodycamel's 76.9\%, a +15.1 percentage-point advantage. At 1P1C, CMP
+sustains 91.8\% retention with a +6.7 pp advantage.
+
+The strong retention across configurations indicates that CMP's
+coordination-free design is less affected by cache pressure and memory
+subsystem interference. By eliminating synchronization between producers
+and consumers, CMP reduces waiting and scheduling overhead. In contrast,
+Boost shows the weakest resilience (69--78\% retention), reflecting the
+sensitivity of coordination-based schemes to memory pressure.
+
+\textbf{Performance Summary.} CMP's coordination-free enqueue and
+dequeue mechanisms deliver high throughput while enforcing strict FIFO
+ordering. In the baseline case (1P1C), CMP achieves 6.49M items/sec,
+which is 72\% higher than Moodycamel and 188\% higher than Boost,
+showing that FIFO enforcement incurs negligible overhead without
+contention. At maximum concurrency (64P64C), CMP sustains 1.19M
+items/sec, representing a 325\% improvement over Boost and an 892\%
+improvement over Moodycamel, demonstrating scalability under extreme
+load.
+
+Across balanced producer--consumer scenarios, CMP remains competitive or
+superior across all metrics while preserving deterministic FIFO
+guarantees. Relative to the academic baseline, CMP outperforms Boost by
+77--325\% across configurations, with the largest advantages at high
+concurrency levels. Under synthetic load, CMP retains up to 92\% of
+baseline throughput, including a +15.1 percentage-point advantage at
+8P8C over Moodycamel, underscoring resilience to cache pressure, memory
+interference, and scheduling effects.
+
+At 64P64C, Moodycamel's throughput falls below Boost, illustrating that
+complex optimization strategies can exhibit scalability limitations
+under extreme contention. These results reinforce the benefits of CMP's
+coordination-free approach, which combines scalability with strict
+correctness guarantees.

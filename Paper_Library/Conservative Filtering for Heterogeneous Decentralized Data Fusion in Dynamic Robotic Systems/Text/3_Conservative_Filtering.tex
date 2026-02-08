@@ -1,0 +1,146 @@
+Our proposed solution to the conservative filtering problem is inspired by the graph-SLAM literature, where the process of removing edges between nodes is commonly referred to as \emph{sparsification}. In graph-SLAM, removal of the robot's pose nodes induces dependencies between landmarks and results in a dense information matrix. 
+Several methods have been proposed to enforce conditional independence between the landmarks in a conservative manner, which differ in the `timing' of the edge removal. For example, the \emph{Exactly Sparse Extended Information Filter} (ESEIF) algorithm \cite{walter_exactly_2007} removes motion links \emph{prior} to marginalization of pose nodes, to induce a sparse marginalized information matrix. On the other hand, the algorithms in \cite{vial_conservative_2011}, \cite{carlevaris-bianco_conservative_2014} enforce conditional independence \emph{after} marginalization by manipulation of the marginalized dense information matrix. Next, we make use of these two concepts to derive a new conservative filtering algorithm. We divide the problem into two parts, first to account for the hidden dependencies between local variables, and second to enforce conditional independence between sets of visible non-mutual variables.   
+
+
+\subsection{Local Variables - Hidden Dependencies}
+To understand the problem of hidden dependencies between local variables it is sufficient to study the reduced problem of only two robots. Consider two robots $i$ and $j$, with local subsets of variables $\chi_L^i$ and $\chi_L^j$ and a common subset $\chi_C^{ij}$. 
+Fig. \ref{fig:local_variables}(a)-(b) shows an example of hidden correlation due to filtering, demonstrated on robot $i$'s local graph. Robot $i$ has no knowledge on robot $j$'s local variables, which now have hidden dependencies with its local variables due to marginalization. To avoid this hidden coupling robot $i$ needs to take preventive action prior to marginalization based on its local understanding of the distribution. 
+
+\input{Figures/Local_variables_fig}
+
+The local pdf at robot $i$, prior to marginalization (Fig. \ref{fig:local_variables}(a)), can be factorized as,
+\begin{equation}
+    \begin{split}
+        p(\chi^i_{2:1}|Z^{i,+}_1) = p(\chi_{C,1}^{ij},\chi_{C,2}^{ij})\cdot p(\chi^i_L|\chi_{C,1}^{ij}).
+    \end{split}
+    \label{eq:local_exact_eq}
+\end{equation}
+By removing the dependency between the local and common variables prior to marginalization, i.e., approximating the pdf by its marginals (Fig. \ref{fig:local_variables}(c)),
+\begin{equation}
+    \begin{split}
+        \tilde{p}(\chi^i_{2:1}|Z^{i,+}_1) = p(\chi_{C,1}^{ij},\chi_{C,2}^{ij})\cdot p(\chi^i_L),
+    \end{split}
+    \label{eq:local_k21}
+\end{equation}
+and only then marginalize out $\chi_{C,1}^{ij}$ (Fig. \ref{fig:local_variables}(d)),
+\begin{equation}
+    \begin{split}
+        \tilde{p}(\chi^i_{2}|Z^{i,+}_1) = p(\chi_{C,2}^{ij})\cdot p(\chi^i_L),
+    \end{split}
+    \label{eq:local_k1}
+\end{equation}
+the hidden dependencies are prevented.
+Notice that from robot $i$'s perspective, it didn't have to `know' if robot $j$ is tasked with more local variables, but rather it just assumes that there are other variables that are not known locally and takes preemptive measures to avoid hidden dependencies. %As a side note, if the pdfs are Gaussian, the approximation in \ref{eq:local_k21} naturally keeps the marginal means equal to the values of the pdf in (\ref{eq:local_exact_eq}).
+
+
+\subsection{Common Variables - Visible Dependencies}
+To analyze the visible dependencies between the different sets of common variables, consider again the 3 robots $j-i-m$ described in Sec. \ref{Sec:prob_statement} and assume that edges to the local variables have been removed prior to marginalization (\ref{eq:local_k21})-(\ref{eq:local_k1}). Thus the current factor graph at robot $i$ has the form depicted in Fig. \ref{fig:common_vars}(a) and it describes the approximate pdf,
+\begin{equation}
+    \begin{split}
+        \tilde{p}(\chi^i_{2}|Z^{i,+}_1) = p(\chi_L^i)\cdot    p(\chi^{ijm}_{C,2}, \chi^{im\setminus j}_{C,2}, \chi^{ij\setminus m}_{C,2}).
+    \end{split}
+    \label{eq:common_exact_eq}
+\end{equation}
+
+\input{Figures/Common_variables_fig}
+
+The robots now take a second measurement shown by the black and grey factors in Fig. \ref{fig:common_vars}(b). Here the grey factors show measurements taken by robots $j$ and $m$, which are not available at robot $i$ prior to the next fusion episode. It can be seen from the factor graph (Fig. \ref{fig:common_vars}(b)) that the conditional independence assumption between non-mutual variables given common variables does not hold, i.e., $\chi_L^j \not\perp \chi_{C,2}^{im\setminus j}\cup \chi_{L}^i|\chi_C^{ij}$ for robots $i$ and $j$ and similarly $\chi_L^m \not\perp \chi_{C,2}^{ij\setminus m}\cup \chi_{L}^i|\chi_C^{im}$ for robots $i$ and $m$. This breaks the assumption allowing heterogeneous fusion according to (\ref{eq:Heterogeneous_fusion}) and might cause overconfidence in robot $i$'s estimate. 
+
+Fig. \ref{fig:common_vars}(d) shows that by requiring the inner-structure/dependencies between the subsets of common variables at time step 2 to be identical to the dependencies of those subsets at time step 1 prior to marginalization, the conditional independence required for heterogeneous fusion is recovered. For example, if $\chi_{C,1}^{im\setminus j}\perp \chi_{C,1}^{ij\setminus m} | \chi_{C,1}^{ijm}, \chi_L^i$ prior to marginalization (Fig. \ref{fig:fullGraph}(a)), we require $\chi_{C,2}^{im\setminus j}\perp \chi_{C,2}^{ij\setminus m} | \chi_{C,2}^{ijm}, \chi_L^i$ post marginalization (Fig. \ref{fig:common_vars}(d)).   
+This requirement also bypasses the need for `bookkeeping' of the different subset of variables, as it simply keeps the same structure as before filtering. 
+
+The method to enforce this structure is by factorizing the dense factor induced by marginalization shown in Fig. \ref{fig:common_vars}(a) to two smaller factors $\tilde{f}^{im}_2(\chi_C^{im})$ and $\tilde{f}^{ij}_2(\chi_C^{ij})$, connecting separately the variables common to $i$ and $m$ and $i$ and $j$, respectively. In other words, we wish to further approximate the pdf $\tilde{p}(\chi^i_{2}|Z^{i,+}_1)$ shown in Fig. \ref{fig:common_vars}(a) with the pdf $\hat{p}(\chi^i_{2}|Z^{i,+}_1)$ shown in Fig. \ref{fig:common_vars}(c), such that:
+\begin{equation}
+    \begin{split}
+        &\hat{p}(\chi^i_{2}|Z^{i,+}_1)=\\
+        &p(\chi_L^i)\cdot p(\chi_{C,2}^{ijm})\cdot 
+        p(\chi_{C,2}^{ij\setminus m}|\chi_{C,2}^{ijm})\cdot p(\chi_{C,2}^{im\setminus j}|\chi_{C,2}^{ijm}).
+    \end{split}
+    \label{eq:final_approximation}
+\end{equation}
+The steps taken thus far have led to an approximate pdf that accounts for the hidden and visible dependencies in the data in a way that preserves the conditional independence assumptions. However, we have yet to guarantee the conservativeness of the approximate pdf with respect to (w.r.t) the true pdf as required in the problem statement (\ref{eq:approx_definition}), where true pdf here means the dense pdf that would have been resulted without the approximations. While no assumption on the type of distribution have been made until now, there is no commonly used formal definition of conservativeness for general pdfs. Thus we now focus our attention to the case where the pdf can be represented by a Gaussian distribution (or the first two moments). These are used in many applications across robotics \cite{dellaert_factor_2021}.
+
+Assume that the factors are Gaussian functions, described by their information matrix (inverse of covariance). Then the factorization, or sparsification given in (\ref{eq:final_approximation}), can be preformed using various methods, e.g., \cite{vial_conservative_2011}, \cite{carlevaris-bianco_conservative_2014}, \cite{forsling_consistent_2019}. The basic idea of all of these methods is the similar: given the true Gaussian distribution, shown in Fig. \ref{fig:fullGraph}(b) and characterized by its \emph{dense} information matrix and vector $\mathcal{N}(\zeta_{tr},\Lambda_{tr})$. We wish to make the approximate sparse Gaussian pdf, $\hat{p}(\chi^i_{2}|Z^{i,+}_1)\sim \mathcal{N}(\zeta_{sp},\Lambda_{sp})$, shown in Fig. \ref{fig:common_vars}(c) and given in (\ref{eq:final_approximation}), conservative in the positive semi-definite (PSD) sense,
+\begin{equation}
+    \begin{split}
+        \Lambda_{tr}-\Lambda_{sp}\succeq 0.
+    \end{split}
+    \label{eq:consFilter}
+\end{equation}
+
+Due to its relative simplicity and the fact that it does not require optimization, we choose to use the method suggested by \cite{forsling_consistent_2019} and generalized in \cite{dagan_exact_2021}. Briefly, we solve for the deflation constant $\lambda_{min}$, the minimal eigenvalue of $\Tilde{Q}=\Lambda_{sp}^{-\frac{1}{2}}\Lambda_{tr}\Lambda_{sp}^{-\frac{1}{2}}$ and enforce the mean of the sparse distribution to equal the true one. The conservative approximate pdf is,
+\begin{equation}
+    \begin{split}
+        \hat{p}(\chi^i_{2}|Z^{i,+}_1)\sim \mathcal{N}(\lambda_{min}\Lambda_{sp}\Lambda_{tr}^{-1}\zeta_{tr}, \lambda_{min}\Lambda_{sp}).
+    \end{split}
+    \label{eq:sparse_cons_mat}
+\end{equation}
+Note that to apply the deflation back to the factor graph expressing this pdf, factors need to be manipulated. In the case of Gaussian distributions, the information matrix, like the corresponding factor graph, directly expresses the conditional independence structure. Thus zero terms in the information matrix indicate conditional independence (lack of factor) between the variables, and non-zero terms correspond to a factor between variables. We then re-factorize the graph in Fig. \ref{fig:common_vars}(c) in the following way:\footnote{Since the information form is related to the log of the distribution, it can be expressed as summation instead of multiplication \cite{koller_probabilistic_2009}}.
+\begin{equation}
+    \begin{split}
+        \hat{p}(\chi^i_{2}|Z^{i,+}_1)\propto &f(\chi_L^i)+f(\chi_{C,2}^{im\setminus j})+f(\chi_{C,2}^{ijm})+f(\chi_{C,2}^{ij\setminus m})+\\
+        &f(\chi_{C,2}^{ijm},\chi_{C,2}^{im\setminus j})+f(\chi_{C,2}^{ijm},\chi_{C,2}^{ij\setminus m}),
+    \end{split}
+    \label{eq:refactorization}
+\end{equation}
+where factors over one set of variables, e.g., $f(\chi_{C,2}^{ijm})$, are Gaussians with the vector and block diagonal elements of the information vector and matrix in (\ref{eq:sparse_cons_mat}) corresponding to the variables in the set. Factors over two sets of variables hold a zero information vector and the matrix of off-block diagonal elements of those sets are zero block-diagonal elements, e.g., 
+\begin{equation*}
+    \begin{split}
+        &f(\chi_{C,2}^{ijm})=\mathcal{N}(\zeta_{\chi_{C,2}^{ijm}}, \Lambda_{\chi_{C,2}^{ijm},\chi_{C,2}^{ijm}}), \\ 
+        &f(\chi_{C,2}^{ijm},\chi_{C,2}^{im\setminus j}) = \mathcal{N}(\begin{bmatrix} \underline{0}  \\ \underline{0}  \end{bmatrix},
+        \begin{bmatrix}
+        \underline{\underline{0}}  & \Lambda_{\chi_{C,2}^{ijm},\chi_{C,2}^{im\setminus j}}\\ \Lambda_{\chi_{C,2}^{ijm},\chi_{C,2}^{im\setminus j}}^T  & \underline{\underline{0}} \end{bmatrix}).
+    \end{split}
+\end{equation*}
+Here $\underline{0}$ and \underline{\underline{0}} denotes the zero vector and matrix in the correct dimensions, respectively.
+
+\subsection{Updating the CF}
+The last step of the proposed method is to guarantee that data is not over-discounted in the fusion step. Remember that on every communication channel a robot has with its neighbors, a CF was added to track dependencies in the data (Sec. \ref{subsec:CF}), in the form of another factor graph over the common variables. The conservative filtering operations so far did not affect the CF while discounting information on the robot's graph. This might lead to a situation where the CF has `more information', in the sense of information matrix, over the common variables than the robot itself. During fusion this might result robot $i$ sending `negative information' to its neighbors. To avoid this situation, we update every CF graph the robot maintains by deflating the factors of the graph with the deflation constant $\lambda_{min}$. In practice that means multiplying the information vector and matrix of every factor $f$ in the CF graph by $\lambda_{min}$.     
+
+\subsection{Algorithm}
+The full conservative filtering approach is now summarized in Algorithm \ref{algo:cons_filter}, which is written from the perspective of one robot $i$ communicating with its $n^i_r$ neighbors and is applied recursively at every filtering step.
+Note that while the algorithm defines operations on a factor graph and in the example of this paper is integrated with the FG-DDF framework, it is not limited to a specific type of graphical model nor a pdf or a fusion algorithm. The main steps, given in lines 4-7, can in general, be defined by various methods, with the only caveat being guaranteeing conservativeness for non-Gaussian pdfs, which, in practice is frequently solved by approximating with a Gaussian as done in many robotic applications.
+
+\begin{algorithm}[h!]
+    \caption{Conservative Filtering}
+    \label{algo:cons_filter}
+    \begin{algorithmic}[1]
+    \State \textbf{Input:} Local factor graph $\mathcal{F}^{i}$
+    \State Prediction step
+    \State Create a copy of the `true' graph $\mathcal{F}^{i}_{tr}$ 
+    \State Approximate $\mathcal{F}^{i}$ with marginal pdfs \Comment{{\color{Gray} Eq. (\ref{eq:local_k21}) }}
+    \State Marginalize out past nodes in $\mathcal{F}^{i}$ (\ref{eq:local_k1}) and $\mathcal{F}^{i}_{tr}$
+    \State Regain conditional independence in $\mathcal{F}^{i}$ \Comment{{\color{Gray} Eq. (\ref{eq:final_approximation}) }}
+    \State Guarantee conservativeness w.r.t  $\mathcal{F}^{i}_{tr}$ \Comment{{\color{Gray} Eq. (\ref{eq:sparse_cons_mat}) }}
+    \State Re-factorize graph \Comment{{\color{Gray} Eq. (\ref{eq:refactorization}) }}
+    \For{Every neighbor $j\in N_r^i$ }
+    \State Update CF graph $\mathcal{F}^{ij}_{CF}$
+    \EndFor
+    \State \Return
+    \end{algorithmic}
+\end{algorithm}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+\begin{comment}
+
+The suggested conservative filtering method has the following steps:
+\begin{enumerate}
+    \item Prediction - add next time step's variable and factor nodes to the graph, e.g., $x_2$.
+    \item Measurement update - add measurement factor nodes to the graph, creating edges connecting them to the local and common variable nodes, e.g., $y_2^i$.
+    \item Sparsification - remove (\od{eliminate?}) factor connecting `old' common variable node (e.g. $y^i_1$ and $x_1$, respectively) to local node ($s_i$).
+    \item Deflation - deflate factors in the Markov blanket to make the graph conservative after sparsification. Store deflation constant to deflate common factors during fusion.
+    \item Filter - marginalize out previous time step (e.g. $x_1$).
+\end{enumerate}
+\end{comment}

@@ -1,0 +1,53 @@
+In complex scenarios where theory might be less applicable, we study  heterogeneity through algorithmic search. We consider the setting of a Parametrized Dec-POMDP (PDec-POMDP, defined in \autoref{app:pdecpomdp}). A PDec-POMDP represents a Dec-POMDP~\citep{oliehoek2016concise}, where the observations, transitions, or reward  are conditioned on parameters $\theta$. Hence, 
+the return obtained by the agents, $G^\theta(\mathbf{\pi})$, can be differentiated with respect to $\theta$: $\nabla_\theta G^\theta(\mathbf{\pi})=\frac{\partial}{\partial_\theta} G^\theta(\mathbf{\pi})$.
+In particular, computing this gradient in a differentiable simulator allows us to back-propagate through time and optimize $\theta$ via gradient ascent\footnote{Although the same approach can train policies \citep{xu2022accelerated,song2024learning}, HetGPS instead optimizes environment parameters and policies separately, using standard zeroth-order policy-gradient methods, to avoid being trapped in local minima. The overhead of implementing HetGPS in this way is modest: it increased training time by roughly 25\% in our \autoref{sec:experiments} experiments compared to training on a fixed environment.}.
+
+
+% We introduce \textbf{Heterogeneity Gain Parameter Search (HetGPS)}, an algorithm that automatically discovers multi-agent environments that maximize the \heterogeneitygap.
+
+% Note that such a method can be used to learn the policies as well \citep{xu2022accelerated,song2024learning}. In this work, however, we learn policies and environment parameters separately to avoid them collectively overfitting to local minima. Policies are learnt through traditional zeroth-order policy gradient.
+
+% We introduce \textbf{Heterogeneity Gain Parameter Search (HetGPS)}, an algorithm that automatically discovers multi-agent environments that maximize the \heterogeneitygap.
+
+% HetGPS is able to search over a space of underspecified, parametrizable environments by using gradient descent on the agents' returns. 
+
+
+\begin{algorithm}[ht]
+   \caption{Heterogeneity Gain Parameter Search (HetGPS)}
+   \label{alg:HetGPS}
+\begin{algorithmic}[1]
+   \INPUT Environment parameters $\theta$, environment learning rate $\alpha$, heterogeneous agent policy $\mathbf{\pi}_\mathrm{het}$, homogeneous agent policy $\mathbf{\pi}_\mathrm{hom}$
+   \FOR{$i$ in iterations}
+        \STATE Batch$_\mathrm{het}^\theta$= Rollout($\theta$,$\mathbf{\pi}_\mathrm{het}$) 
+        \COMMENT{{\color{blue}rollout het policies in environment $\theta$}}
+        \STATE Batch$_\mathrm{hom}^\theta$= Rollout($\theta$,$\mathbf{\pi}_\mathrm{hom}$) \COMMENT{{\color{blue}rollout hom policies in environment $\theta$}}
+        \STATE HetGain$^\theta$ = ComputeGain(Batch$_\mathrm{het}^\theta$,Batch$_\mathrm{hom}^\theta$)
+        \IF{\lstinline[language=Python]{train_env}($i$)}
+            \STATE $\theta \leftarrow \theta + \alpha\nabla_\theta  \mathrm{HetGain}^\theta$ \COMMENT{{\color{blue} train environment via backpropagation}}
+        \ENDIF
+        \IF{train\_agents($i$)}
+            \STATE  $\mathbf{\pi}_\mathrm{het} \leftarrow$ MarlTrain($\mathbf{\pi}_\mathrm{het}$,Batch$_\mathrm{het}^\theta$) \COMMENT{{\color{blue}train het policies via MARL}}
+            \STATE  $\mathbf{\pi}_\mathrm{hom} \leftarrow$ MarlTrain($\mathbf{\pi}_\mathrm{hom}$,Batch$_\mathrm{hom}^\theta$) \COMMENT{{\color{blue}train hom policies via MARL}}
+        \ENDIF
+   \ENDFOR
+   \OUTPUT final environment configuration $\theta$, policies $\mathbf{\pi}_\mathrm{het},\mathbf{\pi}_\mathrm{hom}$
+\end{algorithmic}
+\end{algorithm}
+
+\headline{Heterogeneity Gain Parameter Search (HetGPS)}
+We now consider the problem of learning the environment parameters $\theta$ to maximize the \textit{empirical} \heterogeneitygap.
+The empirical \heterogeneitygap is defined as the difference in performance between heterogeneous and homogeneous teams in a given PDec-POMDP parametrization. We compare \textit{neurally heterogeneous} agents (independent parameters) with \textit{neurally homogeneous} agents (shared parameters).
+%Heterogeneous agents each learn different parameters, whereas homogeneous agents learn the same policy. 
+We denote their policies as $\mathbf{\pi}_\mathrm{het}$ and $\mathbf{\pi}_\mathrm{hom}$.
+Then, we can simply write the gain as: $\mathrm{HetGain}^\theta(\mathbf{\pi}_\mathrm{het},\mathbf{\pi}_\mathrm{hom}) =  G^\theta(\mathbf{\pi}_\mathrm{het}) -G^\theta(\mathbf{\pi}_\mathrm{hom})$, 
+% \begin{equation}
+%     \mathrm{HetGain}^\theta(\mathbf{\pi}_\mathrm{het},\mathbf{\pi}_\mathrm{hom}) =  G^\theta(\mathbf{\pi}_\mathrm{het}) -G^\theta(\mathbf{\pi}_\mathrm{hom}) ,
+% \end{equation}
+representing the return of heterogeneous agents minus that of homogeneous agents on environment parametrization $\theta$.
+HetGPS, shown in \autoref{alg:HetGPS}, learns $\theta$ by performing gradient ascent to maximize the gain:
+$\theta \leftarrow \theta + \alpha\nabla_\theta  \mathrm{HetGain}^\theta(\mathbf{\pi}_\mathrm{het},\mathbf{\pi}_\mathrm{hom})$.
+The environment and the agents are trained in an iterative, bilevel optimization process. We discuss this process, and \textit{alternatives when the simulator is non-differentiable}, in \autoref{app:stability_of_bilevel_optimization}.
+At every training iteration, HetGPS collects roll-out batches in the current environment $\theta$ for both heterogeneous and homogeneous teams, computing the \heterogeneitygap on the collected data.
+Then, it updates $\theta$ to maximize the \heterogeneitygap.
+Finally, to train the agents, it uses MARL, with any on-policy algorithm (e.g., MAPPO~\citep{yu2022surprising}).
+The functions \verb|train_env| and \verb|train_agents| determine when to train each of the components in HetGPS. We consider two possible training regimes: (1) \textit{alternated}: where HetGPS performs cycles of $x$ agent training iterations followed by $y$ environment training iterations and (2) \textit{concurrent}: where agents train at every iteration and the environment is updated every $x$ iterations. Note that by performing descent instead of ascent, HetGPS can also be used to \textit{minimize} the heterogeneity gain.

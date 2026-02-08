@@ -1,0 +1,97 @@
+\section{Technical implementation}
+\label{sec:technical_implementation}
+
+PyVRP implements a variant of the HGS algorithm of \cite{vidal2013hybrid}.
+At its core, our implementation consists of a genetic algorithm, a population, and a local search \replaced{improvement method}{educator}.
+We explain these below, but refer to our documentation at \url{https://pyvrp.org/} for a full overview of the class and function descriptions, and other helper classes and methods we do not describe here.
+
+\subsection{Overview of HGS}
+HGS is a hybrid algorithm that combines a genetic algorithm with a local search algorithm.
+It maintains a population with feasible and infeasible solutions.
+Initially, solutions are created by randomly assigning customers to routes (feasibility is not required), which ensures diversity in the search.
+Then, in every iteration, two parents are selected from the population, and combined using a crossover operator to create a new \emph{offspring solution}.
+We provide an efficient C++ implementation of the selective route exchange (SREX) crossover operator~\citep{nagata2010memetic} by default, but this can easily be \replaced{replaced by}{switched out for} another crossover operator.
+
+In each iteration, the new offspring solution is improved using local search, which considers time windows and capacities as soft constraints by penalising violations.
+This way, the local search considers a smoothed version of the problem, which helps the genetic algorithm to converge towards promising regions of the solution space.
+The penalty weights are automatically adjusted such that a target percentage of the local search runs results in a feasible solution. 
+After the local search, the offspring is inserted into the population.
+Once the population exceeds a certain size, a survivor selection mechanism removes solutions which contribute the least to the overall quality and diversity of the population.
+
+\subsection{Genetic algorithm}
+The genetic algorithm is implemented in Python and defines the main search loop.
+In every iteration of the search loop, the genetic algorithm selects two (feasible or infeasible) parent solutions from the population.
+A crossover operators takes the two parent solutions and uses those to generate an offspring solution that inherits features from both parents.
+
+After crossover completes, the offspring solution is improved using local search, and then added to the population.
+If this improved offspring solution is feasible and better than our current best solution, it becomes the new best observed solution.
+Finally, after the main search loop completes, the genetic algorithm returns a result object that contains the best observed solution and detailed runtime statistics.
+
+\subsection{Local search}
+\label{subsec:local_search}
+
+We provide an efficient local search implementation to improve a new offspring solution.
+\added{This improvement procedure is typically the most expensive part of the HGS algorithm.
+Software profiling suggests that in PyVRP it accounts for 80-90\% of the runtime, which is why the local search is implemented in C++.}
+The implementation explores a granular neighbourhood \citep{toth2003granular} in a very efficient manner using user-provided operators.
+These operators evaluate moves in different neighbourhoods, and the local search algorithm applies the move as soon as it yields a direct improvement in the objective value of the solution.
+The search is repeated until no more improvements can be made. 
+We distinguish \emph{node operators} and \emph{route operators}.
+Node operators are applied to pairs of customers, and evaluate local moves around these customers.
+\added{Node operators may also be applied to a customer and an unassigned vehicle: this evaluates moves placing a customer into an empty route.
+To limit the number of vehicles used, these moves are \replaced{evaluated}{checked} only once all moves involving pairs of customer have been exhausted.}
+Route operators are applied to pairs of \added{non-empty} routes and evaluate more expensive moves that intensify the search.
+
+Users are free to supply their own node and route operators, but for convenience we already provide a large set of \deleted{very }efficient operators\replaced{, which we describe next}{.
+We describe these next}.
+
+\subsubsection{Node operators}
+Node operators each evaluate (and possibly apply) a move between two customers $u$ and $v$, with the restriction that $v$ is in the granular neighbourhood $\mathcal{N}(u)$ of $u$.
+We provide a default granular neighbourhood of size $k$ for each customer, that takes into account both spatial and temporal aspects of the problem instance.
+This default implementation reduces the neighborhood size from $O(n^2)$ to $O(kn)$, but a user can fully customise the neighbourhood structure, or replace it altogether with their own.
+
+\replaced{PyVRP currently implements the following node operators}{The node operators that are implemented in PyVRP are}:
+
+\paragraph{$(N, M)$-exchange} 
+This operator considers exchanging a consecutive route segment of $N > 0$ nodes starting at $u$ (inclusive) with a segment of $0 \le M \le N$ nodes starting at $v$ (inclusive).
+These segments must not overlap in the same route\added{, and not contain the depot}.
+When $M=0$, this operator evaluates \emph{relocate} moves inserting $u$ (and possible subsequent nodes) after $v$.
+When $M > 0$, the operator evaluates \emph{swap} moves exchanging the route segments of one or more nodes starting at nodes $u$ and $v$.
+This exchange generalises the implementations of \citet{vidal2022hybrid}.
+We implement $(N, M)$-exchange using C++'s template mechanism, which after compilation results in efficient, specialised operator implementations for any $N$ and $M$.
+
+\paragraph{MoveTwoClientsReversed}
+This operator considers a $(2,0)$-exchange where $u$ and its immediate successor are reversed \added{before inserting them after $v$}. 
+
+\paragraph{2-OPT}
+The 2-OPT operator represents the routes of $u$ and $v$ as (directed) line-graphs, where an arc $u \rightarrow x$ indicates $x$ is visited \added{directly} after $u$. 
+2-OPT replaces the arcs $u \rightarrow x$ and $v \rightarrow y$ by $u \rightarrow y$ and $v \rightarrow x$, effectively recombining the starts and ends of the two routes if we split them at $u$ and $v$.
+When $u$ and $v$ are within the same route, and $u$ precedes $v$, this operator replaces $u \rightarrow x$ and $v \rightarrow y$ by $u \rightarrow v$ and $x \rightarrow y$, thus reversing the route segment from $x$ to $v$.
+
+\subsubsection{Route operators}
+Route operators consider moves between route pairs, avoiding the granularity restrictions imposed on the node operators.
+This enables the evaluation of much larger neighbourhoods, while additional caching opportunities ensure these evaluations remain fast.
+PyVRP provides two route operators by default:
+
+\paragraph{RELOCATE*}
+The RELOCATE* operator finds and applies the best $(1, 0)$-exchange move between two routes.
+\added{RELOCATE* uses the $(N, M)$-exchange node operator (with $N = 1$ and $M = 0$) to evaluate each move between the two routes.}
+
+\paragraph{SWAP*}
+The SWAP* operator due to \cite{vidal2022hybrid} considers the best swap move between two routes, but does not require that the swapped customers are inserted in each others place.
+Instead, each is inserted into the best location in the other route.
+We enhance the implementation of \cite{vidal2022hybrid} with time window support, further caching, and earlier stopping when evaluating `known-bad' moves. 
+
+\subsection{Population management}
+
+The population is implemented in Python, using feasible and infeasible sub-populations that are implemented in C++ for performance.
+New solutions can be added to the population, and parent solutions can be requested from it for crossover.
+These parents are selected by a \replaced{$k$-way}{binary} tournament on the relative fitness of each parent~\added{\citep{Team_SB}}.
+\added{By default, $k=2$, which results in a binary tournament.}
+
+The population is initialised with a minimal set of random solutions.
+New solutions obtained by the genetic algorithm are added to it as they are generated.
+Once a sub-population reaches its maximal size, survivor selection is performed that reduces the sub-population to its minimal size.
+This survivor selection is done by first removing duplicate solutions, and then by removing those solutions that have worst fitness based on the biased fitness criterion of \cite{vidal2022hybrid}.
+This fitness criterion balances solution quality based on the solution's objective value and diversity w.r.t. to other solutions in the sub-population, evaluated using a diversity measure supplied to the population.
+We implement a directed variant of the broken pairs distance, but a user can also supply their own diversity measure.

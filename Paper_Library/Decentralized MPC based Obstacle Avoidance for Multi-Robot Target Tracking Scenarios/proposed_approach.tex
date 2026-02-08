@@ -1,0 +1,434 @@
+\subsection{DQMPC based Formation Planning and Control}
+The goal of the formation control algorithm running on each MAV $R_k$ is to  
+\begin{enumerate}
+\item Hover at a pre-specified height $h_{gnd}$.
+\item Maintain a distance $d^{R_k}$ to the tracked target.
+\item Orient at yaw, $\psi^{R_k}$, directly facing the tracked target.
+\end{enumerate}
+Additionally, MAVs must adhere to the following constraints, 
+\begin{enumerate}
+\item To maintain a minimum distance $d_{min}$ from other MAVs as well as static and dynamic obstacles.
+\item To ensure that MAVs respect the specified state limits.
+\item To ensure that control inputs to MAVs are within the pre-specified saturation bounds.
+\end{enumerate}
+\vspace{-0.5em}
+\begin{algorithm}[h]
+\small
+\caption{MPC-based formation controller and obstacle avoidance by MAV $R_k$ with inputs $\lbrace \x_t^{P}, ~~ \x_t^{O_j}; j = 1:M \rbrace$} 
+\begin{spacing}{1.3}
+\begin{algorithmic}[1]
+\label{Alg:fc}
+\STATE $\lbrace \xproj_t^{R_k} \rbrace \leftarrow $ Compute Destination Position $\lbrace \psi_t^{R_k}, \x_{t}^{R_k}, d^{R_k}, h_\mathrm{gnd} \rbrace$
+\STATE $\left[\mathbf{f}_{t}^{R_k}(0),\dots,\mathbf{f}_{t}^{R_k}(N)\right] \leftarrow $ Obstacle Force $\lbrace {\x_{t}^{R_k}, \x_{t}^{O_j}(1:N+1),\forall j } \rbrace$
+\STATE $\lbrace \x_t^{R_k*}, \dot{\x}_t^{R_k*}, \nabla J_{DQMPC} \rbrace \leftarrow $ DQMPC$\lbrace \xproj_t^{R_k}, \x_t^{R_k}, \mathbf{f}_t^{R_k}(0:N),\mathbf{g}\rbrace$
+\STATE $\lbrace \psi_{t+1}^{R_k} \rbrace \leftarrow$ Compute Desired Yaw $\lbrace \x_t^{R_k}, \|\nabla J_{DQMPC} \|\rbrace$
+\STATE $\mathbf{Transmit}$  $\x_t^{R_k*}(N+1),\dot{\x}_t^{R_k*}(N+1),  \psi_{t+1}^{R_k}$ to Low-level Controller
+\normalsize
+\end{algorithmic}
+\end{spacing}
+\end{algorithm} 
+\vspace{-1em}
+Algorithm \ref{Alg:fc} outlines the strategy used by each MAV $R_k$ at every  discrete time instant $t$. In line 1, MAV $R_k$ computes its desired position $\xproj_t^{R_k}$ on the desired surface using simple trigonometry. For example, if the desired surface is a circle, centered around the target location $\x_{t}^{P}$ with a radius $d^{R_k}=constant \ \forall R_k$, then the desired position for time instant $t$ is given by $\xproj_t^{R_k} = \x_{t}^{P}+ \left[d^{R_k}cos(\psi_t^{R_k}) ~~ d^{R_k}sin(\psi_t^{R_k}) ~~ h_{gnd}\right]^{\top}$. Here $\psi_t^{R_k}$ is the yaw of $R_k$ w.r.t. the target. It is important to note that the distance $d^{R_k}$ is an input to the DQMPC and is not necessarily the same for each MAV. 
+%If and only if the desired target surface, around the target being tracked, is a circle, then the $d^{R_k} = constant \ \forall \ R_k$.
+
+In line 2, an input potential field force vector $\left[\mathbf{f}_{t}^{R_k}(0),\dots,\mathbf{f}_{t}^{R_k}(N)\right] ^{\top} \in \mathbb{R}^{3 \times (N+1)}$ is computed for a planning horizon of $(N+1)$ discrete time steps by using the shared trajectories from other MAVs and positions of obstacles in the vicinity. If no trajectory information is available, the instantaneous position based potential field force value is used for the entire horizon. Section \ref{potential_field} details the numerical computation of these field force vectors.
+
+In line 3, an MPC based planner solves a convex optimization problem (DQMPC) for a planning horizon of $(N+1)$ discrete time steps. We consider nominal accelerations $[\ao_t^{R_k}(0) \cdots \ao_t^{R_k}(N)]^\top \in \mathbb{R}^{3 \times (N+1)}$ as control inputs to DQMPC. The accelerations describe the 3D translational motion of $R_k$.
+\begin{equation}
+ \ao_t^{R_k}(n) = ~ \ddot{\x}_t^{R_k}(n)
+\end{equation}
+where $n$ is the current horizon step. 
+%\begin{figure*}[t!]
+%    \centering
+%    \begin{subfigure}[t]{0.33\textwidth}
+%        \centering
+%        \includegraphics[scale=0.9]{Visualization_1_1.pdf}
+%        \caption{Profile of simplified 2-D motion objective with obstacles}
+%        \label{visual_1_1}
+%    \end{subfigure}%
+%    ~ 
+%    \begin{subfigure}[t]{0.33\textwidth}
+%        \centering
+%        \includegraphics[scale=0.9]{Visualization_2_1.pdf}
+%        \caption{Top view of the profile}
+%        \label{visual_2_1}
+%    \end{subfigure}%
+%	\begin{subfigure}[t]{0.33\textwidth}
+%    	\centering
+%    	\includegraphics[scale=0.3]{Visualization_3_1.pdf}
+%    	\caption{Gazebo illustraton of the local minima/control deadlock problem}
+%    	\label{visual_3_1}
+%	\end{subfigure}      
+%    \caption{Visualizations illustrating the local minima and robot deadlock issue. Cyan cylinder is the desired surface to reach. Red cylinders are static obstacles.}
+%    \label{visual}	
+%\end{figure*}
+\setlength{\belowcaptionskip}{0pt}
+\begin{figure*}[t]
+	\centering
+	\begin{subfigure}[t]{0.24\textwidth}        
+		\includegraphics[scale=0.4]{SSRR_schematic_14.pdf}   
+		\caption{\scriptsize{Field local minima problem}}
+		%\label{problem_1}
+	\end{subfigure}
+	\begin{subfigure}[t]{0.24\textwidth}        
+		\includegraphics[scale=0.4]{SSRR_schematic_24.pdf}
+		\caption{\scriptsize{Swivelling Robot Destination Method.}}
+		%\label{swivel}
+	\end{subfigure} 
+	\begin{subfigure}[t]{0.24\textwidth}
+		\centering
+		\includegraphics[scale=0.4]{SSRR_schematic_34.pdf}  
+		\caption{\scriptsize{Approach Angle Method}}
+		%\label{angle}
+	\end{subfigure}
+	\begin{subfigure}[t]{0.24\textwidth}
+		\centering
+		\includegraphics[scale=0.4]{SSRR_schematic_44.pdf}
+		\caption{\scriptsize{Tangential Band Method}}
+		%\label{tangentialBand}
+	\end{subfigure}
+	\caption{Illustration of the field local minima problem in obstacle avoidance and different proposed methods.} 
+	\label{proposedApproachfig}
+	\vspace{-1em}
+\end{figure*}
+\setlength{\belowcaptionskip}{-5pt}
+%\begin{figure*}[t!]
+%	\centering
+%	\begin{subfigure}[t]{0.49\textwidth}
+%		\centering
+%		\includegraphics[scale=0.7]{Common.pdf}
+%		\caption{Field local minima due to axial alignment of robots}
+%		\label{problem_1}
+%	\end{subfigure}%
+%	~ 
+%	\begin{subfigure}[t]{0.49\textwidth}
+%		\centering
+%		\includegraphics[scale=0.7]{Swivel.pdf}
+%		\caption{Resolution of field local minima by using variable velocity swivelling destinations }
+%		\label{swivel}
+%	\end{subfigure}%
+%	\caption{Illustration of the swivelling robot destination strategy}
+%\end{figure*}
+%\begin{figure*}
+%	\centering
+%	\begin{subfigure}[t]{0.49\textwidth}
+%		\centering
+%		\includegraphics[scale=0.7]{Angle_1.pdf}
+%		\caption{Resolution of field local minima by using variable angle of approach potential field. }
+%		\label{angle}
+%	\end{subfigure}%
+%	\begin{subfigure}[t]{0.49\textwidth}
+%		\centering
+%		\includegraphics[scale=0.5]{Tangential_Band.pdf}
+%		\caption{Illustration of the tangential force band around obstacles. Red arrow represents x-axis and Green arrow represents y-axis of target respectively}
+%		\label{tangentialBand}
+%	\end{subfigure}    
+%	\caption{Illustration of the approach angle field strategy and tangential band strategy. }
+%\end{figure*}
+The state vector of the discrete-time DQMPC consists of $R_k$'s position $\x_t^{R_k}(n) \in \mathbb{R}^3$ and  velocity $\dot{\x}_t^{R_k}(n)\in \mathbb{R}^3$. 
+The optimization objective is,
+\footnotesize
+\begin{align} \label{J_DQMPC}
+J_{\mathrm{DQMPC}} =&  \Big(\sum_{n=0}^{N} \big( {\bm{\Omega_{i}}} (\ao_t^{R_k}(n)+\mathbf{f}_{t}^{R_k}(n)+\bm{g})^2\big) + \nonumber \\
+& \bm{\Omega_{t}} \big(\left[\x_t^{R_k}(N+1)^{\top} ~~ \dot{\x}_t^{R_k}(N+1)^{\top} \right] - \left[ (\xproj_t^{R_k})^{\top}  ~~ \mathbf{0}^{\top}\right]\big)^2 \Big)
+\end{align}
+\normalsize
+The optimization is defined by the following equations. \small
+\begin{equation} \label{DQMPC}
+\x(1)_t^{R_k*}\dots\x(N+1)_t^{R_k*},\ao_t^{R_k*}(0)\dots\ao_t^{R_k*}(N) = \argmin{\ao_t^{R_k}(0)\dots\ao_t^{R_k}(N)} (J_{DQMPC})
+\end{equation} 
+subject to, 
+\begin{align}
+& \hspace{-0.7cm}\left[\x_t^{R_k}(n+1)^{\top} ~ \dot{\x}_t^{R_k}(n+1)^{\top}\right]^\top =  \label{state-space}\nonumber\\
+& \quad\quad\quad\mathbf{A}\left[\x_t^{R_k}(n)^{\top} ~ \dot{\x}_t^{R_k}(n)^{\top}\right]^\top + \mathbf{B}(\ao_t^{R_k}(n)+\mathbf{f}_{t}^{R_k}(n)+\bm{g}), \\
+& \ao_\mathrm{min} \leq ~ \ao_t^{R_k}(n) \leq \ao_\mathrm{max}, \\
+& \x_\mathrm{min} \leq ~ \x_t^{R_k}(n) \leq ~ \x_\mathrm{max}, \\
+& \dot{\x}_\mathrm{min} \leq ~ \dot{\x}_t^{R_k}(n) \leq ~ \dot{\x}_\mathrm{max} \label{last_DQMPC}
+ \end{align}
+ \normalsize
+where, $\bm{\Omega_{i}}$ and $\bm{\Omega_{t}}$ are positive definite weight matrices for input cost and terminal state (computed desired position $\xproj_t^{R_k}$ and desired velocity $\dot{\xproj}_t^{R_k} = 0$) respectively, %Terminal state is the computed desired position $\xproj_t^{R_k}$ and desired velocity $\dot{\xproj}_t^{R_k} = 0$. 
+$\mathbf{f}_{t}^{R_k}(n)$ is the pre-computed external obstacle force, $\bm{g}$ is the constant gravity vector. The discrete-time state-space evolution of the robot is given by \eqref{state-space}. The  dynamics ($\mathbf{A} \in \mathbb{R}^{3\times3}$) and control transfer ($\mathbf{B} \in \mathbb{R}^{3\times3}$) matrices are given by,
+\begin{equation}
+\mathbf{A}=
+  \begin{bmatrix}
+    \mathbf{I}_3 & \Delta t\mathbf{I}_3 \\
+    \mathbf{0}_3 & \mathbf{I}_3
+  \end{bmatrix}, ~
+\mathbf{B}=
+  \begin{bmatrix}
+    \frac{\Delta t^2}{2}\mathbf{I}_3 \\
+    \Delta t\mathbf{I}_3
+  \end{bmatrix}.
+\end{equation}
+where, $\Delta t$ is the sampling time. The quadratic program generates optimal control inputs $\left[\ao_t^{R_k}(0) \cdots \ao_t^{R_k}(N) \right]$ and the corresponding trajectory $\left[ \x_t^{R_k}(1) ~ \dot{\x}_t^{R_k}(1)  \cdots \x_t^{R_k}(N+1) ~ \dot{\x}_t^{R_k}(N+1) \right]$ towards the desired position. The final predicted position and velocity of the horizon $\x_t^{R_k*}(N+1),\dot{\x}_t^{R_k*}(N+1)$ is used as  desired input to the low-level flight controller. 
+The MPC based planner avoids obstacles (static and dynamic) through pre-computed horizon potential force $\mathbf{f}_{t}^{R_k}(n)$. This force is applied as an external control input component to the state-space evolution equation, thereby, preserving the optimization convexity. Previous methods in literature consider non-linear potential functions within the MPC formulation, thereby, making optimization non-convex and computationally expensive. 
+%The obstacle forces considered arise from both static and dynamic obstacles (including other robots) in the vicinity of the robot $R_k$. 
+%Robots/MAVs communicate their self-pose to each other over wireless network.  We showcase through simulations that the proposed method is very effective and fast in avoiding obstacles (both static and dynamic) while also tracking the target.
+
+In the next step (line 4 of Algorithm \ref{Alg:fc}), the desired yaw is computed as $\psi_{t+1}^{R_k} = atan2\big(\frac{y_t^P - y_t^{R_k}}{x_t^P - x_t^{R_k}}\big)$. This  describes the angle with respect to the target position $\x_t^P$ from the MAV's current position $\x_t^{R_k}$. 
+%This equation is slightly modified in Section \ref{diminishingOmega} to ensure avoidance of local minima with dynamic obstacles.
+The way-point commands consisting of the position and desired yaw angle are sent to the low-level flight  position controller.
+Although no specific robot formation geometry is enforced, the DQMPC naturally results in a dynamic formation depending on desired destination surface.
+
+
+
+% \setlength{\textfloatsep}{5pt}
+
+
+\subsection{Handling Non-Convex Collision Avoidance Constraints} \label{potential_field}
+In our approach, at any given point there are two forces acting on each robot, namely (i) the attractive force due to the optimization objective (eq.\eqref{DQMPC}), and (ii) the repulsive force due to the potential field around obstacles ($\mathbf{f}_{t}^{R_k}(n)$). In general, a repulsive force can be modeled as a force vector based on the distance w.r.t. obstacles. Here, we have considered the potential field force variation as a hyperbolic function ($F_{hyp}^{R_k,O_j}(d(n))$) of distance between MAV $R_k$ and obstacle $O_j$. We use the formulation in \cite{secchi2013bilateral} to model $F_{hyp}^{R_k,O_j}(d(n))$. Here, $d(n) = \|\x_{t-1}^{R_k}(n) - \x_t^{O_j}(n)\|_2, ~ \forall n \in [0,\dots,N]$ is the distance between the MAV's predicited horizon positions from the previous time step $(t-1)$ and the obstacles (which includes shared horizon predictions of other MAVs).  The repulsive force vector is,
+\begin{equation}\label{repulsive}
+\bm{F}_{rep}^{R_k,O_j}(n) = 
+\begin{cases}
+F_{hyp}^{R_k,O_j}(d(n))\;\mathbf{\alpha},& \text{if} ~~ d(n) < d_{safe} \\
+0, & \text{if} ~~ d(n) > d_{safe}
+\end{cases}\;,
+\end{equation}
+where, $d_{safe}$ is the distance from the obstacle where the potential field magnitude is non-zero. %received at the current time step $t$. 
+%$d(0) =  \|\x_{t}^{R_k}(0) - \x_t^{O_j}(0)\|_2$ is the distance for the zeroth horizon step. 
+ $\mathbf{\alpha} =  \frac{\x_t^{O_j}(n)-\x_{t-1}^{R_k}(n)}{\|\x_t^{O_j}(n)-\x_{t-1}^{R_k}(n)\|_2}$ is the unit vector in the direction away from the obstacle.  Additionally we consider a distance $d_{min} << d_{safe}$ around the obstacle, where the potential field magnitude tends to infinity. 
+The potential force acting on an agent per horizon step $n$ is,
+\begin{equation} \label{totalForce}
+\mathbf{f}_t^{R_k}(n)= \sum_{\forall \ j }^{}\mathbf{F}_{rep}^{R_k,O_j}(n),
+\end{equation}
+which is added into the system dynamics in eq.\eqref{state-space}.
+\vspace{-0.5em}
+%The forces are non-zero starting from a distance $d_{safe}$ around the obstacle point. The magnitude of these forces gradually tends towards infinity near the obstacle point ($d_{min}$) as defined by equation \ref{cotanfield}. 
+
+\subsection{Resolving the Field Local Minima Problem}
+The key challenge in potential field based approaches is the field local minima issue \cite{koren1991potential}. When the summation of attractive and repulsive forces acting on the robot is a zero vector, the robot encounters field local minima problem \footnote{note that this is different from optimization objective's local minima.}. Equivalently, a control deadlock could also arise when the robot is constantly pushed in the exact opposite direction.
+%The local minima problem arises when the resultant of the summation of attractive and repulsive forces is a zero vector. A zero resultant vector implies that the robot is stuck at that point in space. Equivalently, a similar problem arises when the robot tries to move towards the target and is constantly pushed away in the exact opposite direction. The robot can infinitely execute this behavior and hence we characterize the behavior as a control deadlock in this paper. 
+Both local minima and control deadlock are undesirable scenarios.
+From  equation \eqref{state-space} and Algorithm \ref{Alg:fc}, it is clear that the  optimization can characterize control inputs that will not lead to collisions, but, cannot characterize those control inputs that lead to these scenarios.
+%From equation (\ref{state-space}) and Algorithm \ref{Alg:fc}, it is clear that the DQMPC uses pre-computed input potential forces for a horizon, to avoid obstacles. This implies that the optimization does not have direct access to the potential field function and its gradients. Indicating that the optimization can characterize control inputs that will not lead to collisions, but, cannot characterize those control inputs that lead to a field local minima. To illustrate and visualize this complex scenario we consider the second optimization objective of equation (\ref{DQMPC}). For the sake of visualization we remove the velocity terms and restrict the motion of robot to 2D ($\x_t^{R_k}(n), \xproj_t^{R_k} \in \mathbb{R}^2$). The following equation represents the modified objective.
+%\begin{equation} \label{paraboloid}
+%J = \bm{\Omega_{term}} (\x_t^{R_k}(N+1) - \xproj_t^{R_k})^2
+%\end{equation}
+%Graphically, equation (\ref{paraboloid}) is a paraboloid centered around $\x_t^{P}$ (assume $=\left[0,0\right]$) as shown in Fig. \ref{visual_1_1}. Consider two closely shaped static obstacles each with a potential field determined by equation (\ref{cotanfield}). For ease of visualization, the field around these obstacles is represented as red-impenetrable cylinders (Fig. \ref{visual_1_1} and Fig.  \ref{visual_2_1}). The attractive and repulsive fields sum to a zero vector near the intersection of these two obstacle fields. Since the optimization problem being solved is a minimization problem, the robot always moves in the direction of the negative gradient of the paraboloid of Fig. \ref{visual_1_1}, which is towards point $\xproj_t^{R_k}$. This destination point is currently obstructed by potential fields, as shown in Fig. \ref{visual_2_1} and Fig. \ref{visual_3_1}, the robot is likely to get stuck at the point of intersection infinitely or would perform a control deadlock motion. This is because at every time instant $t$, the optimization has access to only a limited amount of state-space for a given horizon defined by $\sum_{n=0}^{N} (u_{max}\frac{\Delta t^2}{2}+\dot{\x}_t^{R_k}(n+1)\Delta t + \x_t^{R_k}(n+1))$. This refers to a rectangular patch around the current position of the robot. If this rectangular state-space patch is not bigger than the dimensions of the obstacles then the robot can encounter field local minima or deadlock scenarios. Making this rectangular patch bigger is not possible, as the patch is defined using the control saturation limits of the robot. 
+In such cases the gradient of optimization would be non-zero indicating that the robot knows its direction of motion towards the target, but cannot reach the destination surface because the potenial field functions are not directly used in DQMPC constraints.
+%due to a lack of knowledge about the potential field function.
+%It is important to note that the gradient of optimization is non-zero, because, the point $\xproj_t^{R_k}$ is not reached, as shown in the illustration using Gazebo in Fig. \ref{visual_3_1}. Essentially, the robot knows its direction of motion towards target, due to non-zero gradient value, but it  cannot find a way out of the field local minima or deadlock issue due to a lack of knowledge on the potential field function.
+Here, we propose three methodologies for field local minima avoidance.
+%Swivelling robot destination (Sec.~\ref{diminishingOmega}) and approach angle method (Sec.~\ref{angle_of_approach}) work effectively avoiding all obstacles (static and dynamic) in the environment. %The tangential band method (Sec.~\ref{tangential_field}) not only provides an unified static and dynamic obstacle avoidance solution but also facilitates target surface convergence in most scenarios.
+
+%\normalsize
+\subsubsection{Swivelling Robot Destination (SRD) method} \label{diminishingOmega}
+This method is based on the idea that the MAV destination $\xproj_t^{R_k}$ is an external input to the optimization. Therefore, each MAV can change its $\xproj_t^{R_k}$ to push itself out of field local minima. For example, consider the scenario shown in Fig. \ref{proposedApproachfig}(a), where three robots are axially aligned towards the target. Since the angles of approach are equal, the desired destination positions are the same for $R_1$ and $R_2$, i.e., $\xproj_t^{R_1} = \xproj_t^{R_2}$. This results in temporary deadlock and will slow the convergence to desired surface. We construct the SRD method to solve this deadlock problem as follows: (i) the gradient of DQMPC objective of $R_k$ is computed, (ii)  a swivelling velocity $\omega^{R_k}$ is calculated based on the magnitude of gradient, and (iii) $\xproj_t^{R_k}$ swivels by a distance proportional to $\omega^{R_k}$ as shown in Fig.\ref{proposedApproachfig}(b). This ensures that the velocities at which each $\xproj_t^{R_k}$ swivels is different until the robot reaches the target surface, where the gradient tends to zero. The gradient of the optimization with respect to the last horizon step control and state vectors, is computed as follows.
+%The gradients and their 3 dimensional scalar sum are given by
+%over all the three dimensions ($\mathbb{R}^3$) are given by the below equations.
+%Although the net field from Robot $2$ and $3$ will ultimately push Robot $1$ away, the scenario however leads to slow convergence to target surface. 
+%Since the angles of approach of all the robots are the same, their desired destination points are the same, i.e., $\xproj_t^{R_1} = \xproj_t^{R_2} = \xproj_t^{R_3}$. Such a situation will lead to a temporary deadlock and field local minima and will slow the convergence to the target surface. A naive solution to this problem is to share the destination points between the robots and choose different points on the desired destination surface. However, this would lead to a communication overhead to establish negotiation and task assignment. To resolve the problem without explicit communication, each robot swivels its destination point with a velocity proportional to the sum of gradients of the $DQMPC$ objective as shown in Fig.\ref{swivel}. This would ensure that the velocities at which $\xproj_t^{R_k}$'s would swivel would be different based on their distance from the desired destination. Consequently, the swivelling of destination leads to a natural deadlock resolution. As the robot nears the destination point, the gradient tends to zero, therefore $\xproj_t^{R_k}$ will be static. This solution is illustrated in Fig. \ref{swivel}. The gradients and their scalar sum over all the three dimensions ($\mathbb{R}^3$) are given by the below equations. 
+
+\small
+\begin{equation}
+\frac{\partial J_{DQMPC}}{\x_t^{R_k}(N+1)} = 2 \bm{\Omega_{t}} (\left[\x_t^{R_k}(N+1)^{\top} ~~ (\dot{\x}_t^{R_k}(N+1))^{\top} \right] - \left[ (\xproj_t^{R_k})^{\top}  ~~ \mathbf{0}^{\top}\right])^{\top} \nonumber
+\end{equation}
+\begin{equation}
+\frac{\partial J_{DQMPC}}{\ao_t^{R_k}(N)} = 2 \bm{\Omega_{i}}(\ao_t^{R_k}(n)+\mathbf{f}_{t}^{R_k}(n)+\bm{g}) + 
+2 \bm{\Omega_{t}}B(\x_t^{R_k}(N+1)-\xproj_t^{R_k}) \nonumber
+\end{equation}
+\begin{equation}
+\nabla J_{DQMPC}^{R_k} = \frac{\partial J_{DQMPC}}{\x_t^{R_k}(N+1)} + \frac{\partial J_{DQMPC}}{\ao_t^{R_k}(N)}.
+\end{equation}
+%\begin{eqnarray}
+%\frac{\partial J_{DQMPC}}{\x_t^{R_k}(N+1)} = 2 \bm{\Omega_{term}} (\left[\x_t^{R_k}(N+1) ~~ \dot{\x}_t^{R_k}(N+1) \right] - \left[ \xproj_t^{R_k}  ~~ \mathbf{0}\right])^{\top} \nonumber \\
+%\frac{\partial J_{DQMPC}}{\ao_t^{R_k}(N)} = 2 \bm{\Omega_{input}}(\ao_t^{R_k}(n)+\mathbf{f}_{t}^{R_k}(n)+\bm{g}) + 
+%2 \bm{\Omega_{term}}B(\x_t^{R_k}(N+1)-\xproj_t^{R_k})^{\top} \nonumber \\
+%\nabla J_{DQMPC}^{R_k} = \frac{\partial J_{DQMPC}}{\x_t^{R_k}(N+1)} + \frac{\partial J_{DQMPC}}{\ao_t^{R_k}(N)} 
+%\end{eqnarray}
+\normalsize
+
+For circular target surface, the destination point swivel rate is,
+\small
+\begin{eqnarray}
+\xproj_t^{R_k} =& \x_{t}^{P}+ \begin{bmatrix} d^{R_k}cos(\psi_t^{R_k} \pm k_s \|\nabla J_{DQMPC}^{R_k}\|) \\ d^{R_k}sin(\psi_t^{R_k}\pm k_s\|\nabla J_{DQMPC}^{R_k}\|) \\ h_{gnd} \end{bmatrix} ^\top 
+\end{eqnarray}
+\normalsize
+where, $k_s$ is a user-defined gain controlling the impact of $\|\nabla J_{DQMPC}^{R_k}\|$. The swivel direction of each ${R_k}$ is decided by its approach direction to target. Positive and negative $\psi_t^{R_k}$ leads to a clockwise and anti-clockwise swivel respectively. 
+%Though this approach ensures  obstacle avoidance for both static and dynamic obstacles, it gets stuck in extreme static obstacle scenarios to reach the target surface  because of local minima as discussed in Sec.~\ref{sec:results}.
+%Unfortunately, this method does not guarantee convergence to the destination point in the presence of static obstacles (scenario of Fig. \ref{Visualization_3_1}). 
+%This situation is more critical and is elaborated in the Section \ref{tangential_field}.
+%\begin{figure}
+%	\centering
+%	\subfloat[]{\centering \hoveringpositiondis}\,
+%	\subfloat[]{\centering\hoveringorientationdis}\\
+%	\subfloat[]{\centering \forcedisturbance}\,
+%	\subfloat[]{\centering\torquedisturbance}
+%	\caption{Results of the hovering with external force/torque disturbance.~\ref{fig:plots_sim1_dis}(a): Desired (dashed line) and current (solid line) position $\boldsymbol p_d$ in x(red), y(green) and z(blue). \ref{fig:plots_sim1_dis}(b): Desired (dashed line) and current (solid line) orientation $\boldsymbol \eta_d$ in roll(red), pitch(green) and yaw(blue).  \ref{fig:plots_sim1_dis}(c--d): external force($\boldsymbol f_{\text{\rm ext}}$) and torque($\boldsymbol{\tau}_{\text{ext}}$) applied to the hexarotor}
+%	\label{fig:plots_sim1_dis}
+%	\vspace{-0.5cm}
+%\end{figure}
+%\def\hoveringpositionerrordis{\includegraphics[width=.49\columnwidth]{figures/Hovering_Error_Position_disturbance.eps}}
+%\def\hoveringorientationerrordis{\includegraphics[width=.49\columnwidth]{figures/Hovering_Error_Orientation_disturbance.eps}}
+%\def\hoveringpositionerrordis{\includegraphics[width=.49\columnwidth]{figures/Hovering_Error_Position_disturbance.eps}}
+
+%\begin{figure*}[t]
+%    \centering
+%    \begin{subfigure}[t]{0.33\textwidth}        
+%        \includegraphics[scale=0.38]{DQMPC_5.eps}        
+%        \label{DQMPC_5}
+%    \end{subfigure}%
+%    ~ 
+%    \begin{subfigure}[t]{0.33\textwidth}
+%        \centering
+%        \includegraphics[scale=0.4]{DQMPC_32.eps}       
+%        \label{DQMPC_32}
+%    \end{subfigure}%
+%	\begin{subfigure}[t]{0.33\textwidth}
+%    	\centering
+%    	\includegraphics[scale=0.4]{DQMPC_14.eps}    	
+%    	\label{DQMPC_14}
+%	\end{subfigure}  
+%	~       
+%    \begin{subfigure}[t]{0.33\textwidth}        
+%        \includegraphics[scale=0.3]{DQMPC_5_grad.eps}
+%        \caption{DQMPC with 5 Dynamic Obstacles}
+%        \label{DQMPC_5_grad}
+%    \end{subfigure}%
+%    ~ 
+%    \begin{subfigure}[t]{0.33\textwidth}
+%        \centering
+%        \includegraphics[scale=0.3]{DQMPC_32_grad.eps}
+%         \caption{DQMPC with 2 Static Obstacles}
+%        \label{DQMPC_32_grad}
+%    \end{subfigure}%
+%	\begin{subfigure}[t]{0.33\textwidth}
+%    	\centering
+%    	\includegraphics[scale=0.3]{DQMPC_14_grad.eps}
+%    	\caption{DQMPC with U shaped static obstacle}
+%    	\label{DQMPC_14_grad}
+%	\end{subfigure}      
+%    \caption{Trajectories and Optimization Gradients of the baseline DQMPC optimization}
+%    \label{DQMPC_Result}    	
+%\end{figure*}
+
+\subsubsection{Approach Angle Towards Target Method} \label{angle_of_approach}
+In this method, the local minima and control deadlock is addressed by including an additional potential field function which depends on the approach angle of the robots towards the target.
+%An alternate solution to avoid the field local minima and deadlock problem in case of dynamic obstacles is to have an additional potential field force on the robot which is a function of the angle of approach to target. As observed in the Fig.\ref{problem_2}, the problem of field local minima is encountered when the angles of approach to the target, of robots, are similar. 
+Here, we (i) compute the approach angle of robot $R_k$ w.r.t. the target, (ii) compute the gradient of the objective, and (iii) compute a force $F_{ang}^{R_k,O_j}$ in the direction normal to the angle of approach, as shown in Fig. \ref{proposedApproachfig}(c). The magnitude of  $F_{ang}^{R_k,O_j}$ depends on the sum of gradients $\nabla J_{DQMPC}^{R_k}$ and the hyperbolic function (see Sec. \ref{potential_field}) between the approach angles of robot $R_k$ and obstacles $O_j$ w.r.t. the target. This potential field force is computed as,
+\begin{equation}
+\mathbf{F}_{ang}^{R_k,O_j}(n) = \nabla J_{DQMPC}^{R_k} \;F_{hyp}^{R_k,O_j}((\theta^{R_k}(n)-\theta^{O_j}(n))^2)\mathbf{\hat{\beta}}  \;\;\forall j 
+\end{equation}
+\begin{equation}
+\mathbf{\beta} = \pm \frac{\x_t^{R_k}(n)-\xproj_t^{R_k}}{\|\x_t^{R_k}(n)-\xproj_t^{R_k}\|_2} \; ;\quad \mathbf{\hat{\beta}}.\mathbf{\beta} = 0.
+\end{equation}
+Here $\theta^{R_k}(n)$ and $\theta^{O_j}(n)$ are the angles of $R_k$ and obstacle $O_j$ with respect to the target. The angles $\theta^{O_j} \ \forall \ j$ w.r.t target are computed by each $R_k$, as part of the force pre-computation using $O_j$'s position. $\beta$ and $\hat{\beta}$ are the unit vectors in the approach direction to the target and its orthogonal respectively, with $\pm$ dependent on $\theta^{R_k}$ w.r.t. the target. 
+%The direction is postive for positive approach angles $\psi_t^{R_k}$ and negative for negative angles. 
+The $\mathbf{f}_{t}^{R_k}(n)$ for $n^{th}$ horizon step is therefore
+\begin{equation}
+\mathbf{f}_{t}^{R_k}(n) = \sum_{\forall \ j}\mathbf{F}_{rep}^{R_k,O_j}(n)+\mathbf{F}_{ang}^{R_k,O_j}(n).
+\end{equation}
+Notice that the non-linear constraint of the two approach angles not being equal is converted into an equivalent convex constraint using pre-computed force values. This method ensures collision avoidance in the presence of obstacles and fast convergence to the desired target, because the net potential force direction is always away from the obstacle. 
+%Unfortunately in certain extreme static obstacle scenarios as discussed later in Sec.~\ref{sec:results}, it fails to reach target surface.
+
+
+%\begin{figure*}[t!]
+%    \centering
+%    \begin{subfigure}[t]{0.33\textwidth}        
+%        \includegraphics[scale=0.38]{Swivel_5.eps}        
+%        \label{Swivel_5}
+%    \end{subfigure}%
+%    ~ 
+%    \begin{subfigure}[t]{0.33\textwidth}
+%        \centering
+%        \includegraphics[scale=0.4]{Swivel_32.eps}       
+%        \label{Swivel_32}
+%    \end{subfigure}%
+%	\begin{subfigure}[t]{0.33\textwidth}
+%    	\centering
+%    	\includegraphics[scale=0.4]{Swivel_14.eps}    	
+%    	\label{Swivel_14}
+%	\end{subfigure}  
+%	~       
+%    \begin{subfigure}[t]{0.33\textwidth}        
+%        \includegraphics[scale=0.3]{Swivel_5_grad.eps}
+%        \caption{Swivelling Destination with 5 Dynamic Obstacles}
+%        \label{Swivel_5_grad}
+%    \end{subfigure}%
+%    ~ 
+%    \begin{subfigure}[t]{0.33\textwidth}
+%        \centering
+%        \includegraphics[scale=0.3]{Swivel_32_grad.eps}
+%         \caption{Swivelling Destination with 2 Static Obstacles}
+%        \label{Swivel_32_grad}
+%    \end{subfigure}%
+%	\begin{subfigure}[t]{0.33\textwidth}
+%    	\centering
+%    	\includegraphics[scale=0.3]{Swivel_14_grad.eps}
+%    	\caption{Swivelling Destination with U shaped static obstacle}
+%    	\label{Swivel_14_grad}
+%	\end{subfigure}      
+%    \caption{Trajectories and Optimization Gradients of the swivelling destination approach}
+%    \label{Swivel_Result}    	
+%\end{figure*}
+
+\subsubsection{Tangential Band Method} \label{tangential_field}
+The previous methods at times, do not facilitate target surface convergence because of field local minima and control deadlock. For example, static obstacles forming a U-shaped boundary between the target surface and $R_k$'s position, as shown in Fig.\ref{proposedApproachfig}(d). If the target surface is smaller than the projection of the static obstacle along the direction of approach to the desired surface, the planned trajectory is occluded. Therefore, the SRD method cannot find a feasible direction for motion. Furthermore,  angle of approach field acts only when the $\theta^{R_k}$ and $\theta^{O_j}$ are equal w.r.t. the target.
+%Consider a scenario with closely spaced static obstacles forming a U-shaped boundary between the target surface and robot $R_k$'s position, as shown in Fig. \ref{tangentialBand}. In such a situation robot $R_k$ is surrounded by static obstacles and would be stuck in field local minima or deadlock movement (moving towards and away from target in a loop). Swiveling destination cannot help the robot in this situation as the path to the target surface is completely blocked. Angle of approach field only acts when the angles of obstacles and the robot are approximately the same with respect to the target. With static obstacles shaped as shown in Fig. \ref{tangentialBand}, the angles $\theta^{R_k}$ and $\theta^{O_j}$ might never be close or equal in magnitude.
+
+In order to resolve this, we construct a band around each obstacle where an instantaneous (at $n=0$) tangential force acts about the obstacle center. The width of this band is $ > (\dot{\x}_{max}^ {\top}\Delta t + u_{max} \frac{\Delta t^2}{2}) $ and therefore, the robot cannot tunnel out of this band within one time step $\Delta t$. This makes sure that once the robot enters  tangential band, it exits only after it has overcome the static obstacles. The direction depends on $R_k$'s approach towards the target, resulting in clockwise or anti-clockwise force based on $-ve$ or $+ve$ value of $\psi_t^{R_k}$ respectively. The outer surface of the band has only the tangential force effect, while the inner surface has both tangential and repulsive force (repulsive hyperbolic field) effects on $R_k$.
+ 
+Within the band the diagonal entries of the positive definite weight matrix $\bm{\Omega}_{t}$ are reduced to a very low value ($\prec \prec \Omega_{t,max}$).  This ensures that the attraction field on the robot is reduced while it is being pushed away from the obstacle. Consequently, the effect of tangential force is higher in the presence of obstacles. Once the robot is out of the tangential field band (i.e., clears the U-shaped obstacles), the high weight of the $\bm{\Omega}_{t}$ is restored and the robot converges to its desired destination. Fig. \ref{proposedApproachfig}(d) illustrates this method.
+The tangential force is,
+\begin{equation}
+\mathbf{F}_{tang}^{R_k,O_j}(0) = k_{tang}\nabla J_{DQMPC}^{R_k}\; \mathbf{\hat{\alpha}}, 
+\end{equation}
+where $k_{tang}$ is user-defined gain and $\mathbf{\hat{\alpha}}$ is defined s.t. $\mathbf{\pm\;\hat{\alpha}.\alpha} = 0$. The weight matrix and step horizon potential are therefore,
+\begin{equation}
+\bm{\Omega_{t}} = \bm{\Omega_{t,min}}, ~~ \text{if } \x_t^{R_k} \leq d(0)+d_{band} 
+\end{equation}
+\begin{equation}
+\mathbf{f}_{t}^{R_k}(n) = \sum_{\forall j} \mathbf{F}_{rep}^{R_k,O_j}(n) + \mathbf{F}_{tang}^{R_k,O_j}(0)\;,
+\end{equation}
+%\begin{eqnarray}
+%\mathbf{F}_{tang}^{R_k}(0) &=& K_{tang}\nabla J_{DQMPC}^{R_k}\mathbf{\hat{\alpha}} \\
+%\bm{\Omega_{t}} &=& min(\bm{\Omega_{t}}), ~~ \text{if } \x_t^{R_k}(0) \leq d(0)+d_{band}  \\
+%\mathbf{f}_{t}^{R_k}(n) &=& \sum_{\forall j} \mathbf{F}_{rep}^{R_k}(n) + \mathbf{F}_{tang}^{R_k}(0)
+%\end{eqnarray}
+%where $K_{tang}$ is a user-defined gain and $\mathbf{\pm\hat{\alpha}.\alpha} = 0$. $\alpha$ was defined in equation (\ref{repulsive}). 
+where $d_{band}$ is the tangential band width. The values of the weights can vary between $\bm{\Omega_{t,min}} \prec \bm{\Omega_{t}} \prec \bm{\Omega_{t,max}}$ and changes only when the robot is within the influence of tangential field of any obstacle.
+In summary, the tangential band method not only guarantees collision avoidance for any obstacles but also facilitates robot convergence to the target surface. 
+In rare scenarios, e.g., when the static obstacle almost encircles the robots and if the desired target surface is beyond such an obstacle, the robots could get trapped in a loop within the tangential band. This is because a minimum attraction field  towards the target always exists. Since in this work,  the objective is local motion planning in dynamic environments with no global information and map, we do not plan for a feasible trajectory out of such situations. 
+
+\begin{figure}
+	\centering
+	    \begin{subfigure}[t]{0.24\textwidth}        
+	    	\includegraphics[scale=0.27]{DQMPC_5.pdf}   
+	    	\caption{}     
+	    	\label{DQMPC_5}
+	    \end{subfigure}
+	    \begin{subfigure}[t]{0.24\textwidth}        
+	    	\includegraphics[scale=0.22]{DQMPC_5_grad.pdf}
+	    	\caption{}
+	    	\vspace{0.1cm}
+	    	\label{DQMPC_5_grad}
+	    \end{subfigure} 
+	    \begin{subfigure}[t]{0.24\textwidth}
+	    	\centering
+	    	\includegraphics[scale=0.27]{DQMPC_32.pdf}  
+	    	\caption{}    
+	    	\label{DQMPC_32}
+	    \end{subfigure}
+	    \begin{subfigure}[t]{0.24\textwidth}
+	    	\centering
+	    	\includegraphics[scale=0.21]{DQMPC_32_grad.pdf}
+	    	\caption{}
+	    	\vspace{0.1cm}
+	    	\label{DQMPC_32_grad}
+	    \end{subfigure}
+		\begin{subfigure}[t]{0.24\textwidth}
+			\centering
+			\includegraphics[scale=0.27]{DQMPC_14.pdf} 
+			\caption{}   	
+			\label{DQMPC_14}
+		\end{subfigure}
+		\begin{subfigure}[t]{0.24\textwidth}
+			\centering
+			\includegraphics[scale=0.22]{DQMPC_14_grad.pdf}
+			\caption{}
+			\label{DQMPC_14_grad}
+		\end{subfigure}      
+		\caption{MAV trajectories and optimization gradients of baseline DQMPC optimization. The colors (red, green, blue, black, magenta) represent $R_k$s and their respective gradients.}
+		\label{DQMPC_Result} 
+		\vspace{-1em}
+\end{figure}

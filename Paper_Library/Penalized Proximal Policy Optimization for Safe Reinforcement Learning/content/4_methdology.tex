@@ -1,0 +1,166 @@
+\section{Methodology}
+Iterative search for optimal policy is commonly used in literature~\cite{schulman2015trust,achiam2017constrained,zhang2020first}.
+We formulate the unbiased constrained policy optimization problem over $s\sim d^{\pi}$ and $a\sim \pi$ as:
+\begin{equation}
+%\resizebox{.91\linewidth}{!}{$
+\begin{aligned}
+&\pi_{k+1}  =  \mathop{\arg\max}_{\pi}\mathop{\mathbb{E}}_{\substack{s\sim d^{\pi} \\a\sim \pi}}[ A^{\pi_k}_R (s,a)]\\
+& \mathrm{s.t.}  \quad J_{C_i}(\pi_{k})+ \frac{1}{1-\gamma}\mathop{\mathbb{E}}_{\substack{s\sim d^{\pi} \\a\sim \pi}} \big  [A_{C_i}^{\pi_ k} (s,a) \big ] \leq d_i,\ \forall i.\\
+\end{aligned}
+%$}
+\label{cppo1}
+\end{equation}
+where $d^\pi(s) = (1-\gamma) \sum^\infty_{t=0} \gamma^t P(s_t=s | \pi)$ denote the discounted future state distribution.
+
+\begin{proposition}
+The new policy $\pi_{k+1}$  obtained from the current policy $\pi_k$ via problem \eqref{cppo1} yields a monotonic return improvement and hard constraint satisfaction.
+\end{proposition}
+\begin{proof}
+See the supplemental material.
+\end{proof}
+
+In this paper, we consider the parametric policy  $\pi(\theta)$,  i.e., using the neural network. Let $r(\theta) = \frac{\pi(\theta)}{\pi(\theta_k)}$ be the importance sampling ratio, then we rewrite the optimization problem (\ref{cppo1}) as follows:
+\begin{equation}
+\resizebox{.91\linewidth}{!}{$
+\begin{aligned}
+ &\theta_{k+1} =  \mathop{\arg\min}_{\theta}\mathop{\mathbb{E}}_{\substack{s\sim d^{\pi} \\a\sim \pi_{k}}}[-r(\theta)A^{\pi_k}_R (s,a)]\\
+& \mathrm{s.t.} \ \mathop{\mathbb{E}}_{\substack{s\sim d^{\pi} \\a\sim \pi_{k}}} \big  [r(\theta)A_{C_i}^{\pi_ k} (s,a) \big ] + (1-\gamma)(J_{C_i}(\pi_{k})-d_i) \leq 0, \ \forall i.\\
+\end{aligned}
+$}
+\label{cppo2}
+\end{equation}
+
+
+Different from previous methods \cite{achiam2017constrained,yang2020projection} that approximate non-convex problem (\ref{cppo2}) to convex optimization via Taylor's formulation on the trust region, we penalize constraints with ReLU operators to the objective function which yields an unconstrained problem:
+\begin{equation}
+\resizebox{.91\linewidth}{!}{$
+\begin{aligned}
+\theta_{k+1} & =  \mathop{\arg\min}_{\theta} \mathop{\mathbb{E}}_{\substack{s\sim d^{\pi} \\a\sim \pi_{k}}}[-r(\theta)A^{\pi_k}_R (s,a)] + \kappa\sum_i \max\{0,\\
+&  \quad \mathop{\mathbb{E}}_{\substack{s\sim d^{\pi} \\a\sim \pi_{k}}} \big  [r(\theta)A_{C_i}^{\pi_ k} (s,a) \big ] + (1-\gamma)(J_{C_i}(\pi_{k})-d_i)\}.
+\end{aligned}
+\label{cppo3}
+$}
+\end{equation}
+
+
+Intuitively, the penalized term takes effect when the agent violates the corresponding constraint; otherwise, the objective equals the standard policy optimization when all constraints are fulfilled. Below, we theoretically analyze the equivalence between problem~\eqref{cppo2} and problem~(\ref{cppo3}), i.e., the ReLU operator constructs an exact penalty function with a finite penalty factor $\kappa$. To our best knowledge, it is the first work to solve the constrained policy optimization in the perspective of the exact penalty method. 
+
+\begin{theorem}\label{exact-penalty}
+Suppose $\bar\lambda$ is the corresponding Lagrange multiplier vector for the optimum of problem (\ref{cppo2}). Let the penalty factor $\kappa$ be a sufficiently large constant ($\kappa \geq ||\bar\lambda||_\infty$), problem (\ref{cppo2}) and problem (\ref{cppo3}) share the same optimal solution set.
+\end{theorem}
+\begin{proof}
+See the supplemental material.
+\end{proof}
+
+Notably, the finiteness of penalty factor $\kappa$ in  Theorem~\ref{exact-penalty} is critical for policy updates because popular methods like square loss function and log-barrier function require the penalty term to go towards positive infinity for an infeasible solution. Otherwise, the optimal solution is not exactly the same as problem (\ref{cppo2})~\cite{liu2020ipo}. However, this would bring about numerical issues in practice and result in unbounded approximate error which will be discussed later.
+
+By now, we construct an equivalent unconstrained objective with ReLU operators and a finite penalty factor $\kappa$. It is still intractable to solve problem (\ref{cppo3}) directly over the unknown future state distribution $s\sim d^\pi$ except for cumbersome off-policy evaluation~\cite{jiang2016doubly} from current policy $\pi_k$. We replace $s \sim d^\pi$ with $s\sim d^{\pi_k}$ and minimize the unconstrained objective over collected trajectories:
+\begin{equation}
+\resizebox{.91\linewidth}{!}{$
+\begin{aligned}
+\theta_{k+1} \!\!& =  \mathop{\arg\min}_{\theta} \mathop{\mathbb{E}}_{\substack{s\sim d^{\pi_k} \\a\sim \pi_{k}}}[-r(\theta)A^{\pi_k}_R (s,a)] + \kappa\sum_i \max\{0,\\
+&  \quad \mathop{\mathbb{E}}_{\substack{s\sim d^{\pi_k} \\a\sim \pi_{k}}} \big  [r(\theta)A_{C_i}^{\pi_ k} (s,a) \big ] + (1-\gamma)(J_{C_i}(\pi_{k})-d_i)\}.
+%& \mathrm{s.t.}  \quad \mathop{\mathbb{E}}_{s\sim d^{\pi_k}}\big[\mathrm{D}_{KL}(\pi(\theta) || \pi(\theta_k))[s]\big] \leq \delta\\
+\end{aligned}
+\label{cppo4}
+$}
+\end{equation}
+This results in biases w.r.t problem (\ref{cppo3}), and we further provide the analysis of approximate error for that replacement.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{algorithm}[tb]
+\caption{P3O: Penalized Proximal Policy Optimization} 
+\label{algo:cppo}
+\textbf{Input}: initial policy $\pi_{\theta_0}$, value function $V^{\phi_0}_R$ and each cost-value function $V^{\psi^i_0}_{C_i}, \forall i.$
+\begin{algorithmic}[1] %[1] enables line numbers
+\FOR{$ k\mathrm{\  in\ } 0,1,2,...K$ }
+        	\STATE Collect set of trajectories $\mathcal{D}_k$ with policy $\pi_{\theta_k}$.
+        	\STATE Compute $\hat{R}_t = \sum^{T-t}_{k=0} \gamma^k R_{t+k}$ and $\hat{A}^{\pi_{\theta_k}}_R(s_t,a_t)$.
+        	\STATE Compute $\hat{C}^i_t = \sum^{T-t}_{k=0} \gamma^k C^i_{t+k}$ and $\hat{A}^{\pi_{\theta_k}}_{C_i}(s_t,a_t), \forall i$.
+            \STATE Update $\pi_{\theta_{k+1}}$ using Algorithm \ref{algo:exact}.
+            \STATE $\phi_{k+1} = \mathop{\arg\min}_{\phi} \frac{1}{|\mathcal{D}_k| T}\sum(V^{\phi_k}_R(s_t)-\hat{R}_t)^2$.
+            \STATE $\phi'_{k+1} = \mathop{\arg\min}_{\phi'} \frac{1}{|\mathcal{D}_k| T}\sum(V^{\psi^i_k}_{C_i}(s_t)-\hat{C}^i_t)^2, \forall i$.
+          \ENDFOR
+\end{algorithmic}
+\textbf{Output}: Optimal policy $\pi_{\theta_K}$.
+\end{algorithm}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{algorithm}[tb]
+\caption{Exact Penalized Policy Search Algorithm} 
+\label{algo:exact}
+\textbf{Input}: current policy $\pi_{\theta_k}$.$\quad \quad \quad$
+\begin{algorithmic}[1] %[1] enables line numbers
+\FOR{$ n \mathrm{\  in\ } 0,1,2,...N$ }
+            \STATE Compute $\mathcal{L}^{\mathrm{CLIP}}_{R}(\theta)$ in Eq.~(\ref{L_R_CLIP}).
+            \STATE Compute $\mathcal{L}^{\mathrm{CLIP}}_{C_i}(\theta),\ \forall i = 1,2...m $ in Eq.~(\ref{L_C_CLIP}).
+            \STATE $\theta \leftarrow \theta  - \eta \nabla  \mathcal{L}^{\mathrm{P3O}}(\theta)$ in Eq.~(\ref{cppo5}).
+            \STATE $\kappa \leftarrow \min\{\rho \kappa, \kappa_\mathrm{max}\} \quad (\rho > 1)$.\\
+            \IF{$\mathop{\mathbb{E}}_{s\sim d^{\pi}}\big[\mathrm{D}_{KL}(\pi_\theta || \pi_{\theta_k})[s]\big] \notin [\delta^-_k,\delta^+_k]$}
+                \STATE Break.\\
+            \ENDIF
+          \ENDFOR
+\STATE $\theta_{k+1} \leftarrow \theta$.
+\end{algorithmic}
+\textbf{Output}: next policy $\pi_{\theta_{k+1}}$.
+\end{algorithm}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{figure*}
+  \centering
+  \subcaptionbox{Circle\label{fig:circle}}
+    {\includegraphics[width=3.75cm,height=2.75cm]{figures_update/circleEnv.png}}\hspace{5mm}
+  \subcaptionbox{Gather\label{fig:gather}}
+    {\includegraphics[width=3.75cm,height=2.75cm]{figures_update/gatherEnv.png}}\hspace{5mm}
+  \subcaptionbox{Navigation\label{fig:multi}}
+    {\includegraphics[width=3.75cm,height=2.75cm]{figures_update/multiEnv2.png}}\hspace{5mm}
+\subcaptionbox{Simple Spread\label{fig:multiagent}}
+    {\includegraphics[width=3.5cm,height=2.75cm]{figures_update/spread.png}}
+  \caption{Experimental benchmarks. (a) Circle: The agent is rewarded for moving in a specified wide circle, but is constrained to stay within a safe region smaller than the radius of the circle. (b) Gather: The agent is rewarded for gathering green apples, but is constrained to avoid red bombs. (c) Navigation: The agent is rewarded for reaching the target area(green) but is constrained to avoid virtual hazards(light purple) and impassible pillars(dark purple). Note that the cost for hazards and pillars are calculated separately and hold different upper limits. (d) Simple Spread: Agents are rewarded for reaching corresponding destinations, but are constrained to the mutual collision. The observation of each agent is not shared in the CMDP execution.}
+  \label{fig:exp_benchmarks}
+\end{figure*}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{theorem}\label{proximal-error}
+For any policy $\pi$ and the given $\pi_k$, define \[\delta = \mathop{\mathbb{E}}_{s\sim d^{\pi_k}}\big[\mathrm{D}_{KL}(\pi || \pi_k)[s]\big].\]
+The worst-case approximate error is $\mathcal{O}(\kappa m\sqrt{\delta})$  if we replace problem (\ref{cppo3}) with problem (\ref{cppo4}).
+\end{theorem}
+\begin{proof}
+See the supplemental material.
+\end{proof}
+
+Theorem \ref{proximal-error} indicates the necessity of a finite penalty factor $\kappa$, or the approximate error would not be controlled.  On the other hand, we have to restrict policy updates within the neighborhood of last $\pi_k$ (i.e., $\delta \rightarrow 0$) and improve the policy iteratively. Here, we incorporate the trust-region constraint via clipped surrogate objective \cite{schulman2017proximal} in the approximate exactly penalized problem \eqref{cppo4} to guarantee a proximal policy iteration. 
+Then, the final optimization objective, abbreviated as P3O (penalized PPO), is derived as:
+\begin{equation}
+\mathcal{L}^\mathrm{P3O}(\theta) =   \mathcal{L}^{\mathrm{CLIP}}_R(\theta) + \kappa\cdot \sum_i \max\{0,\mathcal{L}^{\mathrm{CLIP}}_{C_i}(\theta) \},
+\label{cppo5}
+\end{equation}
+ where
+\begin{equation}
+\begin{aligned}
+\mathcal{L}^{\mathrm{CLIP}}_{R}(\theta) = & \mathop{\mathbb{E}}_{\substack{s\sim d^{\pi_k} \\a\sim \pi_{k}}}\big [ -\min\big \{  r(\theta)  A_R^{\pi_k} (s,a),\\ 
+& \mathrm{clip} (r(\theta),  1-\epsilon,1+\epsilon) A_R^{\pi_k} (s,a) \big \} \big ] \ ;
+\end{aligned}
+\label{L_R_CLIP}
+\end{equation}
+\begin{equation}
+\begin{aligned}
+& \mathcal{L}^{\mathrm{CLIP}}_{C_i}(\theta) = \mathop{\mathbb{E}}_{\substack{s\sim d^{\pi_k} \\a\sim \pi_{k}}}\big  [ \max\big \{ r(\theta) A_{C_i}^{\pi_k} (s,a),
+\mathrm{clip} (r(\theta), \\ & 1-\epsilon,1+\epsilon)A_{C_i}^{\pi_k} (s,a) \big \}+ (1-\gamma)(J_{C_i}(\pi_{k})-d_i)\big].
+\end{aligned}
+\label{L_C_CLIP}
+\end{equation}
+
+Based on the clipped surrogate objective technique, we solve the difficult constrained problem (\ref{cppo2}) by alternately estimating and minimizing the unconstrained loss function (\ref{cppo5}).
+
+The remaining problem is how to obtain the finite penalty factor $\kappa$ due to the variety of the magnitude of $\mathcal{L}^\mathrm{CLIP}_{R}(\theta) $ and each $\mathcal{L}^{\mathrm{CLIP}}_{C_i}(\theta)$ that depends on different tasks and up-to-date policies. 
+The value of $\kappa$ is required to be larger than the unknown greatest Lagrange multiplier according to Theorem~\ref{exact-penalty}, but Theorem~\ref{proximal-error} implies too large $\kappa$ decays the performance. Thus, there is a trade-off among the hyper-parameter tuning. As shown in Algorithm \ref{algo:exact}, we increase $\kappa$ at every time step, and the early stopping condition is fulfilled when the distance between solutions of two adjacent steps is small enough or the current policy is out of the trust region. In practice, we utilize the normalization trick that maps the advantage estimation to an approximate standard normal distribution regardless of the tasks themselves. We find this technique enables a fixed $\kappa$ for general good results across different tasks. Experimental results show that both of above algorithms work effectively and the learning processes are stable in a wide range of $\kappa$.
+
+Note that the first term in the P3O objective (\ref{cppo5}) is the same as standard PPO and the rest terms are the clipped constraint objectives that prevent the new policy from jumping out of the trust region during the penalty reduction. 
+The loss function in P3O is differentiable almost everywhere and can be solved easily via the simple first-order optimizer~\cite{kingma2014adam}. Conclusively,  P3O inherits the benefits of PPO in CMDPs such as better accuracy and sample efficiency than the approximating quadratic optimization~\cite{achiam2017constrained,yang2020projection}. Additionally, the P3O algorithm is naturally scalable to multi-constraint scenarios by adding penalized terms onto the objective (\ref{cppo5}). The pseudo-code of the P3O algorithm for solving general multi-constraint CMDPs is shown in Algorithm \ref{algo:cppo}.
+In the end, we extend the P3O algorithm to the decentralized multi-agent setting in which the CMDP is partially observable and the observation can not be shared between each agent. Due to the space limitation, detailed algorithms are provided in the supplementary material.
+

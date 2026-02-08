@@ -1,0 +1,316 @@
+\beginbass
+%
+We continue this section by showing how to use the library to define specific inference systems and prove their properties. 
+In particular, we consider the basic examples in \Cref{sec:gis} that allow us to cover
+all the cases that we investigated before.
+
+\begin{example}
+	Consider the predicate $\member$. We first recall its inference system and we give names to the (meta-)rules.
+		\begin{mathpar}
+		\inferrule[mem-h]{\mathstrut}{\member(\x , \cons\x\xs)}
+		\and
+		\inferrule[mem-t]{\member(\x ,\xs)}{\member(\x , \cons\y\xs)}
+	\end{mathpar} 
+	The universe consists of pairs of elements and possibly infinite lists, 
+	implemented by the Agda library \lstinline{Colist} which uses thunks.
+	
+\begin{lstlisting}
+U = A $\times$ Colist A $\infty$
+data memberRN : Set where mem$\textrm{-}$h mem$\textrm{-}$t : memberRN
+
+mem$\textrm{-}$h$\textrm{-}$r : FinMetaRule U
+mem$\textrm{-}$h$\textrm{-}$r .Ctx = A $\times$ Thunk (Colist A) $\infty$
+mem$\textrm{-}$h$\textrm{-}$r .comp (x , xs) =
+ 	[] ,
+ 	----------------
+ 	(x , x :: xs) 
+
+mem$\textrm{-}$t$\textrm{-}$r : FinMetaRule U
+mem$\textrm{-}$t$\textrm{-}$r .Ctx = A $\times$ A $\times$ Thunk (Colist A) $\infty$
+mem$\textrm{-}$t$\textrm{-}$r .comp (x , y , xs) =
+ 	((x , xs .force) :: []) ,
+ 	----------------
+ 	(x , y :: xs) 
+
+memberIS : IS U
+memberIS .Names = memberRN
+memberIS .rules mem$\textrm{-}$h = from mem$\textrm{-}$h$\textrm{-}$r
+memberIS .rules mem$\textrm{-}$t = from mem$\textrm{-}$t$\textrm{-}$r
+\end{lstlisting}
+
+	Here \lstinline{memberRN} are the rule names, and each rule name has an associated element of 
+	\lstinline{FinMetaRule U}, which exactly encodes the meta-rule in the inference system at the beginning. 
+	Note, in \lstinline{mem$\textrm{-}$t$\textrm{-}$r}, the use of the \lstinline{force} field 
+	of \lstinline{Thunk} to actually obtain the tail colist. 
+	%
+	This inference system is expected to define exactly the pairs \lstinline{(x , xs)} such that 
+	\lstinline{x} belongs to \lstinline{xs}, that is, those satisfying the following specification
+	%
+\begin{lstlisting}	
+memSpec : U $\rightarrow$ Set
+memSpec (x , xs) = $\Sigma$[ i $\in$ $\N$ ] (Colist.lookup i xs = just x)
+\end{lstlisting} 
+	%
+	where \lstinline{lookup : $\N$ $\rightarrow$ Colist A $\infty$ $\rightarrow$ Maybe A} 
+	is the (standard) library function that returns the \lstinline{i}-th element of \lstinline{xs}, if any. 
+	%
+	As said in \Cref{sec:gis}, to obtain the desired meaning this inference system has to be 
+	interpreted inductively, and soundness can be proved by the induction principle, 
+	that is, by providing a proof that the specification is closed with respect to the two meta-rules, as shown below. 
+
+\begin{lstlisting}
+_member_ : A $\rightarrow$ Colist A $\infty$ $\rightarrow$ Set
+x member xs = Ind$\llbracket$ memberIS $\rrbracket$ (x , xs)
+
+memSpecClosed : ISClosed memberIS memSpec
+memSpecClosed mem$\textrm{-}$h _ _ = zero , refl
+memSpecClosed mem$\textrm{-}$t _ pr =
+ 	let (i , proof) = pr Fin.zero in (suc i) , proof
+
+memberSound : $\forall$ {x xs} $\rightarrow$ x member xs $\rightarrow$ memSpec (x , xs)
+memberSound = ind[memberIS] memSpec memSpecClosed
+\end{lstlisting}
+
+	For completeness there is no canonical technique; in this example, it can be proved by induction 
+	on the position (the index \lstinline{i} in the specification). 
+	For the complete proof see \cite{Ciccone20}.
+	%
+	\eoe
+\end{example}
+
+%%%%%%%%%%%%%%
+%%% ALLPOS %%%
+%%%%%%%%%%%%%%
+
+\begin{example}
+	Consider the predicate $\allpos$ from \Cref{sec:gis}. We first recall its inference system and we give names to the (meta-)rules.
+	\begin{mathpar}
+	\inferrule[allP-$\Lambda$]{\mathstrut}{\allpos\nil}
+	\and
+	\inferrule[allP-t]{\allpos\xs}{\allpos \cons\x\xs} ~ \x > 0
+	\end{mathpar}
+	Then the universe consists of possibly infinite lists. 
+
+\begin{lstlisting}
+U : Set
+U = Colist $\N$ $\infty$
+data allPosRN : Set where allP$\textrm{-}\Lambda$ allP$\textrm{-}$t : allPosRN
+
+allP$\textrm{-}\Lambda\textrm{-}$r : FinMetaRule U
+allP$\textrm{-}\Lambda\textrm{-}$r .Ctx = $\top$
+allP$\textrm{-}\Lambda\textrm{-}$r .comp c =
+  [] ,
+  -----------------
+  [] 
+
+allP$\textrm{-}$t$\textrm{-}$r : FinMetaRule U
+allP$\textrm{-}$t$\textrm{-}$r .Ctx = $\Sigma$[ (x , _) $\in$ $\N$ $\times$ Thunk (Colist $\N$) $\infty$ ] x > 0
+allP$\textrm{-}$t$\textrm{-}$r .comp ((x , xs) , _) =
+  ((xs .force) :: []) ,
+  -----------------
+  (x :: xs)
+
+allPosIS : IS U
+allPosIS .Names = allPosRN
+allPosIS .rules allP$\textrm{-}\Lambda$ = from allP$\textrm{-}\Lambda\textrm{-}$r
+allPosIS .rules allP$\textrm{-}$t = from allP$\textrm{-}$t$\textrm{-}$r
+\end{lstlisting}
+
+	This inference system is expected to define exactly the lists such that all elements are positive, 
+	that is, those satisfying the following specification 
+	(where for simplicity, we use the predicate $\in$, omitted, directly defined inductively). 
+	Notably, we could use $\member$ instead of $\in$.
+
+\begin{lstlisting}
+allPosSpec : U $\rightarrow$ Set
+allPosSpec xs = $\forall$ {x} $\rightarrow$ x $\in$ xs $\rightarrow$ x > 0
+\end{lstlisting}
+
+	As said in \Cref{sec:gis}, to obtain the desired meaning this inference system has 
+	to be interpreted coinductively, and completeness can be proved by the coinduction principle, 
+	that is, by providing a proof that the specification is consistent with respect to the inference system, as shown below. 
+
+\begin{lstlisting}
+allPos : U $\rightarrow$ Set
+allPos = CoInd$\llbracket$ allPosIS $\rrbracket$
+
+allPosSpecCons : $\forall$ {xs} 
+	$\rightarrow$ allPosSpec xs $\rightarrow$ ISF[ allPosIS ] allPosSpec xs
+allPosSpecCons {[]} _ = allP$\textrm{-}\Lambda$ , (tt , (refl , tt , $\lambda$ ()))
+allPosSpecCons {(x :: xs)} Sxs = 
+  allP$\textrm{-}$t , 
+  ((x , xs) , (refl , 
+  		(Sxs here , 
+  		$\lambda$ {Fin.zero $\rightarrow$ $\lambda$ mem $\rightarrow$ Sxs (there mem)})))
+
+allPosComplete : allPosSpec $\subseteq$ allPos
+allPosComplete = coind[ allPosIS ] allPosSpec allPosSpecCons
+\end{lstlisting}
+
+	For what concerns the soundness, there is no canonical technique; in this example, 
+	when the colist is empty the proof that the specification holds is trivial.
+	If the colist is not empty, then the proof proceeds by induction on 
+	the position of the element to be proved to be positive.
+	For the complete proof see \cite{Ciccone20}.
+ 	%
+ 	\eoe
+\end{example}
+
+\begin{example}
+	Consider the predicate $\maxelem$ from \Cref{sec:gis}. We recall once again its meta-(co)rules.
+	\begin{mathpar}
+		\inferrule[max-h]{\mathstrut}{\maxelem(\x , \cons\x\nil)}
+		\and
+		\inferrule[max-t]{\maxelem(\x , \xs)}{\maxelem(max(\x , \y) , \cons\y\xs)}
+		\and
+		\infercorule[co-max-h]{\mathstrut}{\maxelem(\x , \cons\x\xs)}
+	\end{mathpar}
+	Then the universe consists of pairs of natural numbers and possibly infinite lists.
+
+\begin{lstlisting}
+U : Set
+U = $\N$ $\times$ Colist $\N$ $\infty$
+data maxElemRN : Set where max$\textrm{-}$h max$\textrm{-}$t : maxElemRN
+data maxElemCoRN : Set where co$\textrm{-}$max$\textrm{-}$h : maxElemCoRN
+
+max$\textrm{-}$h$\textrm{-}$r : FinMetaRule U
+max$\textrm{-}$h$\textrm{-}$r .Ctx = 
+  $\Sigma$[ (_ , xs) $\in$ $\N$ $\times$ Thunk (Colist $\N$) $\infty$ ] xs .force $\equiv$ []
+max$\textrm{-}$h$\textrm{-}$r .comp ((x , xs) , _) =
+  [] ,
+  --------------
+  x , x :: xs
+
+max$\textrm{-}$t$\textrm{-}$r : FinMetaRule U
+max$\textrm{-}$t$\textrm{-}$r .Ctx = 
+  $\Sigma$[ (x , y , z , _) $\in$ 
+  $\N$ $\times$ $\N$ $\times$ $\N$ $\times$ Thunk (Colist $\N$) $\infty$ ] z $\equiv$ max x y 
+max$\textrm{-}$t$\textrm{-}$r .comp ((x , y , z , xs) , _) =
+  (x , xs .force) :: [] ,
+  --------------
+  z , y :: xs
+
+co$\textrm{-}$max$\textrm{-}$h$\textrm{-}$r : FinMetaRule U
+co$\textrm{-}$max$\textrm{-}$h$\textrm{-}$r .Ctx = $\N$ $\times$ Thunk (Colist $\N$) $\infty$
+co$\textrm{-}$max$\textrm{-}$h$\textrm{-}$r .comp (x , xs) =
+  [] ,
+  --------------
+  (x , x :: xs) 
+
+maxElemIS : IS U
+maxElemIS .Names = maxElemRN
+maxElemIS .rules max$\textrm{-}$h = from max$\textrm{-}$h$\textrm{-}$r
+maxElemIS .rules max$\textrm{-}$t = from max$\textrm{-}$t$\textrm{-}$r
+
+maxElemCoIS : IS U
+maxElemCoIS .Names = maxElemCoRN
+maxElemCoIS .rules co$\textrm{-}$max$\textrm{-}$h = from co$\textrm{-}$max$\textrm{-}$h$\textrm{-}$r
+\end{lstlisting}
+
+	Note that in this example we have defined two inference systems, the rules and the corules. 
+	This generalized inference system is expected to define exactly the pairs 
+	\lstinline{(x , xs)} such that \lstinline{x} is the maximal element of \lstinline{xs}, 
+	that is, those satisfying the following specification, where to be the maximal element 
+	\lstinline{x} should belong to \lstinline{xs}, and be greater or equal than any \lstinline{n} in \lstinline{xs}.
+
+\begin{lstlisting}
+maxSpec inSpec geqSpec : U $\rightarrow$ Set
+inSpec (x , xs) = x $\in$ xs
+geqSpec (x , xs) = $\forall${n} $\rightarrow$ n $\in$ xs $\rightarrow$ x $\equiv$ max x n
+maxSpec u = inSpec u $\times$ geqSpec u
+\end{lstlisting}
+
+	As said in \Cref{sec:gis}, the desired meaning is provided by the interpretation of the generalized inference system.
+	
+\begin{lstlisting}
+_maxElem_ : $\N$ $\rightarrow$ Colist $\N$ $\infty$ $\rightarrow$ Set
+x maxElem xs = FCoInd$\llbracket$ maxElemIS , maxElemCoIS $\rrbracket$ (x , xs)
+\end{lstlisting}
+
+	and the completeness can be proved by the bounded coinduction principle. 
+
+\begin{lstlisting}
+maxElemComplete : $\forall${x xs} $\rightarrow$ maxSpec (x , xs) $\rightarrow$ x maxElem xs
+maxElemComplete =
+  bounded$\textrm{-}$coind[ maxElemIS , maxElemCoIS ] maxSpec 
+    ($\lambda${(x , xs) $\rightarrow$ maxSpecBounded x xs}) 
+    $\lambda${(x , xs) $\rightarrow$ maxSpecCons x xs}
+\end{lstlisting}
+
+	Notably, we have to prove that the specification is:
+	\begin{itemize}
+	\item \emph{bounded}, that is, contained in \lstinline{_maxElem$_i$_ }, the inductive interpretation of the 
+	standard inference system consisting of both rules and corules, as shown below:
+	
+\begin{lstlisting}
+_maxElem$_i$_ : $\N$ $\rightarrow$ Colist $\N$ $\infty$ $\rightarrow$ Set
+x maxElem$_i$ xs = Ind$\llbracket$ maxElemIS $\cup$ maxElemCoIS $\rrbracket$ (x , xs)
+
+maxSpecBounded : $\forall${x xs} $\rightarrow$ inSpec (x , xs) 
+  $\rightarrow$ geqSpec (x , xs) $\rightarrow$ x maxElem$_i$ xs
+\end{lstlisting}
+
+	\item \emph{consistent} with respect to the inference system consisting of only rules, as shown below:
+	
+\begin{lstlisting}
+maxSpecCons : $\forall${x xs} $\rightarrow$ inSpec (x , xs) $\rightarrow$ 
+  geqSpec (x , xs) $\rightarrow$ ISF[ maxElemIS ] maxSpec (x , xs)
+\end{lstlisting}
+
+	\end{itemize}
+	These proofs are omitted for the sake of brevity. See \cite{Ciccone20} for more details.
+	%
+	Concerning the soundness there is no canonical technique. 
+	The proof can be split for the two components of the specification. 
+	It is worth noting that, for the soundness with respect to \lstinline{inSpec}, 
+	we  first use \lstinline{fcoind$\textrm{-}$to$\textrm{-}$ind} (see \Cref{fig:fcoind-to-ind}),
+	and then define \lstinline{maxElemSound$\textrm{-}$in$\textrm{-}$ind}, omitted, 
+	by induction on the inference system consisting of rules and corules.  
+	The use of \lstinline{fcoind$\textrm{-}$to$\textrm{-}$ind} in the proof corresponds to the fact 
+	that without corules unsound judgments could be derived. 
+	
+\begin{lstlisting}
+maxElemSound$\textrm{-}$in : $\forall$ {x xs} $\rightarrow$ x maxElem xs $\rightarrow$ inSpec (x , xs)
+maxElem$\textrm{-}$sound$\textrm{-}$in max = maxElemSound$\textrm{-}$in$\textrm{-}$ind (fcoind$\textrm{-}$to$\textrm{-}$ind max)
+\end{lstlisting}
+
+	Soundness with respect to \lstinline{geqSpec} is proved by induction on the position, 
+	that is, the proof of membership, of the element that must be proved to be less or equal.  
+	In this case, soundness would hold even in the purely coinductive case. 
+	%
+	\eoe
+\end{example}
+
+\begin{remark}[Code Duplication]
+	\label{rm:agda_dup}
+	Of course, as Agda supports both inductive and coinductive dependent types, 
+	one could directly write Agda code for inductive, coinductive and 
+	even flexible coinductive definitions of concrete examples. 
+	We have explored this possibility in \cite{Ciccone20}. 
+	However, in this way, the definition is hard-wired with its semantics, and, for flexible coinduction, 
+	one has to manually construct the interpretation by combining in the correct way an inductive and a 
+	coinductive type and to prove the bounded coinduction principle for each example. 
+	For instance, the definition of \lstinline{maxElem} will look as follows: 
+	
+\begin{lstlisting}
+data _maxElem_ : $\N$ $\to$ CoList $\N$ $\infty$ $\to$ Size $\to$ Set where 
+  max$\textrm{-}$h : $\forall$ {x xs i} $\to$force xs $\equiv$ [] $\to$ x maxElem (x :: xs) i 
+  max$\textrm{-}$t : $\forall$ {x y xs i} $\to$ Thunk (x maxElem (force xs)) i 
+                       $\to$ z $\equiv$ max x y 
+                       $\to$ z maxElem$_i$ (y :: xs) 
+                       $\to$ z maxElem (y :: xs) i  
+
+data _maxElem$_i$_ : $\N$ $\to$ CoList $\N$ $\infty$ $\to$ Set where 
+  imax$\textrm{-}$h : $\forall$ {x xs} $\to$force xs $\equiv$ [] $\to$ x maxElem$_i$ (x :: xs) 
+  imax$\textrm{-}$t : $\forall$ {x y xs} $\to$ x maxElem$_i$ (force xs)) $\to$ z $\equiv$ max x y 
+                      $\to$ z maxElem$_i$ (y :: xs)  
+  co$\textrm{-}$max$\textrm{-}$h : $\forall$ {x xs} $\to$ x maxElem$_i$ (x :: xs) 
+\end{lstlisting} 
+
+	Clearly, this approach causes duplication of rules and code, as rules of the coinductive type have to be duplicated in the inductive one, 
+	making things rather complex. 
+	Our library instead hides all these details, exposing interfaces for interpretations and proof principles, 
+	so that the user only has to write code describing rules. 
+	%
+	\eor
+\end{remark}

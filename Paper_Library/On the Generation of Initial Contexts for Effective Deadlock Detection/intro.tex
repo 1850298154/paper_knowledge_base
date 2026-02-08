@@ -1,0 +1,223 @@
+% ;; -*- coding: iso-latin-1; TeX-PDF-mode: t; TeX-master: "main" -*-%
+
+
+\begin{figure}[t]
+\begin{center}
+\begin{minipage}{8.5cm}
+\end{minipage}
+%&
+\begin{tabular}{ll}
+
+%\hspace{7pt}
+\begin{lstlisting}[name=smallexamples]
+main(){$\label{pp:main}$
+    DB db = new DB();$\label{pp:newdb}$
+    $\label{pp:neww}$Worker w = new Worker();
+    $\label{pp:asyncr}$db!register(w);
+    $\label{pp:asyncw}$w!work(db);}
+
+class Worker{
+  Data data;
+  int work(DB db){$\label{pp:workinit}$
+    Fut$\langle$Data$\rangle$ f = db!getData(this); $\label{pp:fgetdata}$
+    $\label{pp:work}$data = f.get;
+    return 0;
+  }
+  int ping(int n){return n;}$\label{pp:ping}$ 
+}// end of class Worker
+
+class DB{
+  Data data = ...;
+  Worker client = null;
+  int connected = 1;
+\end{lstlisting}
+~&~
+\begin{lstlisting}[name=smallexamples]
+  int makesConnection(){$\label{pp:makesinit}$
+      connected = 3;$\label{pp:makestrue}$ 
+      return connected;
+  } 
+  int register(Worker w){$\label{pp:reginit}$
+      connected = 5; $\label{pp:connected1}$
+      Fut$\langle$int$\rangle$ g = this!getData();
+      $\label{pp:await} $await g?;
+      if (connected > 0){ 
+         connected = connected - 1; $\label{pp:connected}$
+         Fut$\langle$int$\rangle$ f = w!ping(5);$\label{pp:fping}$
+         if (f.get == 5) client = w;$\label{pp:register}$
+      } 
+      return 0;
+  } 
+  Data getData(Worker w){$\label{pp:getD}$
+    if (client == w) return data;
+    else return null;
+  }
+}// end of class DB
+\end{lstlisting}
+\end{tabular}\vspace{.1cm}
+
+%\begin{minipage}{3.3cm} %width=\textwidth
+%{\hspace{-.25cm}\vspace{-.9cm}\includegraphics[scale=0.17]{derivations_barber.pdf} }
+%\caption{Pruning on working example} \label{fig:tree}
+%\end{minipage}
+\end{center}
+\caption{Working example. Communication protocol between a DB and a worker}
+\label{fig:examples}
+\end{figure}
+
+
+Deadlocks are one of the most common programming errors and they are
+therefore one of the main targets of verification and testing tools.
+%
+We consider a distributed programming model with explicit
+\emph{locations} (or distributed nodes) and \emph{asynchronous} tasks
+that may be spawned and awaited among locations. Each location
+represents a processor with a procedure stack and an unordered queue
+of pending tasks. Initially all processors are idle. When an idle
+processor's task queue is non-empty, some task is selected for
+execution, this selection is non-deterministic.
+%
+Let us see now our motivating example in Figure~\ref{fig:examples}
+which simulates a simple communication protocol between a database and
+a worker.  Our implementation has the \lst{main} method, and two
+classes \lst{Worker} and \lst{DB} implementing the worker and the
+database, respectively.  The \lst{main} method creates two distributed
+locations: the database and the worker, and (asynchronously) invokes
+methods \lst{register} and \lst{work} on each of them,
+respectively. The \lst{work} method of a worker simply accesses the
+database (invoking asynchronously method \lst{getData}) and then
+\emph{blocks} until it gets the result, which is assigned to its
+\lst{data} field. The instruction \lst{get} blocks the execution in
+the current location until the awaited task has terminated. We use
+future variables \cite{deboer07esop-short,flanagan95:futures} to detect the
+termination of asynchronous tasks.
+%%
+The \lst{register} method of the database makes a call to
+\lst{getData} and waits for its execution.  Once it has finished, it
+checks if the number of possible connections is bigger than 0. In that
+case \lst{connected} is decreased by one, and the database makes sure
+that the worker is online. This is done by invoking asynchronously
+method \lst{ping} with a concrete value and blocking until it gets the
+result with the same value. Then, the database registers the provided
+worker reference storing it in its \lst{client} field.
+%%
+Method \lst{getData} of the database returns its \lst{data} field if
+the caller worker is registered, otherwise it returns
+\lst{null}. Finally, method \lst{makesConnection} sets the field
+\lst{connected} to $3$.
+%
+Depending on the sequence of interleavings, the
+execution of this program can finish: (1) as one would expect, i.e.,
+with \lst{worker.data = db.data}, (2) with \lst{w.data = null} if
+\lst{getData} is executed before the assignment at line
+\ref{pp:register}, or, (3) in a deadlock.
+
+
+% Our starting point is the symbolic execution framework for
+% distributed concurrent systems in \cite{} \fixme{toMI: crear una
+% cita para el TPLP y citar tb el ATVA con Puri} which is able to
+% symbolically execute a method from the provided initial context.
+% For instance,
+
+We have recently proposed a deadlock detection
+framework~\cite{AlbertGI16b-short,AlbertGI17_techrep} that combines static
+analysis and symbolic execution based
+testing~\cite{DBLP:conf/hvc/AgarwalWS05,AlbertGI16b-short,DBLP:conf/icst/ChristakisGS13,DBLP:conf/sigsoft/JoshiNSG10}. The
+deadlock analysis (for instance, \cite{FloresAG13-short}) is first used to obtain
+descriptions of potential deadlock cycles which are then used to guide
+the testing process. % in order to find associated deadlock traces in
+% case there is a deadlock, or otherwise prove deadlock freedom.
+The resulting deadlock detection framework hence can: (i) show
+deadlock presence, in which case a concrete test-case and trace are
+obtained, and (ii) prove deadlock freedom (up to the symbolic
+execution exploration limit).
+%
+% Our focus is on deadlock detection by using symbolic execution
+% \cite{DBLP:conf/hvc/AgarwalWS05,AlbertGI16b,DBLP:conf/icst/ChristakisGS13,DBLP:conf/sigsoft/JoshiNSG10},
+% i.e., we aim at symbolically executing a given distributed system in
+% order to catch potential deadlocks that might occur during its
+% execution.
+% %
+%
+However, the symbolic execution phase needs to start from a concrete
+initial distributed context, i.e., a set of locations and their
+initial tasks.
+%
+% Such symbolic execution may start from a given initial context that,
+% in a distributed system, includes a set of locations, \fixme{byEA: que
+%   significa las conexiones? las variables futuras?}  their connections
+% and the initial tasks.
+In our example, such an initial context is provided by the \lst{main}
+method, which creates a \lst{Database} and a \lst{Worker} location,
+and schedules a \lst{work} task on the worker with the database as
+parameter, and, a \lst{register} task on the database with the worker
+as parameter. This is however only one out of the possible contexts,
+and, of course, it could be the case that it does not expose an error
+that occurs in other contexts (for instance, it does not manifest any
+deadlock). This clearly limits the framework potential.
+
+
+% a completely \emph{unknown context}, generating as output a set of
+% concrete input states and their corresponding output states.
+
+A fundamental challenge for a symbolic execution framework of
+distributed programs is to automatically and systematically generate
+\emph{relevant} distributed contexts for the type of error that it
+aims at detecting. This would allow for instance applying symbolic
+execution for system and integration testing.
+%
+The generation of relevant contexts involves two challenging aspects:
+(1) A first challenge is related to the elimination of redundant
+(useless) contexts.  Observe that there is a combinatorial explosion
+on the different possible distributed contexts that can be generated
+when one considers all possible types and number of distributed
+locations and tasks within them.  Therefore, it is crucial to provide
+the \emph{minimal} set of initial contexts that contains only one
+representative of  equivalent contexts. 
+%
+%some support so that the process can focus on the \emph{most general}
+%contexts filtering out other, \emph{less general}, ones as soon as
+%possible. % This would include focusing on the most
+% general contexts while other less general ones are discarded (since
+% the derivations produced by the most general ones include those
+% produced by the less general ones).\fxnote{byMZ: Check this last
+% sentence and possibly remove or move afterwards.}
+(2) For the particular type of error that one aims at detecting, an
+additional challenge is to be able to only generate initial contexts
+in which the error can occur.  
+% In the example, deadlock happens when both \lst{register} and
+% \lst{work} start executing before \lst{getData} and
+% \lst{ping}. Then, both worker and db are blocked waiting for the
+% termination of \lst{getData} and \lst{ping}, respectively, and they
+% will never succeed.
+%
+In the case of generating initial contexts for deadlock detection in
+our working example, this would mean generating for instance, a context
+with a database location and some worker location with a scheduled
+\lst{work} task and a \lst{register} task on the database for it,
+i.e., the context created by the \lst{main} method. For instance, contexts
+that do not include both tasks would be useless for deadlock
+detection. Let us observe that if the assignment at
+Line~\ref{pp:makestrue} is changed to assign $0$, then the initial
+contexts must also include a \lst{makesConnection} task, otherwise no
+deadlock will be produced.
+%
+Interestingly, deadlock analyses provide
+\cite{FloresAG13-short,DBLP:conf/concur/GiachinoKL14,DBLP:journals/sosym/GiachinoLL16}
+potential \emph{deadlock cycles} which contain the possibly
+conflicting task interactions that can lead to deadlock. This
+information will be used to help our framework anticipate this
+information and discard initial distributed contexts that cannot lead
+to deadlock from the beginning.  Briefly, the main contributions of
+this work are twofold:
+%
+\begin{itemize}
+\item We introduce the concept of \emph{minimal} set of initial
+  contexts and extend a static testing framework to automatically and
+  systematically generate them.
+\item We present a deadlock-guided approach to effectively generate
+  initial contexts for deadlock detection.
+\end{itemize}
+In an extended version of this work, we will validate experimentally
+our proposal and prove its soundness formally.
+

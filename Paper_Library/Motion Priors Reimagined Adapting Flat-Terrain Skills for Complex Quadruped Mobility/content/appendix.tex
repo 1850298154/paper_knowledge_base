@@ -1,0 +1,271 @@
+\section*{Appendix}
+\section{Training Details} 
+
+\subsection{Details for FLD Model Training} \label{sec:detail_fld}
+As mentioned in \secref{sec:fld_model_and_low_level}, we train FLD model and use the FLD encoder to train low-level policy. 
+The trained FLD encoder, through the propagation of latent dynamics, concurrently generates embeddings for global periodic parameters $\theta_t=(f_t, a_t, b_t)$, as well as for local phase states $\phi_t$ extracted from motion clips.
+The global parameters $f_t$, $a_t$, and $b_t$ correspond to the frequency, amplitude, and offset of the latent trajectories. 
+The parameterization leverages an autoencoder-like architecture to explicitly model the latent dynamics using a time-invariant frequency $f_t$ and a fixed time step $\Delta t$ with an autoencoder-like structure, as defined by:
+\begin{equation}
+    \mathbf{z}_t=(\theta_t, \phi_t) = \mathbf{enc}(\mathbf{s}_t), \quad \mathbf{\hat{z}}_{t+i} = (\theta_t,\phi_t+if_t\Delta t),
+    \label{eq:fld_enc}
+\end{equation}
+\vspace{-0.5cm}
+\begin{equation}
+    \mathbf{\hat{s}}_{t+i} = \mathbf{dec}(\mathbf{\hat{z}}_{t+i}), \quad L^{FLD} = \sum_{i}^N \text{MSE}(\mathbf{s}_{t+i}, \mathbf{\hat{s}}_{t+i}).
+    \label{eq:fld_dec}
+\end{equation}
+Here, $\mathbf{s}$ denotes the original motion sequence and $\mathbf{z}$ is latent representation, while $\mathbf{enc}(\cdot)$, and $\mathbf{dec}(\cdot)$ correspond to the encoding, and decoding operations, respectively. 
+Our encoded state space comprises the base’s linear and angular velocities, the projected gravity vector in the robot base frame, and the joint positions.
+The overall loss $L^{FLD}$ is computed as the reconstruction error between the reference and predicted state sequences over $N$ consecutive segments, effectively capturing the motion’s global periodic features.
+For further details on the training hyperparameters and network architecture of the FLD model, refer to \tabref{tab:params_fld} to \tabref{tab:network_fld} and consult original FLD paper.
+% and consult~\citep{li2024fld}.
+
+\subsection{Reward Setup for Low-Level and High-Level Policy Training} \label{sec:reward_low_high_detail}
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[clip, trim=0cm 0cm 0cm 0cm,width=0.98\textwidth]{images/overview_training_terrains.pdf}
+    \caption{Overview of the training environment and terrain configuration for high-level policy. The setup includes diverse terrain types, boxes, stairs, rugged slopes, and high obstacles with the blue marker indicating the goal position.}
+    \label{fig:overview_Terrains}
+    \vspace{-0.4cm}
+\end{figure}
+
+The reward equations used for low-level policy and high-level policy are summarized in \tabref{tab:reward_lowlevel} to \tabref{tab:symbol}.
+
+\begin{table}[h!]
+    \centering
+    \caption{Reward Equations for Low-Level Policy}
+    \label{tab:reward_lowlevel}
+    \begin{tabular}{l|l}
+    \hline
+    \textbf{Name} & \textbf{Equation} \\ \hline
+    Linear Velocity Tracking & $2\exp{(-\norm{\mathbf{v}_{t}^b-\mathbf{v}_{t}^{b,ref}}^2)}$  \\
+    Angular Velocity Tracking & $0.8\exp{(-0.8\norm{\mathbf{w}_{t}^b-\mathbf{w}_{t}^{b,ref}}^2)}$ \\
+    Joint Position Tracking & $1.4\exp{(-2\sum_{i=1}^{12}(q_{t,i}-q_{t,i}^{ref})^2)}$ \\
+    Projected Gravity Tracking & $0.8\exp{(-3\norm{\mathbf{g}_t-\mathbf{g}_t^{ref}}^2)}$ \\
+    Action Rate & $-0.005\sum_{i=1}^{12}(a_{t,i}-a_{t-1,i})^2$ \\
+    Collision & $-\sum_{k\in \text{thigh, shanks}} c_k$ \\ 
+    Torque Limits & $-0.2\sum_{i=1}^{12}\text{max} (\tau_{t,i} - \tau_{lim}, 0)$ \\ 
+    Torques & $-0.00002\sum_{i=1}^{12} \tau_{t,i}^2$ \\ 
+    Joint Acceleration & $-0.00007\sum_{i=1}^{12}{\ddot{q}_{t,i}}^2$ \\ 
+    Feet Acceleration & $-0.0001\sum_{i=1}^4 \norm{\mathbf{v}_{t,i}^{f} - \mathbf{v}_{t-1,i}^{f}}^2$ \\ 
+    Contact Forces & $-0.005\sum_{i=1}^4{F_{t,i}^f}^2$ \\ 
+    \hline
+    \end{tabular}
+    \vspace{-0.2cm}
+\end{table}
+
+\begin{table}[h!]
+    \centering
+    \caption{Reward Equations for High-Level Policy}
+    \label{tab:reward_highlevel}
+    \begin{tabular}{l|l}
+    \hline
+    \textbf{Name} & \textbf{Equation} \\ \hline
+    Position Tracking & $15r_{reach}$ \\
+    Heading Velocity & $5r_{vel}$ \\
+    Joint Residual & $-0.1\sum_{i=1}^{12}(a^{res}_{t,i})^2$ \\
+    Action Rate & $-0.005\sum_{i=1}^{12}(a^{res}_{t,i}-a^{res}_{t-1,i}+a_{t,i}-a_{t-1,i})^2$ \\
+    Collision & $-\sum_{k\in \text{thigh, shanks}} c_k$ \\ 
+    Stand Still & $-2.5\norm{\mathbf{v}^b_t}^2-\norm{\mathbf{w}_t^b}^2$ \\ 
+    Stand Pose & $-0.2\sum_{i=1}^{12}(q_{t,i}-q_{i}^*)^2-5(g_{x,t}^2+g_{y,t}^2)$ \\ 
+    Torque Limits & $-0.2\sum_{i=1}^{12}\text{max} (\tau_{t,i} - \tau_{lim}, 0)$ \\ 
+    Termination & $-200$ \\ 
+    Torques & $-0.00002\sum_{i=1}^{12} \tau_{t,i}^2$ \\ 
+    Joint Acceleration & $-0.00007\sum_{i=1}^{12}{\ddot{q}_{t,i}}^2$ \\ 
+    Feet Acceleration & $-0.0001\sum_{i=1}^4 \norm{\mathbf{v}_{t,i}^{f} - \mathbf{v}_{t-1,i}^{f}}^2$ \\ 
+    Contact Forces & $-0.005\sum_{i=1}^4{F_{t,i}^f}^2$ \\ 
+    \hline
+    \end{tabular}
+    \vspace{-0.2cm}
+\end{table}
+
+\begin{table}[h!]
+    \centering
+    \caption{Symbols for \tabref{tab:reward_lowlevel} and \tabref{tab:reward_highlevel}}
+    \label{tab:symbol}
+    \begin{tabular}{l|l}
+    \hline
+    \textbf{Symbol} & \textbf{Description} \\ \hline
+    $\omega_{z}^b$ & Yaw base velocity \\
+    $c_k$ & 1 if body $k$ is in contact, 0 otherwise \\
+    $\mathbf{v}^b,\mathbf{v}^f_i$ & linear velocity vector of base and foot $i$ \\
+    $\mathbf{w}^b$ & Angular velocity vector of base \\
+    $q_{i} ,q_{i}^*,q_{i}^{ref}$ & actual, default and reference position of joint $i$ \\
+    $\ddot{q}_{i}$ & acceleration of joint $i$ \\
+    $\tau_{i}, \tau_{lim}$ & torque and torque limit of joint $i$ \\
+    $F_i^f$ & Contact force of foot $i$ \\ 
+    $\mathbf{g}, g_x, g_y$ & Projected gravity vector, projected gravity \\
+     & along x and y axis in robot frame \\ \hline
+    \end{tabular}
+\end{table}
+
+\subsection{Training Setup and Hyperparameters} \label{sec:hyper_low_high_detail}
+Hyperparameters for FLD model, low-level policy, high-level policy training are presented in~\tabref{tab:params_fld} to \tabref{tab:params_student}. 
+All simulations are performed in Isaac Gym \cite{makoviychuk2021isaac}. 
+Both the low-level policy and the high-level teacher policy are trained in parallel environments using the PPO algorithm~\citep{schulman2017proximalpolicyoptimizationalgorithms} on a single NVIDIA RTX 4090. 
+The low-level policy is trained exclusively on flat terrain, whereas the high-level policy is trained in the more complex environment illustrated in~\figref{fig:overview_Terrains}.
+\begin{table}[h!]
+    \centering
+    \caption{Training Hyperparameters for FLD}
+    \label{tab:params_fld}
+    \begin{tabular}{l|l}
+    \hline
+    \textbf{Configuration} & \textbf{Values} \\ \hline
+        Step Time Seconds & 0.02 \\
+        Latent Channel & 4 \\
+        Propagation Horizon & 30 \\ 
+        Trajectory Segment Length & 31 \\ 
+        Propagation Decay & 1.0 \\
+        Learning Rate & 0.0001 \\ 
+        Weight Decay & 0.0005 \\
+        Number of Mini-Batches & 20 \\\hline
+    \end{tabular}
+\end{table}
+\begin{table}[h!]
+    \centering
+    \caption{Network Architecture for FLD}
+    \label{tab:network_fld}
+    \begin{tabular}{l|l|l|l}
+    \hline
+    \textbf{Network} & \textbf{Layer} & \textbf{Output Size} & \textbf{Activation}\\ \hline
+        Encoder & Conv1d & 64 $\times$ 31 & ELU \\ 
+         & Conv1d & 64 $\times$ 31 & ELU \\ 
+         & Conv1d & 4 $\times$ 31 & ELU \\ \hline
+         Phase Encoder & Linear & 4 $\times$ 2 & Atan2 \\ \hline
+         Decoder & Conv1d & 64 $\times$ 31 & ELU \\ 
+          & Conv1d & 64 $\times$ 31 & ELU \\ 
+         & Conv1d & 27 $\times$ 31 & ELU \\ \hline
+         
+    \end{tabular}
+\end{table}
+
+\begin{table}[h!]
+    \centering
+    \caption{Training Hyperparameters for PPO}
+    \label{tab:params_ppo}
+    \begin{tabular}{l|l}
+    \hline
+    \textbf{Configuration} & \textbf{Values} \\ \hline
+    Actor and Critic Network & MLP \\
+     & Hidden Layer Size (512, 256, 128) \\
+    Robot Number & 4096 \\
+    Step Number per Policy Update & 48 \\
+    Entropy Coefficient & 0.002 \\
+    Learning Rate & adaptive \\ 
+    GAE-lambda & 0.95 \\
+    Discount Factor & 0.99 \\
+    Coefficient of KL Divergence & 0.01 \\
+    Clip Ratio & 0.2 \\
+    Mini Batch Size & 49152 \\ \hline
+    \end{tabular}
+\end{table}
+
+\begin{table}[h!]
+    \centering
+    \caption{Training Hyperparameters for Student Policy}
+    \label{tab:params_student}
+    \begin{tabular}{l|l}
+    \hline
+    \textbf{Configuration} & \textbf{Values} \\ \hline
+    Truncate Step for TBPTT & 15 \\
+    Learning Rate & 0.0005 \\ 
+    Number of Learning Epochs & 2 \\ 
+    % Coefficient of Behavior Loss & 1 \\ 
+    % Coefficient of Reconstruction Loss & 0.5 \\ 
+    \hline
+    \end{tabular}
+\end{table}
+
+\section{Additional Details for Experimental Results}
+\subsection{Additional Results for Low-Level Policy}
+\begin{figure}[h!]
+    \centering
+    \includegraphics[clip, trim=0cm 0cm 0cm 0cm,width=0.98\textwidth]{images/contact_state_low_level_corl.pdf}
+    \caption{Footfall sequence of motion skills learned in low-level policy.}
+    \label{fig:foot_sequence_low_level}
+    \vspace{-0.3cm}
+\end{figure}
+
+\Figref{fig:foot_sequence_low_level} shows the footfall patterns of three flat-terrain skills in low-level policy under different latent embedding commands.
+
+\subsection{Evaluation on High-Level Student Policy in Simulation} \label{sec:eval_student_policy_sim}
+
+We evaluate the high-level student policy with noisy observation in simulation and report its success rate for each terrain in Table \ref{tab:succ_rate_student}. For each terrain type, we run 100 trials with the goal placed 5 meters from the robot’s start in a random direction.
+
+\begin{table}[h!]
+    \centering
+    \caption{Success Rate of High-Level Student Policy in Simulation}
+    \label{tab:succ_rate_student}
+    \begin{tabular}{l|l}
+    \hline
+    \textbf{Terrain Type} & \textbf{Success Rate} \\ \hline
+    0.25m Stairs (Up) & 84/100 \\
+    0.25m Stairs (Down) & 85/100 \\
+    24-deg Slope (Up) & 90/100 \\ 
+    24-deg Slope (Down) & 95/100 \\ 
+    Random Boxes & 81/100 \\ 
+     Random Boxes with High Obstacles & 75/100 \\ 
+     Flat ground with High Obstacles & 90/100 \\ 
+     \hline
+    \end{tabular}
+\end{table}
+
+\subsection{Simulation Setup for Evaluation on Joint Residuals}
+As described in \secref{sec:highlevel}, we investigate how joint residuals vary across two terrain types, pyramid stairs and pyramid slopes, as the terrain difficulty progressively increases.
+The corresponding simulation setup is illustrated in \figref{fig:residual_terrain_levels}.
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[clip, trim=0cm 0cm 0cm 0cm,width=0.98\textwidth]{images/different_terrain_image_with_traj_new.png}
+    \caption{Overview of (a) pyramid stairs and (b) pyramid slope terrains with progressively increasing difficulty levels during inference. The blue marker indicates the goal position at the current frame which is moving from easier to more challenging terrain level, while the white arrow denotes the robot's walking direction. The red line traces an example trajectory of the robot’s base position.}
+    \label{fig:residual_terrain_levels}
+    \vspace{-0.3cm}
+\end{figure}
+
+\subsection{Additional Comparative Analysis on Energetic Efficiency}
+Building on the results in \secref{sec:com_baseline}, we perform a comparative analysis of energetic efficiency of our models and the baseline under similar reward settings.
+In this experiment, each model continually walks forward by following a moving goal position.
+\Figref{fig:baselineVSOurs} illustrates the Cost of Transport (CoT) on flat ground for the baseline and our two models, measured as the robot walks at varying speeds. 
+CoT is calculated using the following equation.
+\begin{equation}
+    CoT = \frac{\sum_i^{12}|\tau_{t,i}\dot{q}_{t,i}|}{mgv_{b}},
+\end{equation}
+where $m$ denotes the total mass of the robot, $g(=9.8 \mathrm{m/s^2})$ the gravity constant, $v_b$ the forward linear base velocity, $\dot q_{t,i}$ the velocity of joint $i$.
+
+Although our framework does not explicitly optimize the energy consumption in the reward terms, our two models trained with motion priors achieve a lower CoT. This likely reflects the baseline model’s insufficient constraints on vertical motion, whereas the incorporation of motion priors could naturally avoid those jumping gaits. Additionally, our comparison shows that removing residual regularization leads to a slight increase in CoT, probably due to the unconstrained residuals.
+
+These findings imply that the animal-like motion priors can have the potential to steer training toward energy efficient gaits. 
+However, further research is still needed to quantify this benefit and compare it against explicitly adding energy penalties to the reward functions.
+
+\begin{figure}[h!]
+    \centering
+        \includegraphics[clip, trim=0cm 0cm 0cm 0cm,width=0.55\textwidth]{images/cot_baseline_vs_ours_vs_norespen.pdf}
+    \caption{Energy efficiency comparison among three models: (i) the baseline RL model trained from scratch, (ii) our proposed framework trained with motion priors and a proper joint residual penalty ($w_{res}=-0.1$) (iii) a variant of our model without residual penalization ($w_{res}=0$). The evaluation spans a wide range of forward velocities achieved via varying maximum velocity commands $v_{cmd}$. The CoT is averaged over a 20-second period of continuous forward motion.}
+    \label{fig:baselineVSOurs}
+    \vspace{-0.5cm}
+\end{figure}
+
+\subsection{Training High-Level Policies with Minimal Reward Terms}
+\begin{table}[t!]
+    \centering
+    \caption{Reward Equations for High-Level Policy in Extended Experiments}
+    \label{tab:reward_highlevel_ext}
+    \begin{tabular}{l|l}
+    \hline
+    \textbf{Name} & \textbf{Equation} \\ \hline
+    Position Tracking & $15r_{reach}$ \\
+    Heading Velocity & $5r_{vel}$ \\
+    Joint Residual & $-0.5\sum_{i=1}^{12}(a^{res}_{t,i})^2$ \\
+    Collision & $-\sum_{k\in \text{thigh, shanks}} c_k$ \\ 
+    Termination & $-200$ \\ 
+    \hline
+    \end{tabular}
+    \vspace{-0.2cm}
+\end{table}
+To further investigate how effectively our framework reduces the effort required for reward shaping, we trained an additional high-level policy using a minimal set of reward terms (\tabref{tab:reward_highlevel_ext}), employing the same low-level motion priors. 
+As illustrated in the supplementary videos, the new policy also successfully achieves perceptive locomotion and local navigation using animal-like gaits across varied terrains, despite the minimal reward configuration. 
+Notably, unlike the model shown in the main paper, this simplified reward setup leads the policy to adopt a cantering gait rather than a walking gait. 
+With the integration of learned joint residuals, the new high-level policy can still effectively traverse challenging terrains while maintaining the cantering gait. 
+These results further confirm that our framework can efficiently produce high-level policies with natural, animal-like locomotion and local navigation across diverse terrains, all while reducing reward complexity and tuning effort.

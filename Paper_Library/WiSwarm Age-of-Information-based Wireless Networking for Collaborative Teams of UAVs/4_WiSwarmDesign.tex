@@ -1,0 +1,129 @@
+\section{WiSwarm: Design and Implementation}\label{sec.WiSwarm}
+
+In this section, we describe the design and implementation of WiSwarm which is an instantiation of the networking middleware for information freshness discussed in Sec.~\ref{sec.Middleware} tailored to a mobility tracking application. %An almost identical middleware can be used to enable the search and rescue and the automated exploration applications described in Sec.~\ref{sec.Examples}. %In the following, we describe the mobility tracking application and the design of the WiSwarm system.
+%\igor{First, describe the application: the UAVs, the moving objects on the ground, the goal, and the need for information freshness.
+%Then, design of WiSwarm. Start with the follower UAV. Then, describe the Leader Compute Node.}
+\subsection{Mobility Tracking Application}\label{sec.MobilityTracking}
+Consider a setting where multiple UAVs are tracking moving objects on the ground. Clearly, outdated information about the position of the objects has a direct impact on the tracking capability of the UAVs. Ideally, the UAVs would like to receive fresh information about the objects continuously. One simple system design that achieves this goal consists of UAVs with high on-board computational power that are able to process video frames acquired from their cameras to detect and track objects. The continuous stream of images is processed locally, adding almost no delay, which keeps the UAVs updated about the position of the objects. A critical drawback of this approach is the prohibitively high cost of deploying numerous UAVs with high on-board computational power. % may grow prohibitively high. 
+\begin{figure}
+	%\captionsetup{justification=centering}
+	\centering
+	\includegraphics[width=1.0\linewidth]{Images/Drones_Tracking.jpg}
+	%\vspace{-0.4cm}
+	\caption{Mobility tracking application implemented using multiple sensing-UAVs and a leader compute node.}
+	\label{figure.tracking-model}
+	%\vspace{-0.4cm}
+\end{figure}
+
+The separation of computing and sensing allows for more scalable system design - with one \emph{leader-node} that has plenty of on-board computational power, and numerous low-cost \emph{sensing-UAVs} that have little computational power but can effectively collect sensor data and communicate over a wireless network. Figure~\ref{figure.tracking-model} illustrates an example of this system design approach. In general, the leader node could be an UAV with a powerful on-board computer such as a Jetson TX2, a compute node located at the wireless edge, or even a cloud server performing high-speed inference and sending back control commands. %Computational offloading techniques to enhance the scale of multi-agent robotics applications have also been receiving recent interest in the robotics community \cite{chinchali2021network}.%The sensing UAVs could be equipped with different kinds of sensors, say cameras, LIDAR, GPS, etc. and a wireless communication system. 
+
+In our specific implementation of the mobility tracking application, the sensing-UAVs capture video of the immediate environment below them and send the captured video frames (without any pre-processing) to the leader compute node. The leader processes the received frames, infers the position of the objects, and sends trajectory updates to the sensing-UAVs via WiFi. %WiFi is an attractive choice since it is low-cost, well-established, and readily available in platforms such as Raspberry Pis and the Jetson TX2. %Notice that WiFi is employed in the various time-sensitive applications described in \cite{ }. 
+\emph{The main challenge of this design approach is to manage the limited wireless resources efficiently in order to keep information at the UAVs as fresh as possible.} WiSwarm, an instantiation of our networking middleware, ensures information freshness and scalable tracking performance by carefully controlling the flow of information over the network. 
+
+Next, we describe the different individual components involved in our application - the mobile objects to be tracked, the sensing-UAVs, the leader compute node. We also discuss how WiSwarm is implemented at the sensing-UAVs and the leader compute node. %Then, we discuss the implementation of WiSwarm.
+
+\subsection{Mobile Objects}\label{sec.MobileObjects}
+% \begin{figure}
+% 	%\captionsetup{justification=centering}
+% 	\centering
+% 	\includegraphics[width=0.95\linewidth]{Images/Target_w_and_without_tag.png}
+% 	\vspace{-0.4cm}
+% 	\caption{An autonomous car with and without the identifying ArUco marker on top.}
+% 	\label{fig.target}
+% 	\vspace{-0.4cm}
+% \end{figure}
+
+We use small autonomous cars equipped with RasPis (3B) as the moving objects whose mobility is tracked by the UAVs. Figure~\ref{fig.sensor-uav-and-car}(b) shows one such car, with the ArUco marker tag on top, which is used for uniquely identifying and tracking the position of the cars by the leader compute node. 
+
+%Sensing-UAVs capture video of the environment below them and send these frames to the central node for processing.  The central node attempts to locate the ArUco marker tags in the received video frames and send future trajectory updates. For our tracking application, we assign each tag/car to be followed by a unique UAV beforehand.
+
+\subsection{Follower Sensing-UAVs}\label{sec.FollowerUAVs}
+% \begin{figure}
+% 	%\captionsetup{justification=centering}
+% 	\centering
+% 	\includegraphics[width=0.95\linewidth]{Images/drone_labeled.png}
+% 	\vspace{-0.4cm}
+% 	\caption{Sensing-UAV}
+% 	\label{fig.sensor-uav}
+% 	\vspace{-0.4cm}
+% \end{figure}
+\begin{figure}[t]
+\centering
+\subfloat[]
+{\includegraphics[width=0.59\columnwidth]{Images/drone_labeled_2.png}}%\label{demofig}
+%\hspace{0.5cm}
+\subfloat[]
+{\includegraphics[width=0.39\columnwidth]{Images/Target_with_tag.jpg}}%\label{hist_1a} 
+%\vspace{-0.2cm}
+\caption{(a) Sensing-UAV. (b) Autonomous car with an identifying ArUco marker on top.} 
+\label{fig.sensor-uav-and-car}
+%\vspace{-0.5cm}
+\end{figure}
+%\subsubsection{Subsystems}
+The sensing-UAV consists of two subsystems: a quadcopter drone and a RasPi (Zero W). Figure~\ref{fig.sensor-uav-and-car}(a) shows a sensing-UAV with a RasPi on board the quadcopter drone, along with its sensing and communication peripherals. %Figure~\ref{fig.follower} provides a system level overview of the sensing-UAV along with WiSwarm.
+
+RasPi (Zero Ws) have very little computation capability (1 GHz single-core CPU and 512 MB RAM), but can effectively interact with multiple sensors and also communicate over WiFi. They are also extremely cost-efficient (\$10), making them ideal for use in the sensing-UAVs. Each UAV is also equipped with a micro-controller unit (MCU) that runs state estimation and flight control algorithms. The state estimator combines measurements from an on-board inertial measurement unit (IMU) with global position and orientation measurements.
+These global measurements are obtained from a motion capture system and received by an Xbee WiFi module mounted on the UAV.
+When motion capture data is not available, the Xbee module can be replaced by an alternative data source, such as a global navigation satellite system (GNSS) receiver.
+%When prompted, the position and orientation estimate is sent to the Pi Zero W over an asynchronous serial connection that is also used to send time-stamped waypoints (defined in global coordinates) from the Pi Zero W to the vehicle MCU.
+%The waypoints are interpolated to obtain a continuous trajectory that is tracked using the flight control algorithm described in \cite{tal2020accurate}.
+%\color{black}
+
+The RasPi is connected to a camera that captures video of the area below the UAV. Along with each frame, the RasPi also collects the position and orientation at which the frame was collected by asking for this information from the MCU using an asynchronous serial connection. Following the discussion in Sec.~\ref{sec.Queueing}, we know that fresh frames are the most useful for tracking, so we set the queuing discipline at the sensing-UAVs to be LIFO and the buffer size to be such that it can accommodate only one frame at a time. %Thus, WiSwarm stores the captured video frames, time-stamps, position and orientation in an application layer LIFO queue. %ready to be fragmented and sent to the leader compute node for inference upon request. 
+
+The RasPi is connected to the leader compute node over 2.4 GHz WiFi using a high gain (8 dBi) antenna. Whenever the RasPi receives a polling packet, it transmits the most recent update in its LIFO queue to the compute node. %The application at the compute node locates the target to be tracked in the captured frame and uses the associated location information to compute a list of future waypoints and time-stamps. WiSwarm at the compute node then broadcasts this control information in the next polling packet. The control information denotes the times and locations (in global coordinates) where the drone should be in the future to follow the target.
+The RasPi also collects the control information transmitted by the compute node which contains the times and locations (in global coordinates) where the UAV should be in the future in order to track the moving object. The RasPi sends these waypoints over the serial connection to the UAV MCU. The UAV MCU then plans and executes a trajectory that reaches the specified waypoints at the specified future time instants. It does this by interpolating the waypoints to obtain a continuous trajectory that is followed using the flight control algorithm described in \cite{tal2020accurate}. This completes the control loop. 
+
+
+%\igor{Describe the functions and information flow. In Section~\ref{sec.MiddlewareDesign}, we described the networking middleware and its mechanisms in general. Here, we describe the details of the middleware implementation as WiSwarm. We should describe the specific functions and information flow with the contents of the messages. When appropriate, we might want to "refresh" the reader's memory or point to descriptions from Section~\ref{sec.MiddlewareDesign}. Near the end of this subsection, we describe the hardware in which the functions were implemented.}
+% \begin{figure}
+% 	%\captionsetup{justification=centering}
+% 	\centering
+% 	\includegraphics[width=0.98\linewidth]{Images/sensing-UAV-systems.png}
+% 	\vspace{-0.4cm}
+% 	\caption{System level overview of the sensing-UAV with WiSwarm.}
+% 	\label{fig.follower}
+% 	\vspace{-0.4cm}
+% \end{figure}
+ 
+%Videos frames captures by the camera are stored in a Last-Come-First-Serve (LCFS) queue. A rate parameter controls how frequently the WiSwarm application reads fresh data from the camera stream and updates this LCFS queue. For our application, we use a video frame resolution of 160x160 pixels. Importantly, we do not perform any compression or encoding of the video frames, since the Pi Zero W is not capable of doing so at a fast enough rate. Thus, when communicating over the WiFi network, we send unencoded 160x160 pixels of grayscale images in the YUV format (25 kB per image). 
+
+
+
+
+\subsection{Leader Compute Node}\label{sec.LeaderNode}
+%\igor{when control packets are sent, weight update mechanism}
+%The leader compute node receives video frames from all the sensing UAVs and is responsible for processing them and sending back control commands. %It also implements the dynamic application centric scheduler that decides which sensing-UAV to poll for a new update at every transmission opportunity. %\autoref{fig.leader} provides an overview of the application layer and WiSwarm at the leader compute node.
+% \begin{figure}
+% 	\captionsetup{justification=centering}
+% 	\centering
+% 	\includegraphics[width=0.98\linewidth]{Images/central-overview.png}
+% 	\vspace{-0.4cm}
+% 	\caption{System level overview of the leader compute node with WiSwarm.}
+% 	\label{fig.leader}
+% 	\vspace{-0.4cm}
+% \end{figure}
+The compute node collects video-frames received from sensing-UAVs in response to polling requests. These video-frames are stored in separate LIFO queues - one for each sensing-UAV. The compute node runs an image processing thread which goes over the queues maintained by WiSwarm in a round-robin manner and processes the received video-frames whenever it finds a non-empty queue.
+
+For each video-frame, the image processing thread attempts to locate the car that the UAV was assigned to track. If the car is found, it uses the relative location of the tag in the frame and the absolute position and orientation at which the frame was captured to compute the global coordinates of the car. The thread also keeps a record of the last known locations of the car. Using the current and previous locations, the image processing thread obtains: (i) the relative velocity between the car and the sensing UAV; and (ii) a list of future waypoints and the time-stamps at which it expects the car to reach these coordinates. In our implementation, we use a simple linear extrapolation scheme to predict future waypoints.
+
+%Upon completion of processing, t
+The image processing thread sends the  waypoints and time-stamps to WiSwarm along with information about the relative velocity between the car and the sensing-UAV. WiSwarm uses the relative velocity information to update its  application-defined priority weights %according to %the following equation %Intuitively, objects with higher relative velocities need urgent scheduling and so should have higher weight.
+\begin{equation}
+   \textstyle w_i(t) \leftarrow \alpha w_i(t^-) + (1-\alpha) \hat{v}_i(t),
+\end{equation}  
+where $\hat{v}_i(t)$ is the estimate of relative velocity between the car and the associated sensing UAV, and $\alpha = 0.8$. Since velocity estimates are noisy and car velocities are time-varying, we use an exponential moving average motivated by the adaptive AoI-based scheduling algorithms proposed in \cite{tripathi2021online}. WiSwarm updates link reliabilities $p_i(t)$ by using the number of successful fragment deliveries, as described in Sec.~\ref{sec.MiddlewareDesign}. 
+
+With updated application weights $w_i(t)$ and link reliabilities $p_i(t)$, WiSwarm uses Whittle's Index Policy \eqref{eq:AoI_whittle} to select the sensing-UAVs that need to be scheduled for transmission most urgently. %using the Whittle's Index policy described earlier in \eqref{eq:AoI_whittle}. 
+Together with the unicast transmission of a polling packet, WiSwarm broadcasts the \emph{most recent} list of future waypoints and time-stamps for every sensing-UAV. This repeated broadcast ensures redundancy in the delivery of control information. %Note that control information is broadcast to every UAV in every polling cycle allowing us to have redundancy.% in case a previous polling packet was lost.%from \autoref{sec.Scheduler}:
+% \begin{equation}
+% 	\text{poll UAV id} = \underset{i}{\operatorname{argmax}} \biggl\{ w_i p_i A^2_i(t) \biggr\}.
+% \end{equation}
+% Here, $w_i$ is the scheduling weight, $p_i$ is the link reliability, and $A_i(t)$ is the current AoI of the $i^{th}$ sensing-UAV,
+
+% Upon deciding which UAV to poll, WiSwarm broadcasts a polling packet which contains the id of the UAV. At the sensing-UAV, WiSwarm keeps hearing for polling packets and whenever it receives packet beginning with its own id, it transmits a fresh update from its LIFO queue. Appended with the polling packet is the most recent list of future waypoints and time-stamps computed for each sensing-UAV. Since control information is broadcast to every UAV in every polling cycle it allows us to have redundancy, in case a previous polling packet with relevant control information was lost.
+%\color{blue}
+%Vishrant - comment on queues for processing maybe - ARtags can be detected efficiently - in experiments central node capable of processing 120 frames per second, Pi Zero only 5-6 frames per second - control information sent with polling command (might be better to include this in Sec 4.4)
+%\color{black}
+
+%\subsection{WiSwarm}

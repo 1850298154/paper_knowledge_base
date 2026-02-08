@@ -1,0 +1,222 @@
+\section{Generative Behavior Reasoning}
+\label{sec:user_behavior_augmentation}
+
+
+\begin{figure}
+    \centering
+    \includegraphics[width=\textwidth]{figs/dllm.pdf}
+    \caption{The two-stage process for generative behavior reasoning. \textbf{(1) Where: Beyond-Log Behavior Location.} A two-step filtering pipeline pinpoints potential discontinuities, starting with a rule-based filter (e.g., temporal or category gaps) followed by a model-based filter that uses a standard recommender to identify low-probability transitions. \textbf{(2) What: Bidirectional Implicit Behavior Reasoning.} A DLLM-based model processes the sequence. During training, it learns to reconstruct masked in-log behaviors ([M]); during inference, it performs offline generation to fill in the identified beyond-log discontinuities ([F]).}
+    \label{fig:dllm}
+\end{figure}
+
+
+While the preceding section addressed semantic deficiency through knowledge-enhanced item representations, recommender systems face a second fundamental limitation identified in Section~\ref{sec:intro}: \textbf{systemic blindness to beyond-log user interest}. Platform logs capture only in-domain interactions within system boundaries, missing substantial portions of users' decision-making processes that occur outside the platform. This incomplete observational data creates biased input signals that constrain models' ability to infer true user preferences.
+
+To address this limitation, we introduce a \textbf{GBR} (\textbf{G}enerative \textbf{B}ehavior \textbf{R}easoning) framework that infers beyond-log behaviors by reasoning based on observed interactions and world knowledge. 
+Formally, given observed behavioral sequence $\mathcal{B}_u^{\text{obs}} = \{b_1, b_2, \ldots, b_T\}$, our objective is:
+\begin{equation*}
+p(\mathcal{P}, \mathcal{B}_u^{\text{aug}} \mid \mathcal{B}_u^{\text{obs}}, \mathcal{K}_{\text{world}}) = p(\mathcal{P} \mid \mathcal{B}_u^{\text{obs}}) \cdot p(\mathcal{B}_u^{\text{aug}} \mid \mathcal{P}, \mathcal{B}_u^{\text{obs}}, \mathcal{K}_{\text{world}})
+\end{equation*}
+where $\mathcal{P} = \{p_1, \ldots, p_K\}$ represents detected missing behavior positions, $\mathcal{B}_u^{\text{aug}} = \{b_{p_1}^{\text{aug}}, \ldots, b_{p_K}^{\text{aug}}\}$ denotes augmented behaviors, and $\mathcal{K}_{\text{world}}$ represents world knowledge encoded in LLMs. This factorization decomposes the problem into: \textbf{(1)} detecting \textit{where} missing behaviors likely occurred via $p(\mathcal{P} \mid \mathcal{B}_u^{\text{obs}})$, and \textbf{(2)} generating \textit{what} content should fill those gaps via $p(\mathcal{B}_u^{\text{aug}} \mid \mathcal{P}, \mathcal{B}_u^{\text{obs}}, \mathcal{K}_{\text{world}})$.
+
+This formulation introduces two critical challenges:
+
+\begin{itemize}
+    \item \textbf{Challenge 1: Beyond-Log Behavior Localization.} Given ultra-long user behavioral sequences, how can we efficiently identify positions where beyond-log activities likely occurred without observable ground-truth markers?
+    
+    \item \textbf{Challenge 2: Unsupervised Behavior Generation.} How can we guide LLMs to generate semantically plausible augmentations without direct supervision, given that beyond-log behaviors lack ground-truth labels by definition?
+\end{itemize}
+
+To address these challenges, we propose a two-stage framework: \textbf{Beyond-Log Behavior Location} (Section~\ref{sec:discontinuity_detection}) identifies candidate missing positions through hybrid rule-based and model-based filtering grounded in temporal, semantic, and collaborative coherence principles. \textbf{Bidirectional Implicit Behavior Reasoning} (Section~\ref{sec:bidirectional_reasoning}) then leverages Diffusion Large Language Models to generate contextually grounded behavioral completions through semi-supervised learning. This approach transforms incomplete observational data into enriched behavioral representations that capture both explicit platform interactions and inferred beyond-log preferences.
+
+
+
+\subsection{Beyond-Log Behavior Location}
+\label{sec:discontinuity_detection}
+
+To identify positions in user behavioral sequences where missing interactions likely occurred, we introduce a \textbf{behavior discontinuity location} mechanism grounded in three behavioral assumptions derived from cognitive and temporal constraints on human decision-making:
+
+\begin{itemize}
+    \item \textbf{Assumption 1: Temporal Continuity.} Users' continuous interactions within a platform exhibit bounded temporal gaps. From a physical time perspective, large temporal intervals between consecutive actions suggest intervening activities that occurred outside the observed log, as users are unlikely to remain inactive for extended periods without engaging in alternative consumption channels. 
+    \item \textbf{Assumption 2: Cognitive Inertia.} Human users exhibit preference stability within short interaction windows—consecutive behaviors typically involve items from semantically related categories. Abrupt transitions between vastly different product categories (\textit{e.g.}, from electronics to groceries) incur high cognitive switching costs, suggesting that such transitions may indicate missing intermediate behaviors that would provide smoother semantic transitions.
+    \item \textbf{Assumption 3: Collaborative Coherence.} Platform-wide co-occurrence patterns encode statistical regularities about which items naturally appear together in user sessions. Behavioral sequences that violate these collaborative patterns, \textit{i.e.}, where consecutive items exhibit low co-occurrence frequency across the user population, may indicate missing intermediate interactions that would restore statistical plausibility.
+\end{itemize}
+
+
+Based on these hypotheses, we propose a \textbf{hybrid coarse-to-fine location pipeline} that combines rule-based filtering for computational efficiency with model-based refinement for statistical rigor.
+
+\paragraph*{Stage 1: Rule-Based Coarse Filtering.}
+We perform rapid candidate detection by identifying positions $(t, t+1)$ where consecutive behaviors $b_t$ and $b_{t+1}$ satisfy \textbf{\textit{both}} of the following conditions:
+
+\textbf{(1) Temporal Discontinuity:} The time interval exceeds a domain-specific threshold:
+\begin{equation*}
+\Delta t_{t, t+1} = \text{timestamp}(b_{t+1}) - \text{timestamp}(b_t) > \tau_{\text{time}}
+\end{equation*}
+where $\tau_{\text{time}}$ is empirically set based on platform activity patterns.
+
+\textbf{(2) Category Discontinuity:} The primary categories of consecutive items differ:
+\begin{equation*}
+\text{category}(b_t) \neq \text{category}(b_{t+1})
+\end{equation*}
+where $\text{category}(\cdot)$ denotes the top-level category in the platform's taxonomy.
+
+This coarse filtering efficiently reduces the candidate space from $T-1$ potential positions to a manageable subset $\mathcal{C} = \{(t_1, t_1+1), \ldots, (t_M, t_M+1)\}$ where $M \ll T$.
+
+\paragraph*{Stage 2: Model-Based Fine-Grained Filtering.}
+For the remaining candidates in $\mathcal{C}$, we employ collaborative filtering recommender to assess statistical coherence. We leverage any off-the-shelf sequential recommendation model $f(\cdot)$ trained on platform interaction data (\textit{e.g.}, Swing~\citep{yang2020large}, SASRec~\citep{kang2018self}) to perform next-item prediction.
+
+Specifically, given a candidate position $(t_i, t_i+1) \in \mathcal{C}$, we evaluate whether the observed next item $b_{t_i+1}$ aligns with the model's predicted preferences. The model generates a ranked list of candidate items based on the behavioral context:
+\begin{equation*}
+\text{rank}(b_{t_i+1} \mid b_{t_i}, \mathcal{B}_u^{<t_i})
+\end{equation*}
+where $\mathcal{B}_u^{<t_i} = \{b_1, \ldots, b_{t_i-1}\}$ denotes the interactions preceding $t_i$, and $\text{rank}(\cdot)$ represents the position of item $b_{t_i+1}$ in the model's ranked result. A high rank (\textit{i.e.}, the observed item appears far down the prediction list) indicates that the transition $(b_{t_i} \to b_{t_i+1})$ is statistically implausible under learned collaborative patterns, suggesting the presence of missing intermediate behaviors.
+
+The final set of detected discontinuity positions is:
+\begin{equation*}
+\mathcal{P} = \left\{ (t_i, t_i+1) \in \mathcal{C} : \text{rank}(b_{t_i+1} \mid b_{t_i}, \mathcal{B}_u^{<t_i}) > N \right\}
+\end{equation*}
+where $N$ is a threshold that controls detection strictness: smaller values of $N$ impose looser criteria, flagging more transitions as potential discontinuities (any item ranking outside a small top-$N$ is considered implausible), while larger values impose stricter criteria, retaining only the most statistically anomalous transitions. In practice, $N$ can be calibrated based on domain-specific tolerance for false positives versus false negatives in discontinuity detection.
+
+
+This hybrid detection mechanism efficiently identifies positions where temporal, semantic, and collaborative signals collectively suggest missing behaviors, providing high-quality input positions for subsequent LLM-based augmentation while maintaining computational tractability for industrial-scale deployment. The detected positions $\mathcal{P}$ are then passed to the behavior augmentation module (Section~\ref{sec:bidirectional_reasoning}), which generates semantically plausible completions grounded in both local behavioral context and global world knowledge.
+
+
+
+\subsection{Bidirectional Implicit Behavior Reasoning}
+\label{sec:bidirectional_reasoning}
+
+Having located candidate missing positions $\mathcal{P}$ through discontinuity detection, we now face a critical difficulty: \textit{by definition, we lack ground-truth labels for unobserved behaviors}. Unlike traditional supervised learning where explicit labels guide training, augmenting missing behaviors requires reasoning about what \textit{could have occurred} based on observable context.
+
+To overcome this challenge, we formulate behavior augmentation as a \textbf{semi-supervised generative task} that combines self-supervised learning on automatically constructed labeled data with inference on unlabeled missing positions. Our approach leverages Diffusion Large Language Models (DLLM) as the generative backbone~\citep{nie2025large,wu2025fast,liu2025dllm}, capitalizing on their extensive pre-trained world knowledge and bidirectional reasoning capabilities to synthesize contextually coherent behaviors. This section formalizes the problem setup, describes the construction of self-supervised training data, and details the DLLM-based training and inference procedures.
+
+\subsubsection{Problem Formalization and Self-Supervised Data Construction}
+
+\paragraph*{Notation and Data Partitioning.}
+Given user behavioral sequence $\mathcal{B}_u^{\text{obs}} = \{b_1, b_2, \ldots, b_T\}$ and detected discontinuity positions $\mathcal{P} = \{(t_1, t_1+1), \ldots, (t_K, t_K+1)\}$ from Section~\ref{sec:discontinuity_detection}, we partition missing positions into two categories:
+
+\begin{itemize}
+    \item \textbf{Unlabeled Missing Positions} $\mathcal{P}_U$: Positions where we lack ground-truth content and seek to generate augmentations. These correspond to genuinely unobserved behaviors.
+    \item \textbf{Self-Supervised Labeled Positions} $\mathcal{P}_L$: Positions identified from observed sequences where removing an item creates a statistically significant discontinuity. These serve as proxy supervision signals where the ground-truth is known (\textit{i.e.}, the originally observed item).
+\end{itemize}
+
+To operationalize this partition, we introduce a learnable special token \textcolor{purple}{\texttt{[FILL]}} that serves as a unified placeholder for both labeled and unlabeled missing positions. 
+Therefore, the augmented sequence representation can be formalized as:
+\begin{equation*}
+\mathcal{B}_u^{\text{aug}} = \{b_1, \ldots, b_{t_1}, \texttt{[FILL]}, b_{t_1+1}, \ldots, b_{t_K}, \texttt{[FILL]}, b_{t_K+1}, \ldots, b_T\}
+\end{equation*}
+where $\texttt{[FILL]}$ tokens appear at positions in $\mathcal{P} = \mathcal{P}_U \cup \mathcal{P}_L$.
+
+\paragraph*{Self-Supervised Label Construction.}
+To construct $\mathcal{P}_L$, we leverage \textbf{Assumption 3: Collaborative Coherence} from Section~\ref{sec:discontinuity_detection}. Specifically, for an observed subsequence $\ldots, b_{t-1}, b_t, b_{t+1}, \ldots$ within $\mathcal{B}_u^{\text{obs}}$, if item $b_t$ plays a critical role in maintaining collaborative coherence, its removal should significantly degrade the predictability of $b_{t+1}$ given the preceding context.
+
+Formally, let $f_\psi(\cdot)$ denote any pre-trained recommender model. We evaluate the importance of $b_t$ by comparing the predicted probability of the next item with and without $b_t$:
+\begin{equation*}
+\Delta p_t = p_\psi(b_{t+1} \mid \mathcal{B}_u^{<t+1}) - p_\psi(b_{t+1} \mid \mathcal{B}_u^{<t})
+\end{equation*}
+where $\mathcal{B}_u^{<t+1} = \{b_1, \ldots, b_t\}$ denotes the sequence up to position $t$. A large positive $\Delta p_t$ indicates that $b_t$ is critical for predicting $b_{t+1}$ under the learned collaborative patterns.
+
+We construct the self-supervised labeled set as:
+\begin{equation*}
+\mathcal{P}_L = \left\{ t : \Delta p_t > \tau_{\text{coh}} \right\}
+\end{equation*}
+where $\tau_{\text{coh}}$ is a threshold for balancing coverage and label quality. For positions in $\mathcal{P}_L$, the ground-truth augmentation is the originally observed item $b_t$, making them suitable for supervised training.
+
+\paragraph*{Semi-Supervised Training Data Construction.}
+With $\mathcal{P}_L$ and $\mathcal{P}_U$ defined, we construct the training corpus by replacing items at positions in $\mathcal{P}_L$ with $\texttt{[FILL]}$ tokens while retaining their ground-truth labels. The resulting sequence contains a mixture of:
+\begin{itemize}
+    \item \textbf{Observed Items}: Items at positions outside $\mathcal{P} = \mathcal{P}_L \cup \mathcal{P}_U$, which remain unchanged.
+    \item \textbf{Labeled Fill Tokens}: $\texttt{[FILL]}$ tokens at positions in $\mathcal{P}_L$, where the ground-truth item is known.
+    \item \textbf{Unlabeled Fill Tokens}: $\texttt{[FILL]}$ tokens at positions in $\mathcal{P}_U$ for future imputation.
+\end{itemize}
+
+This formulation enables semi-supervised learning: the model learns to predict masked items at $\mathcal{P}_L$ positions (supervised signal) while simultaneously reasoning about the broader sequential context, allowing it to generalize to unlabeled positions $\mathcal{P}_U$ during inference.
+
+
+\subsubsection{DLLM-Based Generative Training Framework}
+
+To achieve behavior augmentation, we adopt a \textbf{Diffusion Large Language Model (DLLM)} architecture. DLLMs possess \textbf{inherent bidirectional contextual reasoning capabilities} through their diffusion-based generation process, enabling simultaneous conditioning on both preceding and subsequent behavioral context when inferring missing interactions. Moreover, pre-trained DLLMs encode extensive world knowledge about item semantics and cross-domain consumption patterns, making them well-suited for reasoning about behaviors that occur outside platform boundaries.
+
+\paragraph*{Item Representation Adaptation.}
+To integrate the knowledge-enhanced item representations $\mathbf{h}_i^t$ from Section~\ref{sec:semantic_item_encoding} with the DLLM, we introduce a lightweight adapter network that projects semantic representations into the DLLM's embedding space:
+\begin{equation*}
+\mathbf{e}_i^{\textit{lm}} = \text{Adapter}(\mathbf{h}_i^t) \in \mathbb{R}^{d_L}
+\end{equation*}
+where $d_L$ denotes the DLLM's embedding dimension. For the special token $\texttt{[FILL]}$, we introduce a dedicated learnable embedding $\mathbf{e}_{\texttt{[FILL]}} \in \mathbb{R}^{d_L}$ initialized randomly and optimized during training.
+
+
+
+\paragraph*{Dynamic Masking Strategy.}
+To train the DLLM to predict masked items, we employ a \textbf{dynamic random masking} strategy that operates on self-supervised labeled positions $\mathcal{P}_L$. This ensures that the model learns to reconstruct items at positions where ground-truth labels are available, while preserving the contextual integrity of observed items and unlabeled fill positions.
+
+Formally, let $\mathcal{B}_u^{\text{train}}$ denote a training sequence constructed by inserting $\texttt{[FILL]}$ tokens at positions in $\mathcal{P}_L \cup \mathcal{P}_U$. At each training step, we:
+\begin{enumerate}
+    \item Sample a ratio $t \sim \mathrm{U}(0, 1]$ that determines the proportion of labeled fill tokens to mask.
+    \item For each position $i \in \mathcal{P}_L$, sample a binary mask indicator $m_i \sim \text{Bernoulli}(t)$.
+    \item Construct the masked sequence:
+    \begin{equation*}
+    \mathcal{B}_u^{(t)} = \left\{
+    \begin{array}{ll}
+    \texttt{[MASK]} & \text{if } i \in \mathcal{P}_L \text{ and } m_i = 1 \\
+    \texttt{[FILL]} & \text{if }  i \in \mathcal{P}_U \\
+    b_i & \text{otherwise (observed items)}
+    \end{array}
+    \right.
+    \end{equation*}
+    where $\texttt{[MASK]}$ denotes the masked token used during training, and $\texttt{[FILL]}$ represents unmasked missing positions. Note that $\texttt{[MASK]}$ tokens share the same embedding as $\texttt{[FILL]}$.
+\end{enumerate}
+
+This dynamic masking strategy serves two purposes: (1) it prevents overfitting by varying the masking pattern across training iterations, and (2) it exposes the model to partial observability scenarios where some missing positions are known (unmasked tokens) and others need to be inferred (masked tokens in $\mathcal{P}_L$), mirroring the inference-time setting where $\mathcal{P}_U$ positions are unknown.
+
+\paragraph*{Training Objective.}
+Following DLLM's discrete diffusion framework, we optimize the model to predict the ground-truth item at each masked position given the noised sequence and the target masking level. Let $L'$ denote the number of masked tokens in $\mathcal{P}_L$, and let $r_0^i$ represent the ground-truth item at position $i \in \mathcal{P}_L$. The training loss is:
+\begin{equation}\label{eq:loss}
+\mathcal{L} = -\frac{1}{t L'} \sum_{i \in \mathcal{P}_L} \mathbb{1}\left[r_t^i = \texttt{[MASK]}\right] \log p_\theta\left(r_0^i \mid \mathcal{B}_u^{(t)}, t\right)
+\end{equation}
+where $\mathbb{1}[\cdot]$ is the indicator function, $r_t^i$ denotes the state of position $i$ in the masked sequence $\mathcal{B}_u^{(t)}$, and $p_\theta(\cdot)$ represents the DLLM's predicted distribution over candidate items conditioned on the noised sequence and masking ratio $t$.
+
+Due to the extremely large vocabulary size of items, we employ \textit{sampled softmax} to approximate the conditional probability $p_{\theta}$. As shown below, $K$ negative samples are drawn exclusively from the historical sequences of other samples within the same batch,  \(\mathbf{h}^{lm}_i\) denotes the infered representation for \(i\)-th \texttt{[MASK]}, \(y_i^+\) denotes the ground-truth representation, \(y_{i,j}^-\) denotes the negative samples's representation, and $\texttt{sim}(a,b)$ denotes a similarity measurement between $a$ and $b$. Since the generated representation always undergo preemptive normalization in downstream applications to ensure distributional consistency in the feature space, this loss function only needs to focus on the semantic properties in \textit{angular} metric space. Therefore, we adopt cosine similarity as the $\texttt{sim}(a,b)$ function in the probability modeling.
+ \begin{equation}
+    \label{eq:sampled_softmax}
+            p_\theta\big(r_0^i \mid \mathcal{B}_u^{(t)}, t\big)= \frac{\exp\big(\texttt{sim}(\mathbf{h}^{lm}_i,y_i^+)\big)}{
+        \exp\big(\texttt{sim}(\mathbf{h}^{lm}_i,y_i^+)\big)+\sum_{j=1}^{K} \exp\big(\texttt{sim}(\mathbf{h}^{lm}_i,y_{i,j}^-)\big)
+        } 
+    \end{equation}
+
+This objective encourages the model to leverage both local behavioral context (surrounding observed items) and global world knowledge (encoded in the pre-trained DLLM backbone) to perform \textbf{bidirectional latent reasoning}: inferring missing items by reasoning forward from preceding context and backward from subsequent context, thereby synthesizing behaviors that maintain temporal coherence and semantic reasonableness.
+
+
+\subsubsection{Inference}
+
+At inference time, we generate augmentations for unlabeled missing positions $\mathcal{P}_U$ using the trained DLLM. Note that positions in $\mathcal{P}_L$ (used for self-supervised training) retain their originally observed items during inference. The inference procedure proceeds as follows:
+
+\paragraph*{Step 1: Sequence Preparation.}
+Construct the input sequence by inserting $\texttt{[FILL]}$ tokens \textit{only} at unlabeled discontinuity positions $\mathcal{P}_U$, while keeping observed items unchanged:
+\begin{equation*}
+\mathcal{B}_u^{\text{infer}} = \left\{
+\begin{array}{ll}
+\texttt{[FILL]} & \text{if } i \in \mathcal{P}_U \\
+b_i & \text{otherwise (observed items)}
+\end{array}
+\right.
+\end{equation*}
+
+\paragraph*{Step 2: Forward Pass.}
+Feed $\mathcal{B}_u^{\text{infer}}$ through the DLLM to obtain contextualized hidden states:
+\begin{equation*}
+\mathbf{H}^{\textit{lm}} = \text{DLLM}\left(\mathcal{B}_u^{\text{infer}}\right) \in \mathbb{R}^{|\mathcal{B}_u^{\text{infer}}| \times d_L}
+\end{equation*}
+where each row $\mathbf{h}_i^{\textit{lm}}$ corresponds to the final-layer hidden state at position $i$.
+
+
+\paragraph*{Step 3: Sequence Augmentation for Ranking.}
+Construct the final augmented behavioral sequence by replacing $\texttt{[FILL]}$ tokens at positions in $\mathcal{P}_U$ with their corresponding augmented representations:
+\begin{equation*}
+\mathcal{B}_u^{\text{complete}} = \left\{
+\begin{array}{ll}
+b_i^{\text{aug}} & \text{if } i \in \mathcal{P}_U \\
+b_i & \text{otherwise (observed items)}
+\end{array}
+\right.
+\end{equation*}
+
+This completed sequence serves as a \textbf{model-agnostic} input enhancement that can be directly integrated into any downstream CTR ranking model. By replacing the original incomplete behavioral sequence $\mathcal{B}_u^{\text{obs}}$ with the augmented sequence $\mathcal{B}_u^{\text{complete}}$, we provide the ranking system with richer, more comprehensive behavioral signals for accurate user preference modeling.

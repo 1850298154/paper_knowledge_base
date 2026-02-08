@@ -1,0 +1,222 @@
+% section: semantic parsing
+
+\subsubsection{Modelling Enhanced Dependencies}
+As our main system to predict the enhanced graph,
+we follow \citep{dozat-manning-2018-simpler} and treat enhanced dependency parsing as a task similar to semantic dependency parsing.
+In semantic dependency parsing, words may have multiple heads.
+Thus, \newcite{dozat-manning-2018-simpler} apply their deep biaffine graph-based dependency parser \cite{dozat-manning-2017-deep} to the task of semantic dependency parsing but replace the softmax cross-entropy loss with sigmoid cross-entropy loss for edge prediction.
+The above modification changes the modelling objective such that words are no longer competing with one another to be classified as the appropriate head;
+rather, the parser chooses whether an edge exists between each possible pair of words independently.
+Whether an edge exists between two words is based on a predefined threshold, where a score above this threshold results in an edge being predicted
+and, subsequently,
+the edge's label.
+In our experiments we use an edge prediction threshold of 0.5.
+If the parser did not predict an edge for a word, we take the edge with the highest probability.
+As we want to select the label with the highest probability for each chosen edge, standard softmax cross-entropy loss is used for label prediction as in \newcite{dozat-manning-2018-simpler}.
+
+
+% combined images
+\begin{figure*}[htb]
+  %% image 1
+  \begin{subfigure}[t]{.5\textwidth}
+  \centering\includegraphics[width=.95\columnwidth]{images/dep_example_iwpt.pdf}
+  \caption{Enhanced UD graph.}
+  \label{fig:semantica}
+  \end{subfigure}
+  %% image 2
+  \begin{subfigure}[t]{.48\textwidth}
+  \centering\includegraphics[width=.95\columnwidth]{images/scores_vals_white_no_neg.png}
+   \caption{Edge-existence probabilities.
+   }
+   \label{fig:semanticb}
+   \end{subfigure}
+   \caption{
+   The enhanced UD graph and edge-existence probabilities of the semantic parser trained on \texttt{en\_ewt} for the phrase \textit{Tale of joy and sorrow}.
+    }
+    \label{fig:semantic}
+\end{figure*}
+%===============
+
+In order for the semantic dependency parser to be able to model relationships where a word may have multiple heads,
+we create an adjacency matrix where the $ij^{th}$ entry in the matrix indicates whether an edge exists between tokens $i$ and $j$ with label type $k$.
+We also append the dummy \textit{root} token to the adjacency matrix so that an edge can be
+predicted from the main predicate of the sentence to the dummy \textit{root} token.
+
+Figure~\ref{fig:semantica} shows the enhanced UD graph for the phrase, \emph{Tale of joy and sorrow}.
+In the enhanced representation,
+each conjunct in the conjoined noun phrase is attached to the governor of the modifier phrase,
+e.g. there is an additional \textit{nmod} relation marked in blue between the noun \textit{Tale} and the second conjunct \textit{sorrow}.
+Note that the lemma of the \textit{case} and \textit{cc} dependents
+are appended to the enhanced dependency labels of their heads.
+The corresponding edge-existence probabilities of the semantic parser trained on \texttt{en\_ewt} are shown in Figure~\ref{fig:semanticb} where the parser correctly predicts an edge from \emph{sorrow} to the first conjunct \emph{joy} as well as the head of the modifier phrase \emph{Tale}.
+
+
+% Semantic parser variants
+\subsubsection{Feature Representations}
+In our experiments, each word $w_i$ in a sentence $ S=(w_0, w_1, \dots, w_N) $ is converted to its vector representation $\textbf{x}_i$.
+We trained different variants of our semantic parser where
+$\textbf{x}_i$ is the concatenation of different combinations of the below features:
+
+\begin{itemize}
+%
+\item \textbf{BERT embedding}: 
+The first word-piece embedding of the wordpiece-tokenised input word from BERT \citep{devlin-etal-2019-bert}
+$ \mathbf{e}_i^{(BERT)} \in \mathbb{R}^{768}$
+%
+\item \textbf{character embedding}: 
+A character embedding obtained by passing the $k$ characters $ch_1, \dots , ch_k$ of ${w_i}$ through a BiLSTM:
+$ \text{BiLSTM}(ch_{1:k})$, $\mathbf{e}_i^{(ch)} \in \mathbb{R}^{64}$
+%
+\item \textbf{lemma embedding}:
+The embedding of the word's lemma
+$\mathbf{e}_i^{(le)} \in \mathbb{R}^{50}$
+%
+\item \textbf{UPOS embedding}:
+The embedding of the word's universal POS tag
+$\mathbf{e}_i^{(u)} \in \mathbb{R}^{50}$
+%
+\item \textbf{XPOS embedding}:
+The embedding of the word's language-specific POS tag
+$\mathbf{e}_i^{(x)} \in \mathbb{R}^{50}$
+%
+\item \textbf{morphological feature embedding}:
+The embedding of the word's morphological features
+$\mathbf{e}_i^{(f)} \in \mathbb{R}^{50}$
+%
+\item \textbf{head-information embedding}:
+An embedding representing the word's head information from the basic tree
+$\mathbf{e}_i^{(h)} \in \mathbb{R}^{50}$
+%
+\item \textbf{dependency label embedding}:
+The embedding of the word's dependency label from the basic tree
+$\mathbf{e}_i^{(label)} \in \mathbb{R}^{50}$
+\end{itemize}
+
+All model variants use the lexical information of the first BERT word-piece embedding and the character embedding, where $;$ represents vector concatenation:
+\begin{equation}
+    \label{eq:sdp1}
+    \mathbf{e}_i^{(l)} = [\mathbf{e}_i^{(BERT)} ; \mathbf{e}_i^{(ch)}]
+\end{equation}
+The subsequent variation comes from the other types of features used where we experimented with the below feature settings:
+\begin{equation}
+    \label{eq:sdp2}
+    \mathbf{x}_i = [\mathbf{e}_i^{(l)} ; \mathbf{e}_i^{(u)}]
+\end{equation}
+\begin{equation}
+    \label{eq:sdp3}
+    \mathbf{x}_i = [\mathbf{e}_i^{(l)} ; \mathbf{e}_i^{(le)} ; \mathbf{e}_i^{(u)} ; \mathbf{e}_i^{(f)}]
+\end{equation}
+\begin{equation}
+    \label{eq:sdp4}
+    \mathbf{x}_i = [\mathbf{e}_i^{(l)} ; \mathbf{e}_i^{(le)} ; \mathbf{e}_i^{(u)} ; \mathbf{e}_i^{(x)} ; \mathbf{e}_i^{(f)}]
+\end{equation}
+\begin{equation}
+    \label{eq:sdp5}
+    \mathbf{x}_i = [\mathbf{e}_i^{(l)} ; \mathbf{e}_i^{(le)} ; \mathbf{e}_i^{(u)} ; \mathbf{e}_i^{(f)} ; \mathbf{e}_i^{(b)}]
+\end{equation}
+\begin{equation}
+    \label{eq:sdp6}
+    \mathbf{x}_i = [\mathbf{e}_i^{(l)} ; \mathbf{e}_i^{(le)} ; \mathbf{e}_i^{(u)} ; \mathbf{e}_i^{(x)} ; \mathbf{e}_i^{(f)} ; \mathbf{e}_i^{(b)}]
+\end{equation}
+
+For the morphological features, there may be multiple morphological tags $m_1, \dots , m_t$ for a particular word $w_i$.
+Thus, we split the full label into separate features \citep{hall-etal-2007-single} and embed each morphological property separately.
+We then sum the individual embedded representations
+%of the morphological features
+together and divide by the number of active properties:
+
+\begin{equation}
+    \label{eq:sdp7}
+    %\mathbf{e}_i^{(f)} =  mean(m_{1:t})
+    \mathbf{e}_i^{(f)} =  \text{mean}(\mathbf{e}^{(m_{1:t})})
+\end{equation}
+
+We follow the same process for the head-information embedding $\mathbf{e}_i^{(h)}$.
+Rather than encoding the head as an integer value, we obtain a \emph{direction} value and a \emph{distance} value:
+for each head-dependent pair $(i, j)$, we subtract the indices of $i, j$ giving the distance value.
+If the value is negative it means the head is to the left or if it is positive, to the right.
+We then take the absolute distance value and define ranges:
+\textit{short} (1-4),
+\textit{medium} (5-9),
+\textit{far} (10-14)
+and \textit{long-range} ($>$15).
+The qualitative direction (\textit{left} or \textit{right}) and distance labels are embedded in the same way as morphological features, e.g. embedded as separate components, summed together and then divided by the number of features (which in this case is always two):
+\begin{equation}
+    \label{eq:sdp8}
+    %\mathbf{e}_i^{(h)} =  mean(h_{1:t})
+    \mathbf{e}_i^{(h)} =  \text{mean}(\mathbf{e}^{(h_{1:t})})
+\end{equation}
+To encode the basic tree, we then concatenate the head representation and the dependency label embedding:
+\begin{equation}
+    \label{eq:sdp9}
+    \mathbf{e}_i^{(b)} =  [\mathbf{e}_i^{(h)} ; \mathbf{e}_i^{(label)}]
+\end{equation}
+It is worth mentioning that more sophisticated approaches for modelling head distance and direction exist for basic dependency parsing \citep{qi-etal-2018-universal} but we leave using this approach for enhanced dependency parsing as future work.
+%==========
+
+\subsubsection{Training Details}
+Our semantic parser predicts edges in a
+greedy fashion based on local decisions,
+\ie we did not make use of any maximum spanning tree algorithm 
+or enforce any global constraints.
+One property of enhanced dependency graphs is that the graph may contain cycles, therefore, we did not remove any cycles from the graph but observed that this sometimes causes fragments in the graph which are not reachable from the notional ROOT.
+For graphs with unreachable nodes, we applied our post-processor to attach these (Section~\ref{sec:connect}).
+
+We found that this architecture can be easily applied to enhanced dependency parsing given its similar nature to semantic dependency parsing.
+One caveat is that in enhanced dependency parsing, the label set can be quite large as modifier lemma and case information can be appended to the dependency label which
+results in very high memory requirements for certain languages such as Arabic.
+Additionally, 
+modelling all enhanced labels in this fashion means that the parser is limited in its ability to predict
+labels for rare modifiers.
+An examination of the semantic parser output on the \texttt{en\_ewt} development set shows that, although the parser often predicts the correct label, it can sometimes predict the wrong label containing a frequent modifier which is not in the sentence, e.g. \textit{advcl:if} instead of 
+\textit{advcl:as}.
+
+\input{tables/hyperparams}
+
+Our semantic parser is built upon the implementation in AllenNLP \citep{gardner-etal-2018-allennlp}.
+Due to time constraints,
+we trained our semantic parsing models on the gold training data released by the organisers
+as opposed to
+creating jack-knifed silver data. % is demanding in terms of time and compute.
+Hyperparameters are similar to those in \newcite{dozat-manning-2017-deep} as we found the larger network size of \newcite{dozat-manning-2018-simpler} to be too restrictive for certain languages with high memory demands.
+Full hyperparameters of the semantic parser are given in Table~\ref{table:hyper-params}.
+We trained 
+%our semantic parsing models 
+for 75 epochs with early-stopping if the development score did not improve after 10 epochs.
+
+\paragraph{Memory Considerations}
+We trained our semantic parsing models on two GPUs:
+the first was an NVIDIA RTX 2080 Ti with 12GB of VRAM
+where we had to remove very long sentences ($<.03\%$ of sentences overall) from the treebanks: \texttt{cs\_cac}, \texttt{cs\_pdt}, \texttt{it\_isdt}, \texttt{ru\_syntagrus} and \texttt{sv\_talbanken} in order to fit a batch into memory.
+% kept ~99.97 for all but Arabic (~98.76)
+We were also given access to an NVIDIA V100 GPU with 32GB of VRAM which enabled us to process all treebanks except for \texttt{ar\_padt} without removing long sentences.
+For \texttt{ar\_padt}, after removing the longest 75 sentences, the model still required 29GB of VRAM.
+
+
+\subsubsection{BERT Models}
+
+For the BERT models,
+in early development runs we compared multilingual BERT (mBERT) with a language-specific BERT model if there was one available in HuggingFace's \citep{wolf-etal-2019-huggingface}
+models repository.\footnote{\url{https://huggingface.co/models}}
+We used a language-specific BERT model for
+\texttt{ar} \citep{safaya-etal-2020-kuisail},
+%\footnote{\url{https://github.com/alisafaya/Arabic-BERT}},
+\texttt{bg+cs} \citep{arkhipov-etal-2019-tuning},
+\texttt{en} \citep{devlin-etal-2019-bert},
+\texttt{fi} \citep{virtanen-etal-2019-multilingual},
+\texttt{it}\footnote{\url{https://github.com/dbmdz/berts}},
+\texttt{nl} \citep{vries-etal-2019-bertje},
+\texttt{pl}\footnote{\url{https://github.com/kldarek/polbert}},
+\texttt{ru} \citep{kuratov-arkhipov-2019-adaptation} 
+and \texttt{sv}\footnote{\url{https://github.com/Kungbib/swedish-bert-models}}
+and for the rest of the languages we used mBERT \citep{devlin-etal-2019-bert}.
+We found that the language-specific variant was always better than mBERT except for \texttt{pl\_lfg}.
+For \texttt{fr\_sequoia}, we tried using the CamemBERT model \citep{martin-etal-2020-camembert}.
+As this model uses RoBERTA \citep{liu-etal-2019-roberta}
+as opposed to BERT, we installed AllenNLP from the master repository which uses HuggingFace's \texttt{AutoTokenizer} module which supports many BERT-like models.
+We noticed a trend of lower results when using the master branch for some languages
+but training was also more stable for certain treebanks where we had previously encountered a \texttt{nan} in the loss.\footnote{We incurred a \texttt{nan} loss for \texttt{cs\_cac}, \texttt{cs\_pdt}, \texttt{it\_isdt} and \texttt{ru\_syntagrus} using the AllenNLP stable branch 0.9.0 and used the best model from the available epochs.}
+Consequently, we include models from the stable release and the bleeding-edge master branch in our development pipeline.
+% and choose the model which has the higher development score.
+
+% eof

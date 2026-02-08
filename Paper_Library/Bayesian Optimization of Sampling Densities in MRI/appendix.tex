@@ -1,0 +1,137 @@
+
+\section{Implementation details}
+\label{sec:implementation}
+
+\subsection{TV reconstruction algorithm\label{sec:reconstruction_algorithm_TV}}
+
+In this part we detail the TV iterative reconstruction algorithm that is used in this paper.
+We consider a regularized version of the total variation of the form 
+\begin{equation*}
+TV_\epsilon(x) = \sum_{n=1}^N \sqrt{\| (\nabla x)[n] \|_2^2 + \epsilon^2}.
+\end{equation*}
+Given $y\in\C^M$, the solver of problem \eqref{eq:reconstructor_TV} is given in Algorithm~\ref{alg:TV_minimization}.
+The parameter $\alpha$ drives the acceleration and $D$ is the dimension, here $D=2$.
+It corresponds to a Nesterov accelerated gradient descent \cite{nesterov1983method} with a regularized version of the $\ell^1$ norm.
+\begin{algorithm}
+	\begin{algorithmic}
+	\Require Number of iterations $Q$.
+	\State Set $z^{(0)}=x^{(0)}=0$, $\tau = \frac{1}{\|A(\xi)\|_{2\to 2}^2 + 4D\lambda/\epsilon}$.
+	\ForAll{$q = 0$ to $Q-1$}
+		\State $r^{(q)} = A(\xi)^*(A(\xi)z^{(q)}-y)$
+		\State $\displaystyle x^{(q+1)}=z^{(q)}- \tau \left[ r^{(q)}+ \lambda \nabla TV_{\epsilon}(z^{(q)}) \right]$
+		\State $\displaystyle z^{(q+1)}=x^{(q+1)}+\alpha(x^{(q+1)}-x^{(q)})$
+	\EndFor
+	\State \Return $x^{(Q)}$.
+	\end{algorithmic}
+\caption{A TV minimization algorithm} \label{alg:TV_minimization}
+\end{algorithm}
+A critical point is the choice of the step $\tau$ in Algorithm~\ref{alg:TV_minimization}.
+This step is computed using the spectral norm of the data fidelity term which can be computed using a power iteration method for each point configuration $\xi$.
+The resulting step is taken into account in the computation of the gradient with respect to the locations $\xi$ of the cost function in~\eqref{eq:objective_xi}.
+
+
+\subsection{The unrolled neural network \label{sec:appendix_neural_net_definition}}
+
+The neural network based reconstruction is an unrolled network. 
+The one used in this work is based on the ADMM (Alternative Descent Method of Multipliers) \cite{ng2010solving}.
+It consists in alternating a regularized inverse followed by a denoising step with a neural network.
+If $\Dc_{\lambda^{(p)}}$ denotes the denoiser used at iteration $p$, the unrolled ADMM can be expressed through the sequence:
+\begin{equation*}
+    \begin{dcases}
+        x^{(p+1)} = \left( A(\xi)^*A(\xi)+\beta\Id \right)^{-1}\left( A(\xi)^*y+\beta z^{(p)}-\mu^{(p)} \right) \\
+        z^{(p+1)} = \Dc_{\lambda^{(p)}}\left( x^{(p+1)}+\frac{\mu^{(p)}}{\beta} \right) \\
+        \mu^{(p+1)} = \mu^{(p)}+\beta\left( x^{(p+1)}-z^{(p+1)} \right)
+    \end{dcases}
+\end{equation*}
+with a pseudo-inverse initialization $z^{(0)} = A(\xi)^\dag y$.
+
+In this work, we use the DruNet network \cite{zhang2021plug} to define the denoising mappings $\Dc_{\lambda^{(p)}}$.
+We choose an ADMM algorithm for the following reasons:
+\begin{enumerate}
+\item for well-spread sampling schemes, the matrix $A(\xi)^*A(\xi)$ has a good conditioning and the linear system that has to be inverted can be solved in less than a dozen iterations,
+\item it has demonstrated great performance to solve linear inverse problems in imaging, including image reconstruction from Fourier samples \cite{wang2022b}.
+\end{enumerate}
+
+We opted for a different network at each iteration instead of a network that shares its weights accross all iterations.
+This leads to slightly higher performance at the price of a slightly harder to interpret architecture (see e.g.  \cite{genzel2022near} for a similar discussion in CT reconstruction).
+
+\subsection{Training the reconstruction network for a family of operators \label{sec:appendix_neural_net_training}}
+\label{sec:training_on_family}
+
+Following \cite{gossard2022training}, we trained our network in a non usual way. 
+Instead of training the denoising networks $\Dc_{\lambda^{(p)}}$ for a single operator $A(\xi_0)$, we actually trained it for a whole family of operators $\mathcal{A}=\{A(\xi), \xi \in \mathcal{F}\}$, where $\mathcal{F}$ is a large family of sampling schemes. 
+We showed in \cite{gossard2022training}, that this simple approach yields a much more robust network, which is adaptive to the forward operator.
+
+In our experiments, the network is trained on a family of $10^3$ sampling schemes that are generated using the attraction-repulsion minimization problem \eqref{eq:discrepancy}. These schemes are parameterized by densities that are within $\Cc$.
+This pretraining step consists of $32$ epochs with a batch of $8$ images using the Adam optimizer with default parameters ($\beta_1=0.9$ and $\beta_2=0.999$).
+The step for the CNN weights is set to $10^{-4}$ with a multiplicative update of $0.95$ after each epoch.
+The measurements are perturbed by an additive white noise (see $n$ in \eqref{eq:objective_xi}).
+
+\subsection{Joint optimization}
+
+Instead of optimizing the sampling scheme for a fixed network, we can also optimize jointly the sampling locations together with the network weights. 
+This approach was proposed in \cite{wang2022b,weiss2021pilot}.
+Due to memory requirements, we set the batch size to $7$ for the unrolled network in our training procedure.
+The step size for the CNN weights in this experiment is also set to $10^{-4}$ with the default Adam parameters.
+
+\subsection{Computational details}\label{subsec:computational_details}
+In this paragraph, we describe the main technical tools used to optimize the reconstruction process. 
+
+\subsubsection{Solving the particle problem \eqref{eq:objective_xi}}
+\label{sec:solving_xi}
+
+Problem \eqref{eq:objective_xi} is a highly non-trivial problem. Two different computational solutions were proposed in \cite{weiss2021pilot,wang2022b}. 
+In this work, we re-implemented a solver with some differences outlined below.
+
+First, the optimization problem \eqref{eq:objective_xi} involves a nontrivial constraint set $\Xi$.
+While the mentioned works use a penalization over the constraints, we enforce the constraints by using a projection at each iteration.
+Handling constraints in stochastic optimization was first dealt with stochastic mirror-prox algorithms \cite{juditsky2011solving}. 
+This approach turned out to be inefficient in practice. We therefore resorted to an extension of Adam in the constrained case called Extra-Adam \cite{gidel2018variational}.
+The step size was set to $10^{-3}$ and the default Adam parameters $\beta_1=0.9$ and $\beta_2=0.999$.
+We observed no significant difference by tuning these last two parameters.
+We also use a step decay of $0.9$ each fourth of epoch and batch size of $13$, which is the largest achievable by our GPU.
+
+Similarly to \cite{weiss2021pilot,wang2022b}, we use a multi-scale strategy. The trajectories are defined through a small number of control points, that progressively increases across iterations. We simply use a piecewise linear discretization (contrarily to higher order splines in \cite{wang2022b}). The initial decimation factor is $2^7$ and is divided by two every two epochs. This results in a total number of epochs equal to $14$ and takes about 86 hours for a total variation solver. In comparison \cite{wang2022b}, reports a total of $40$ epochs.
+
+\subsubsection{Implementing the Non-uniform Fourier Transform (NUFT)}
+
+Various fast implementations of the Non-uniform Fourier Transform \eqref{eq:def_NUFFT} are now available \cite{keiner2009using,fessler2003nonuniform,shih2021cufinufft,muckley2020torchkbnufft}.
+In this work, we need a pyTorch library capable of backward differentiation.
+Evaluating the gradient of the cost function in \eqref{eq:objective_xi} or in \eqref{eq:objective_rho} indeed requires computing the differential of the forward operator $A(\xi)$ with respect to $\xi$.
+This can be done by computing $D$ non-uniform Fourier transforms (see \cite{wang2022b,gossard2022spurious,wang2021efficient}).
+Different packages were tested and we finally opted for the cuFINUFFT implementation \cite{shih2021cufinufft}.
+The bindings for different kind of NUFT are available at \href{https://github.com/albangossard/Bindings-NUFFT-pytorch/}{https://github.com/albangossard/Bindings-NUFFT-pytorch/}.
+
+
+\subsubsection{Minimizing the discrepancy}
+
+The minimization of the discrepancy \eqref{eq:discrepancy} is achieved with a gradient descent, as was proposed in the original paper \cite{schmaltz2010electrostatic}, see Algorithm~\ref{alg:discrepancy_minimization}. The input parameters are the initial sampling set $\xi^{\textrm{ini}}$, the target density $\rho$ and a step-size $\tau>0$.
+The step size needs to be carefully chosen to ensure a fast convergence. The optimal choice can be shown to be related to the minimal distance between adjacent points. In our experiments, it was tuned by hand and fixed respectively to $2\times 10^4$ and $5\times 10^{3}$ for the $25\%$ and $10\%$ undersampling schemes.
+
+Computing the gradient requires to compute pairwise interactions between all particles: in our codes, it is achieved using \href{https://www.kernel-operations.io/}{PyKeOps} \cite{charlier2021kernel}.
+This approach presents the advantages of being fast, adapting to arbitrary kernels $h$  and to natively allow backward differentiation within PyTorch. 
+For a number of particles $M$ above $10^6$, fast multipole methods might become preferable \cite{chaithya2020}.
+
+\begin{algorithm}
+    \begin{algorithmic}
+        \State Set $\zeta^{(0)}=\xi^{\textrm{ini}}$
+        \For{$j=1\ldots J$}
+        \State $\zeta^{(j)} = \Pi_\Xi\left(\zeta^{(j-1)} - \tau \nabla_1\dist(\zeta^{(j-1)},\rho)\right)$
+        \EndFor
+        \State Set $\xi^{(n)}=\zeta^{(J)}$
+    \end{algorithmic}
+    \caption{Gradient descent to minimize \eqref{eq:discrepancy}. \label{alg:discrepancy_minimization}}
+\end{algorithm}
+
+\subsubsection{Handling the mass at 0}
+\label{sec:handling_mass_0}
+
+An important issue is related to the fact that all trajectories start at the k-space origin. This creates a large mass for the sampling scheme at 0. When minimizing a discrepancy between the sampling scheme and a target density, the sampling points are therefore repulsed from the origin, creating large holes at the center. To avoid this detrimental effect, we fix rectilinear radial trajectories at the origin at maximal acceleration until a distance of 0.5 pixel between adjacent trajectories samples is reached. This creates a fixed pattern in the k-space center, which can easily be seen in the zoom of Fig.~\ref{fig11} and Fig.~\ref{fig12}. We compute the discrepancy only at the exterior of a disk centered at the origin containing this fixed pattern.
+
+\subsubsection{Projection onto the constraint set}
+
+The projector onto the constraint set is used twice in this work.
+First the Extra-Adam algorithm requires a Euclidean projector on the constraint set $\Xi$ to solve \eqref{eq:objective_xi}.
+This projector is also needed to compute one evaluation of the sampler in \eqref{eq:discrepancy}.
+In this project, we used the dual approach proposed in \cite{chauffert2016projection}, implemented on a GPU.
+This algorithm can be implemented in PyTorch, and can be differentiated. This allows computing the gradient of the overall function in \eqref{eq:objective_rho}.

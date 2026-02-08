@@ -1,0 +1,122 @@
+\section{Approach}
+%\zk{Added this to summarize and connect content}
+Our approach integrates planning, control, and safety mechanisms in an end-to-end differentiable learning framework. We first introduce a differentiable STL framework using a neural network planner to maximize STL robustness (Sec.~\ref{sec:app-diff-stl-planning}). For efficient multi-agent planning, we employ GNNs to model agent relationships and generate decentralized goal sequences (Sec.~\ref{sec:gnn-plan}). To ensure collision avoidance, we define a safe set of states using GCBFs for robust control (Sec.~\ref{sec:app-gcbf+}). Finally, we discuss the training of our integrated system (Sec.~\ref{sec:app-e2e-learning}).
+
+\subsection{Differentiable Signal Temporal Logic for Planning}
+\label{sec:app-diff-stl-planning}
+Signal Temporal Logic (STL) provides a robustness metric for a given trajectory that quantifies the level of satisfaction of a specification $\phi$ defined using the STL language (Sec. \ref{bg-stl}).
+Consider a NN planner $\plannn{i}$ that takes as input the current state of the system and outputs a sequence of goals 
+$\traj_{\goal{i}} = (\goal[0]{i}, \goal[1]{i}, \ldots, \goal[T]{i})$
+for agent $i$ with specification $\phi_i$.
+ We can define a loss function that attempts to maximize the STL robustness score for the specification $\phi$, given the waypoints from the planner. 
+Prior work \citep{xiong2023colearning,LeungArechigaEtAl2021} % \SJ{The reference is incomplete.} 
+has used the differentiability of this score function to directly regularize a planner's waypoints for use by a given low-level controller $\controlnn[\state{i}|\goal{i}]{i}$ which is goal-conditioned, i.e. targeted to reach the goal $\goal{i}$ given the current state $\state{i}$ of agent $i$.
+% Motivated by their success, we define a planner 
+
+For the planner architecture, similar to \citet{xiong2023colearning}, we consider using $\plannn{i}$ to predict the deviation between subsequent waypoints $\Delta \goal{i}$. Based on this, to maximize the probability of satisfying the STL specification given a controller $\controlnn{i}$, we define the loss function as:
+\vspace{-0.2em}
+\begin{align}
+    \label{eq:per-agent-loss}
+    \mathcal{L}_{\plannn{i}, \controlnn{i}} = \mathbb{E}_{\substack{ \state{i} \sim \statespace_0, \traj_{\goal{i}} \sim 
+    \plannn[\state{i}]{i} , \\\traj_{i} \sim 
+    \controlnn[\state{i}, \goal{i}]{i} } } 
+    \left(
+    \underbrace{-\coeffstl\rho(\phi_i, \traj_{\goal{i}})}_{\lossstl} 
+    + \underbrace{\coeffacheivable \trajdist{\traj_i}{\traj_{\goal{i}}}}_{\lossacheivable} 
+    % + \underbrace{\coeffrealSTL \rho(\phi_i, \traj_i)}_{\lossrealSTL}
+    \right)
+\end{align}
+\vspace{-0.3em}
+
+Here we consider two loss components, the first being the STL robustness score $\rho(\phi_i, \traj_{\goal{i}})$ of the planned waypoints $\traj_{\goal{i}}$ and the second being the tracking error $\trajdist{\traj_i}{\traj_{\goal{i}}}$ of the controller $\controlnn{i}$ with respect to the planned waypoints.
+The coefficients $\coeffstl, \coeffacheivable > 0$ are hyperparameters that control the relative importance of the two loss components ($\lossstl$ and $\lossacheivable$) in the overall loss function.
+% The third term $\lossrealSTL$ is a regularization term that ensures the controller $\controlnn{i}$ satisfies the STL specification $\phi_i$.
+The STL Loss $\lossstl$ captures our objective, maximizing the STL robustness score of the planned waypoints $\traj_{\goal{i}}$ with respect to the specification $\phi_i$.
+The achievable loss $\lossacheivable$ on the other hand ensures that the controller $\controlnn{i}$ can track the planned waypoints $\traj_{\goal{i}}$ using a distance metric
+$\trajdist{\traj_i}{\traj_{\goal{i}}}$ (Defn. \ref{def:ps-STL-MA}) that extracts the positions from $\traj_i$ using $\filterstate$ and minimizes a normed distance between the two, i.e.
+$\trajdist{\traj_i}{\traj_{\goal{i}}} = \sum_{t=0}^{T} \norm{\filterstate(\state[kt]{i}) - \filterstate(\goal[t]{i})}_2$ where $k>0, k\in \intZp$ is a fixed goal sampling rate during training such that $kT=T_h$.
+% $\trajdist{\traj_i}{\traj_{\goal{i}}} = \norm{\filterstate(\traj_i) - \filterstate(\traj_{\goal{i}})}_2$.
+% \joe{TODO: describe the loss components in more detail}
+In this paper, we consider the same specification $\phi_i = \phi$ and use the same planner for all agents. This enables easy generalization to different numbers of agents during testing
+and allows for a more scalable approach to planning. 
+We leave the question of how to support different specifications among agents for future work. 
+This leads to our overall loss function for the planner and controller as $\totalloss{} = \sum_{i=1}^{N} \totalloss{i}$.
+% \begin{align}
+%     \label{eq:overall-loss}
+%     \mathcal{L}_{\plannn{}, \controlnn{}} = \sum_{i=1}^{N} \mathcal{L}_{\plannn{i}, \controlnn{i}} 
+% \end{align}
+
+
+
+\subsection{GNNs for Planning in Multi-Agent Systems}
+\label{sec:gnn-plan}
+Graphical models can be useful to scale collision avoidance in multi-agent systems \citep{yu2022learning,zhang_gcbf_2024,zhang_neural_2023} by modeling the system in a decentralized manner.
+Notably, by representing the agents as nodes and their interactions as edges, we can use Graph Neural Networks (GNNs) to process a graphical view of the system as described in Sec. \ref{sec:bg-gnn} (Fig. \ref{fig:planner-overview}).
+
+
+To handle the planning problem in multi-agent systems we describe the planner $\plannn{}$. We choose a GNN-based planner that takes as input the initial state of the system $\graph[0]$ and outputs an initial goal $\goal[0]{i}$ for agent $i$
+% with an embedding $\emb \in \R^{\demdb}$ to capture the relative positions of the agents.
+taking into account the relative positions of the agents.
+Next we feed this goal $\goal[0]{i}$ 
+%along with the embedding $\emb$  
+into a 2-layer MLP to predict the deviation $\Delta\goal{i}$. 
+This process is repeated for $T-1$ steps 
+%by keeping $\emb$ fixed 
+to generate a sequence of goals for the agent given the initial state.
+By using this GNN-based structure, we can get this sequence of goals $\traj_{\goal{i}}$ for each agent $i$ in a single forward pass of the planner $\plannn{}$.
+
+As highlighted in Sec. \ref{bg-stl}, MA-STL can be thought of as \textit{independent} single-agent STL specifications on the agents, albeit with an additional 
+constraint on avoiding collisions between the agents. While collision avoidance during planning time is expensive (Sec. 
+\ref{sec:ps-stl}), we can attempt to plan for the objectives for a subset of the agents and use this plan with a safety scheme during run-time. 
+Along these lines, during deployment, we use the \planner~(Fig. \ref{fig:planner-overview}) to generate a sequence of waypoints that we sequentially visit in a decentralized manner using the \gcbfp~controller (Sec. \ref{sec:app-gcbf+}).
+One should note this would not be straightforward if we had defined arbitrary STL specifications in the joint space of agents
+involving global coordination or synchronization of objectives \citep{9345973_Buyukkocak_Aksaray_Yazicioglu_2021_planning,Eappen2022}.
+
+However, because this may detract from the overall objective due to collision avoidance maneuvers causing deadlocks,  we update the planner iteratively by sampling the environment as detailed in Sec. \ref{sec:app-diff-stl-planning}
+with the STL robustness score. In a sense, we ``co-learn" the safety (\gcbfp~controller, $\controlnn{i}$) and objective (\planner, $\plannn{i}$) behavior which is a recurrent theme in recent work \citep{xiong2023colearning, Xiong2022}
+related to the safety of controllers in complex systems.
+
+
+
+\subsection{Collision Avoidance in MA Systems}
+
+\label{sec:app-gcbf+}
+
+Following \citep{zhang_gcbf_2024}, we define the safe set $\safeset \subset \mathcal{S}^N$ of an $N$-agent MAS as the set of MAS states $\sbar$ that satisfy the safety properties in Problem \ref{def:ps-STL-MA}, i.e.,
+\begin{equation} \label{eq:SN_def}
+\begin{aligned}
+    \safeset \coloneqq \Big\{ \sbar \in \mathcal{S}^N \;\Big|
+    &\; \Big( \norm{\yray[j]{i}} > r,\; \forall i \in \agents, \forall j\in \nrays \Big) \bigwedge \Big( \min_{i, j \in \agents, i \neq j} \norm{p_i - p_j} > 2r \Big) \Big\}.
+\end{aligned}
+\end{equation}
+\vspace{-0.1em}
+Then, the unsafe, set of the MAS $\unsafeset = \mathcal{S}^N \setminus \safeset$ is defined as the complement of $\safeset$. We now define the notion of a \gcbf \citep{zhang_gcbf_2024}:
+{
+\begin{definition}[\textbf{GCBF}]
+A continuously differentiable function $h : \mathcal{S}^M \to \mathbb{R}$ is termed as a Graph CBF (\gcbf) if there exists an extended class-$\mathcal K_\infty$ function $\alpha$ and a control policy $\pi_i: \mathcal{S}^M \to \mathcal{U}$ for each agent $i \in V_a$ of the MAS such that, for all $\bar{s} \in \mathcal{S}^N$ with $N \geq M$,
+\begin{equation}\label{eq:graph CBF}
+        \dot h(\sbar_{\mathcal{N}_i}) +\alpha( h( \sbar_{\mathcal{N}_i} ) )\geq 0, \quad \forall i \in V_a
+\end{equation}
+where for $u_j = \pi_j(\sbar_{\mathcal N_j})$ and set of neighbours $\mathcal{N}_i$ of agent $i$ in the MAS within sensing radius $R$, we have
+\begin{equation} \label{eq:hdot_def}
+    \dot h(\sbar_{\mathcal N_i}) = \sum_{j\in 
+\mathcal{N}_i}\frac{\partial h(\sbar_{\mathcal N_i})}{\partial \state{j}}f(\state{j}, \action{j}),
+\end{equation}
+\end{definition}
+}
+\vspace{-0.1em}
+From this definition, as a consequence of the results in \citet{zhang_gcbf_2024}, 
+if we find a control policy $\pi_i$ and \gcbf~$h$ such that Eq. \eqref{eq:graph CBF} holds for all agents $i$ and all states $\sbar \in \safeset$
+, then the MAS will never enter the unsafe set $\unsafeset$ under the control policy $\pi_i$.
+
+\subsection{End-to-End Differentiable Learning for MA-STL}
+\label{sec:app-e2e-learning}
+
+% \joe{Add a paragraph on how we combine the planner and controller with the safety mechanism during training.}
+By using the learning framework described in Sec. \ref{sec:gnn-plan} and the safety mechanism in Sec. \ref{sec:app-gcbf+}, we can train the planner and controller in an end-to-end differentiable manner using the loss function in Eq. \eqref{eq:per-agent-loss} (Sec. \ref{sec:app-diff-stl-planning}).
+We use an iterative training loop to sample trajectories from the environment at different starting conditions and update the planner $\plannn{}$ for a trained common \gcbfp~controller $\controlnn{i}=\controlnn{}$ using the loss $\totalloss{}$.
+% We use the end-to-end differentiable nature of learning-based collision avoidance schemes to ensure the safety of the system 
+% while updating the controller to satisfy the specification as well. 
+
+% Since the controllers are learned iteratively, we also sample and update the $\epsilon$ term used in our loss 
+% function denoting the tracking error of these controllers.

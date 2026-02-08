@@ -1,0 +1,153 @@
+\section{Bounded Template Synthesis}
+
+The cutoffs in Section~\ref{sec:cutoffs} allow us to %solve the
+reduce parameterized synthesis to template synthesis for a fixed number of processes. 
+%For distributed architectures that do not fall into decidable classes,
+Finkbeiner and Schewe have introduced \emph{bounded
+  synthesis}~\cite{FinkbeinerS13}, a semi-decision procedure
+that converts a (generally undecidable)
+distributed synthesis problem into a sequence of decidable synthesis problems,
+by bounding the size of the implementation. In the following, we
+introduce the main ideas of the original approach and describe how to adapt 
+the procedure for template synthesis of guarded protocols.
+
+
+
+\subsection{Bounded Synthesis Method}
+\label{sec:bounded_synthesis}
+Bounded synthesis consists of three main steps:
+
+\subsubsection*{Step 1: Automata translation}
+ The
+  LTL specification $\spec$, including fairness assumptions
+like fair scheduling, is translated (according to \cite{KupfermanV05}) into a universal co-B\"uchi automaton $\mU$ that
+accepts an LTS if and only if the LTS satisfies $\spec$.
+
+\subsubsection*{Step 2: SMT Encoding} Existence of an LTS of size $b$ 
+that satisfies $\spec$ is encoded into a set of SMT constraints. 
+States are represented by natural numbers in %the range 
+$S=\{1, \ldots, b\}$, state labels as free functions of type $S \impl \bbB$, 
+and the global transition function as a free function of type $S \times 
+\bbB^{E} \impl  S$. Transitions of individual processes are defined 
+%indirectly 
+by introducing projections $d_i: S \impl S$, mapping global to 
+local states. Additional constraints ensure that local transitions only 
+depend on local information. 
+
+%of process $i$ only depend on inputs in $I_i$, we add a constraint
+%\[ \bigwedge_{i \in P^-} ~ \bigwedge_{t,t' \in T} ~ \bigwedge_{I,I' \in \mathcal{P}(O_{env})}~ d_i(t) = d_i(t') \land I \cap I_i = I'
+%\cap I_i \impl d_i(\delta(t,I)) = d_i(\delta(t',I')).\]
+
+To obtain an interpretation of these symbols that satisfies the
+specification $\spec$, additional annotations of states are
+introduced. This includes labels $\lambda^\bbB_q: S \impl \bbB$
+and free functions $\lambda^\#_q: S \impl \bbR$, defined
+such that (i) $\lambda^\bbB_q(s)$ is true if and only if $(q,t) \in Q \times S$
+is reachable in a run of $\mU$ on the LTS\footnote{That is, there is a
+  run of $\mU$ on the LTS such that at some point $q$ is among the
+  states of $\mU$ when it reads (the label of) state $s$.},
+and (ii) valuations of the 
+$\lambda^\#_q$ must be increasing along paths of $\mU$, and strictly
+increasing for transitions that enter a rejecting state of
+$\mU$. Together, this ensures that an LTS satisfying these constraints
+cannot have runs which enter rejecting states infinitely often (and
+thus would be rejected by $\mU$).
+
+%% To obtain an interpretation of these symbols that satisfies the specification
+%% $\spec$, additional annotations of states are introduced. This includes labels
+%% $\lambda^\bbB_q: \bbN \impl \bbB$ and free functions $\lambda^\#_q: \bbN \impl
+%% \bbN$, which are defined such that (i) $\lambda^\bbB_q(t)$ is true iff there is a
+%% path $\sigma$ from an initial state of the LTS to $t$ such that $q$ is included
+%% in the state of $\mU$ after reading $\sigma$, and (ii) valuations of the
+%% $\lambda^\#_q$ must be increasing along paths of $\mU$, and strictly increasing
+%% for transitions that enter a rejecting state of $\mU$. Together, this ensures
+%% that an LTS satisfying these constraints cannot have runs which enter rejecting
+%% states infinitely often (and thus would be rejected by $\mU$).
+
+\subsubsection*{Step 3: Solving, Iteration for Increasing Bounds}
+%To obtain a decidable problem, we restrict the number of states in the
+%LTS that we are looking for, which allows us to instantiate all quantifiers over
+%state variables $t,t'$ explicitly with all values in the given range. 
+The SMT constraints from step $2$ are 
+%in the theory of linear arithmetic with free function symbols. They are 
+decidable because the state set and the number of inputs to each process are bounded. If they are satisfiable, a model of the SMT constraints represents a valid implementation of the system.
+%If any of these were unbounded, we would have to use unbounded quantification instead of the finite conjunction in step $2$, making the satisfiability problem undecidable.
+%Thus, for a given bound $k$ on the size of the system, satisfiability of the constraints is decidable. 
+By increasing the size bound incrementally, a valid implementation will eventually be found, if it exists.
+%If the constraints are unsatisfiable for a given bound $k$, we increase $k$, add the necessary formulas to the encoding, and try again. If they are satisfiable, we obtain a model, giving us an implementation for the system processes such that $\spec$ is
+%satisfied.
+
+\begin{thm}[\cite{FinkbeinerS13}]
+If a given LTL specification $\spec$ is realizable in a given distributed 
+architecture $A$, then the bounded synthesis procedure will eventually 
+terminate and return 
+implementations of the system processes that satisfy $\spec$ in $A$.\footnote{Informally, an architecture defines the number of processes in the system, and their means of communication.}
+\end{thm}
+
+\subsection{Adaption to Guarded Protocols}
+\label{sec:adapted}
+
+We adapt the bounded synthesis approach for synthesis of guarded protocols 
+with the following modifications:
+\subsubsection*{Interleaving, Non-Determinism, Bottom-Up Encoding}
+\begin{itemize}
+\item Additional constraints ensure interleaving semantics of the 
+resulting system.
+\item We use a transition \emph{relation} instead of a function, as our 
+systems are inherently non-deterministic.\sj{add explanation?}
+\item Instead of a global transition relation and projections to the local 
+state spaces, we directly encode local transition relations and local state 
+labels. In particular, copies of the same template use the same function 
+symbols.
+\end{itemize}
+\subsubsection*{Guard Assignment and Evaluation}
+We encode the valuation of guard variables and guards as defined in Section~\ref{sec:model}. For the guard assignment functions, we introduce (for every process template $U$) additional free function symbols $\guard_U:T_U \times \bbB^E \times T_U \rightarrow \bbB^G$, to be synthesized based on their relation to the local transition relation $\delta_U$.
+\sj{explain encoding/evaluation of guards?}
+\subsubsection*{Optional: Increasing Set of Guard Variables}
+In the usual system model of guarded protocols, there are representative 
+guard variables for every state of every process template, whereas we 
+generally only consider a partially informed setting where guard variables 
+only represent a fixed set of observable states. 
+To support the fully-informed case, we optionally add state labels and re-
+compute the set of guard variables whenever the size bound on process 
+templates changes.
+%\subsubsection*{Ensuring Input-independent Enabledness}
+%We require that, for every global state and every environment input, if there is an enabled transition, then there must exist an enabled transition for \emph{every} environment input:
+%\[ \begin{array}{l}
+%\forall s \in S.\ \forall t' \in T\ \forall e \in E.\\
+%\left(\begin{array}{l}
+%\eval(\guard(s^p,e,t'),g(s,p)) \rightarrow \\
+%\qquad \forall e' \in E\ \exists t'' \in T.\ \eval(\guard(s^p,e',t''),g(s,p))
+%\end{array}\right)
+%\end{array} \]
+ 
+\subsubsection*{Encoding Strong Fairness and Absence of Local Deadlocks}
+For specifications $\spec$ that include liveness properties, we synthesize the system under additional fairness assumptions, as discussed in Section~\ref{sec:fairness}. The resulting specification is: 
+% \begin{align*}
+\[\begin{array}{ll}
+& (\forall{i}. \GF (\neg \enabled_i \lor \sched_i)) \impl (\forall{i}.\GF\enabled_i) \\
+\land & (\forall{i}. \GF \sched_i) \impl \spec.
+\end{array}
+\]
+% \end{align*} 
+
+\subsection{Correctness of Bounded Template Synthesis}
+Based on correctness of the original bounded synthesis approach (and correct
+modeling of the features of guarded protocols), we obtain soundness and completeness of bounded template synthesis:
+ 
+\begin{cor}
+\label{cor:synthesis:correctness}
+If a given specification $\spec$ is realizable in a (disjunctive/conjunctive) 
+guarded protocol with process multiplicities $(n_1,n_2)$, then the 
+bounded template synthesis procedure will eventually terminate and return 
+process templates $(U_1, U_2)$, with $(U_1, U_2)^{(n_1, n_2)} \models \spec$.
+\end{cor}
+
+%
+The given procedure
+will not terminate if the specification is unrealizable.
+Since the distributed realizability problem is in general 
+undecidable~\cite{Pnueli90,Schewe06,Schewe13},
+there is no algorithm that can
+detect distributed unrealizability in all cases. We conjecture the same is 
+the case for the template realizability problem.

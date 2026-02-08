@@ -1,0 +1,60 @@
+\section{Stochastic Path Planning for Congested Air Traffic}\label{sec:flight_model}
+Air traffic management operates under high operational uncertainty and strict collision risk requirements~\cite{shone2021applications}. Presently, air traffic authorities centrally plan deterministic trajectories and rely on human controllers to resolve local collision risks. 
+% Due to the lack of global coordination, this local resolution method cannot minimize a flight's collision risk encountered per flight. 
+% In real-time flight operations, runway delays, engine maintenance, and unexpected weather are all random events that cause flight paths to be highly uncertain.
+We use the MDP congestion game model to embed the real-time operation uncertainty into path planning and find global collision risk-free trajectories. 
+% At Nash equilibrium, each aircraft balances adherence to its designated trajectory with collision avoidance. 
+% as much as possible given its sensitivity to collisions and the other flight trajectories. 
+% In our model, each aircraft flies from an origin airport to a destination through a discretized 3D locations. The stochastic MDP transition dynamics capture operational uncertainties, and the MDP costs are selected to reduce collision risks without excessive delay or deviation from each aircraft's planned route. % is a planned flight flying from origin to destination airport. The state-action space models the 3D air space. The MDP transition dynamics maps each plane's deterministic actions to stochastic outcomes to reflect operational uncertainty. Finally, the MDP task completion costs are constructed based the plane's designated trajectory.
+% Using the flight plan over France on July $10^{th}$, $2017$, we show that the designated flight plan carries non-trivial collision risks under operational uncertainty, and use the game model to compute flight plans with lower collision risks.
+
+% \subsection{Individual Aircraft MDP}
+\textbf{Individual aircraft MDP}. We use an MDP to model deterministic flight plans under operational uncertainty. 
+% Our MDP model builds on the flight plan received by the aircraft.  
+% Using discrete latitude-longitude points called \textbf{waypoints} and discrete altitudes called \textbf{flight levels}, the flight plan is a sequence of time-waypoint-flight level triplets.  
+Aircraft $i$'s flight plan is $\textstyle \{(w^i_t, f^i_t) \ | t \in \mc{T}^i \}$, where $w^i_t$ are discrete waypoints used by the European Union Aviation Safety Agency (EASA), $f^i_t$ are discrete flight levels from 0 (sea level) to 450 ($45000$ feet) in increments of 50, and $\mc{T}^i$ are timestamps of the waypoints and flight-levels. 
+% All flight plans share the same waypoints and flight levels but differ in timestamps. The aircraft-centric MDP is as follows:
+\begin{figure}[ht!]
+    \centering
+    \includegraphics[width=0.24\columnwidth]{figures/aircraft_mdp_small.png}
+    \
+    \includegraphics[width=0.44\columnwidth]{figures/time_discretization.png}
+    \
+    \includegraphics[width=0.28\columnwidth]{figures/results/solved_no_congestion_costs_top_cropped.png}
+    \caption{Left: Airspace state-action definitions. Center: Interval-based congestion computation. Right: Expected aircraft trajectories without congestion costs $D^i$~\eqref{eqn:DG_prob}. Colors correspond to time. }
+    % \includegraphics[width=0.48\columnwidth]{figures/state_pruning.png}
+    % \caption{Left: example figure for time discretization. Right: example figure for state pruning}
+    \label{fig:time_discretization}
+\end{figure}
+
+\textbf{Time horizon}. Aircraft $i$'s time horizon is given by $\textstyle \mc{T}^i \cup \{t_L + b\Delta t_{int}\ | 0\leq b \leq B\}$, where $\mc{T}^i$ is from the flight plan, $t_L$ is the planned landing time, and $\Delta t_{int}, B\in \mathbb{N}$ are user-defined parameters.
+
+\textbf{States}. Each state $(w, f) \in [S]$ consists of a waypoint $w$ and a flight level $f$, as shown in Figure \ref{fig:time_discretization}. 
+
+\textbf{Actions}. At state $\textstyle(w,f)$, actions correspond to reaching one of $(w,f)$'s neighbors in the next time step. The set of neighbors is given by $\textstyle \mc{N}(w,f) = \big\{(w', f') \ | \ w' \in \mc{N}(w),  \ f' \in \{f-50, f, f+50\}, \ 0 \leq f'\leq 450 \big\}$, 
+    % \begin{equation}\label{eqn:neighbor_definition}
+    %     \mc{N}(w,f) = \Big\{(w', f') \ | \ w' \in \mc{N}(w),  \ f' \in \{f-50, f, f+50\}, \ 0 \leq f'\leq 450 \Big\},
+    % \end{equation}
+    where $\mc{N}(w)$ is the set of reachable waypoints from $w$.  Aircraft cannot loiter at $(w,f)$. The action of going to $(w', f')$ is $\textstyle a_{w',f'}$, such that $\textstyle [A_{w,f}] = \{a_{w',f'} \ | \ (w', f') \in \mc{N}(w,f)\}$.
+    % the available actions are to traverse to any one of the neighboring states: $[A_{w,f}] = \{a_{w',f'} \ | \ (w', f') \in \mc{N}(w,f)\}$. Aircraft may maintain flight level but cannot loiter at the same waypoint.
+    
+\textbf{Transition Dynamics}. Under action $a_{w', f'}$ from $(w, f)$, an aircraft has $\textstyle \beta$ probability of reaching $(w', f')$ and $\textstyle 1 - \beta$ probability of diverting to another state in $\mc{N}(w,f)$. 
+    % \begin{equation}
+    %     P_{(w,f), a_{w', f'}, s'} = \begin{cases}
+    %     0.95 & s' = (w', f') \\
+    %     0.05 & s' = (w, f) \\
+    %     0 & s' \in [S], s' \notin \{(w,f), (w', f')\}
+    %     \end{cases}
+    % \end{equation}
+    
+ \textbf{Cost}: Each state-action pair $(w, f, a_{w',f'})$ has a flight-dependent \textbf{deviation cost}, given by
+    % determined by the flight plan. At time $t$, the state-action cost for player $i$ is then 
+    \begin{equation}
+       \textstyle   C^i_{t, w, f, a} = d(w^i_t, w) + \alpha_f | f - f^i_t| + L(t, w, f), \ \forall (w,f) \in [S], a \in [A_{w,f}],
+    \end{equation}
+    where $(w^i_t, f^i_t)$ is aircraft $i$'s planned location at $t$, $d(v, w)\in \mathbb{N}$ is the number of edges between $v$ and $w$, $\alpha_f \in \reals$ is user-defined parameter, and $L:\mc{T}^i\times[S]\mapsto \reals$ is a tardiness cost. 
+    % We choose $\alpha_f > 1$ to reflect the energy intensive nature of changing flight levels. The tardiness cost is applied to all states past the landing time. 
+    If the aircraft plans to land at $(w_T, f_T, T)$, then $\textstyle L(t, w, f) = 0$ if $\textstyle (w,f) = (w_T, f_T)$ or $\textstyle t \leq T$, else $\textstyle L(t, w, f) = c_{tardy}(t-T)$. 
+    % In other words, the aircraft is penalized proportionally to its tardiness, but is not penalized for landing early.    
+    The expected cost under the flight plan is zero and strictly positive otherwise. Therefore, aircraft are inclined to follow the flight plan in the absence of congestion. 
+% This ensures that, even when the congestion cost is added, the trajectory of each aircraft stays close to the original flight plan.

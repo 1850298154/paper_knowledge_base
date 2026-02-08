@@ -1,0 +1,115 @@
+%!TEX root = main.tex
+
+\subsection{The Algorithm \SyncPDOffline}
+\seclabel{enumerate-patterns}
+
+\begin{comment}
+As with prior work, we model the problem of finding deadlock patterns as a cycle-detection problem
+over a graph. % $\lkevgraph{\tr}$ whose nodes are elements of the trace.
+%However, instead of a naive lock graph (with locks as nodes),
+%the nodes in our graph store additional metadata that helps us
+%to rule out false positives, and eventually enumerate all deadlock
+%patterns, for which we need information about concrete dynamic events in the trace.
+However, instead of considering locks as vertices (as in prior works~\cite{Bensalem2006,Bensalem2005}),
+we use an \emph{abstract lock graph} $\lkevgraph{\tr}$.
+% of the graph, our 
+% representation, called \emph{abstract lock graph} $\lkevgraph{\tr}$ 
+% effectively exploits \lemref{abstract-pattern-linear-time}.
+% The key novelty compared to such graphs in the literature
+% comes from combining it with the notion of sync-preserving deadlocks.
+Every node of $\lkevgraph{\tr}$ is an abstract acquire of $\tr$, and thus
+every deadlock pattern in $\tr$ appears in some abstract deadlock pattern defined by a cycle in $\lkevgraph{\tr}$.
+Hence, we can detect \emph{all} sync-preserving deadlocks in $\tr$ by enumerating each of the cycles of $\lkevgraph{\tr}$, and if it constitutes an abstract deadlock pattern, use \lemref{abstract-pattern-linear-time} to check if it contains a sync-preserving deadlock in $\Otilde(\NumEvents)$ time.
+% Hence, in linear time, our algorithm checks a whole abstract deadlock pattern, that typically summarizes polynomially many concrete deadlock patterns. 
+\end{comment}
+
+We now present the final ingredients of \SyncPDOffline.
+We construct the \emph{abstract lock graph},
+enumerate cycles in it, check whether
+any cycle is an abstract deadlock pattern,
+and if so, whether it contains sync-preserving deadlocks.
+
+\input{figures/fig_motivating_graph}
+\myparagraph{Abstract lock graph}{
+The abstract lock graph of $\tr$ is a directed graph
+$
+\lkevgraph{\tr} = (V_\tr, E_\tr)
+$,
+where
+\begin{itemize}
+	\item $V_\tr=\{\tuple{t_1, \lk_1, L_1, F_1},\dots, \tuple{t_k, \lk_k, L_k, F_k}\}$ is the set of abstract acquires of $\tr$, and
+	\item for every $\eta_1 {=} \tuple{t_1, \lk_1, L_1, F_1}, 
+	\eta_2 {=} \tuple{t_2, \lk_2, L_2, F_2} \in V_\tr$, we have  $(\eta_1, \eta_2) \in E_\tr$ iff 
+	$t_1 \neq t_2$, $\lk_1 \in L_2$, and $L_1 \cap L_2 = \emptyset$.
+\end{itemize}
+A node $\tuple{t_1, \lk_1, L_1, F_1}$ signifies that there is an event $\acq_1(\lk_1)$ performed by thread $t_1$ while holding the locks in $L_1$.
+The last component $F_1$ is a list which contains all such events $\acq_1$ in order of appearance in $\tr$.
+An edge $(\eta_1, \eta_2)$ signifies that the lock $\lk_1$ acquired by each of the
+events $\acq_1 \in F_1$ was held by $t_2$ when it executed each of $\acq_2\in F_2$ while not holding a common lock.
+%See \figref{lock_graph} for the lock graph to the trace $\tr_2$ of \figref{syncp_example}.
+The abstract lock graph can be constructed incrementally
+as new events appear in $\tr$.
+For $\NumEvents$ events, $\NumLocks$ locks and nesting depth $\NestingDepth$,
+the graph has
+$|V_\tr| = O\big(\NumThreads \cdot \NumLocks^{\NestingDepth}\big)$ vertices,
+$|E_\tr| = O(|V_\tr|\cdot \NumLocks^{\NestingDepth - 1})$ edges and can be
+constructed in $O(\NumEvents \cdot \NestingDepth)$ time.
+See \figref{motivating-graph} for examples.
+In the left graph, the cycle marks an abstract deadlock pattern and its single concrete deadlock pattern
+$\abst{D}=\{ e_2 \} \times \{ e_{8} \}$, and similarly for the middle graph where $\abst{D}=\{ e_4 \} \times \{ e_{18} \}$.
+%In the graph on the right, we have the abstract lock graph of the trace $\tr_3$ of  \figref{syncp_example}.
+In the right graph, there is a unique cycle which marks an abstract deadlock pattern of $6$ concrete deadlock patterns
+$\abst{D}=\{ e_2, e_4, e_{29} \} \times \{ e_{16}, e_{19} \}$.
+
+
+% \begin{example}
+% \figref{lock_graph} illustrates the lock graph of the trace $\tr_2$ in \figref{syncp_example}.
+% We have a unique cycle, of length $2$, that marks a corresponding abstract deadlock pattern of $6$ concrete deadlock patterns
+% $\abst{D}=\{ e_2, e_4, e_{29} \} \times \{ e_{16}, e_{19} \}$.
+% \end{example}
+}
+\input{algo-offline}
+
+% \vspace{-0.2in}
+\myparagraph{Algorithm $\SyncPDOffline$}{
+	It is straightforward to verify that every abstract deadlock pattern of $\tr$ appears as a (simple) cycle in $\lkevgraph{\tr}$.
+	However, the opposite is not true.
+	A cycle $C = \eta_0, \eta_1, \ldots, \eta_{k-1}$ of $\lkevgraph{\tr}$,
+	where $\eta_i = \tuple{t_i, \lk_i, L_i, F_i}$ defines an abstract deadlock pattern
+	if additionally every thread $t_i$ is distinct, all every lock $\lk_i$ is distinct, and all sets $L_i$ are pairwise disjoint.
+	This gives us a simple recipe for enumerating all abstract deadlock patterns, by using
+	Johnson's algorithm~\cite{Johnson1975} to enumerate
+	every simple cycle $C$ in $\lkevgraph{\tr}$, and check whether $C$ is an abstract deadlock pattern.
+	We thus arrived at our offline algorithm $\SyncPDOffline$ (\algoref{offline}).
+	The running time depends linearly on the length of $\tr$
+	and the number of cycles in $\lkevgraph{\tr}$.% (\thmref{syncp_offline}).
+}
+
+
+
+
+\begin{restatable}{theorem}{syncpoffline}
+\thmlabel{syncp_offline}
+Consider a trace $\tr$ of $\NumEvents$ events, $\NumThreads$ threads and $\textsf{Cyc}_\tr$ cycles in $\lkevgraph{\tr}$.
+The algorithm $\SyncPDOffline$ reports all sync-preserving deadlocks of $\tr$ in time $O(\NumEvents \cdot \NumThreads\cdot \textsf{Cyc}_\tr)$.
+% When the number of threads and lock-nesting depth is small, $\SyncPDOffline$ runs in $\Otilde(\NumEvents \cdot \poly{\NumLocks})$ time.
+\end{restatable}
+
+Although, in principle, we can have exponentially many cycles in $\lkevgraph{\tr}$,
+because the nodes of $\lkevgraph{\tr}$ are \emph{abstract} acquire events (as opposed to \emph{concrete}), we expect that the number of cycles (and thus abstract deadlock patterns) in $\lkevgraph{\tr}$ remains small, even though the number of \emph{concrete} deadlock patterns can grow exponentially.
+Since $\SyncPDOffline$ spends linear time per abstract deadlock pattern, we  have an efficient procedure overall 
+for constant $\NumThreads$ and $\NumLocks$.
+We evaluate $\textsf{Cyc}_\tr$ experimentally in \secref{experiments}, and confirm that it is very small compared to the number of concrete deadlock patterns in $\tr$.
+%\hunkar{
+Nevertheless, $\textsf{Cyc}_\tr$ can become exponential when $\NumThreads$ and $\NumLocks$ are large, making~\cref{algo:offline} run in exponential time.
+Note that this barrier is unavoidable in general, as proven in \thmref{pattern-w1-hardness-pattern}.
+%}
+
+\input{example-lockgraph}
+
+\begin{remark}
+Although the concept of lock graphs exists in the literature~\cite{Havelund2000,Bensalem2005,Cai2020,cai14magiclock},
+our notion of \emph{abstract} lock graphs is novel and tailored to sync-preserving deadlocks.
+The closest concept to abstract lock graphs is that of equivalent cycles~\cite{cai14magiclock}. 
+However, equivalent cycles unify all the concrete patterns of a given abstract pattern and lead to unsound deadlock detection, which was indeed their use. 
+\end{remark}

@@ -1,0 +1,188 @@
+\section{Evolution of Aggregation Behaviours with Novelty Search}
+\label{sec:aggregation}
+
+% section summary
+In this section, we apply novelty search to the problem of swarm aggregation --- a commonly studied task in swarm robotics. In the aggregation task, a dispersed robot swarm must form a single cluster. We conduct three sets of experiments with novelty search, each with a distinct behaviour characterisation. We compare the performance of novelty search to the performance of traditional fitness-based evolution. We also include results from evolutionary runs with NEAT in which random fitness scores are assigned to individuals. Random evolution serves as a baseline for performance comparisons.
+
+% aggregation related work
+Aggregation is a task of fundamental importance in many biological systems. It is the basis for the emergence of various forms of cooperation, and can be a considered a prerequisite for the accomplishment of many collective tasks~\citep{trianni03}. Several works describe the evolution of aggregation behaviours for swarms of robots. Commonly, the parameters of neural networks with fixed topologies are optimised by fitness-based evolutionary algorithms. \citet{baldassarre03} successfully evolved controllers for a swarm of robots to aggregate and move towards a light source in a clustered formation. Three classes of behaviours were evolved, but each evolutionary run always converged to only one of the classes. \citet{trianni03} studied the evolution of a swarm of simple robots to perform aggregation in a square arena. Two different behaviours were evolved: \emph{static clustering} which leads to the formation of compact and stable clusters, and \emph{dynamic clustering} which leads to loose but moving clusters. \citet{sahin05b} used a similar experimental setup as~\citep{trianni03}, and studied how some of the parameters of the evolutionary algorithm affected the performance and the scalability of the evolved behaviours.
+
+In the previous studies discussed above, the robots used directional sound sensing. Directional sensing allowed the robots to follow gradients towards groups of other robots emitting sound signals. The use of sound and directional microphones makes the aggregation task sufficiently easy for controllers based on reactive neural networks without any hidden neurons to solve the task~\citep{trianni03, baldassarre03, sahin05b}. In our work, the aggregation task is more challenging: the robots do not use sound, the range of the sensors is significantly lower than in previous studies, and the arena is larger. These modifications increase the difficulty of the task and may require radically different strategies for aggregation~\citep{soysal07}, since robots can only sense one another when they are close.
+
+
+\subsection{Experimental Setup}
+\label{sec:aggregation_setup}
+
+Our experimental framework is based on the Simbad 3d Robot Simulator~\citep{hugues06} for the robotic simulations, and on NEAT4J\footnote{NeuroEvolution for Augmenting Topologies for Java -- \url{http://neat4j.sourceforge.net}} for the implementation of NEAT. Simbad 3D simulates kinematics and implements simple collision handling. The environment is a 3\,m by 3\,m square arena bounded by walls. The swarm is homogeneous and composed of 7 robots. The robots are modelled based on the e-puck educational robot~\citep{mondada09}, but do not strictly follow its specification. Each robot is circular with a diameter of 8\,cm and can move at speeds of up to 12\,cm/s. Regarding sensors, each robot is equipped with 8 IR sensors evenly distributed around its chassis for the detection of obstacles (walls or other robots) within a range of 10\,cm, and 8 sensors dedicated to the detection of other robots within a range of 25\,cm. Both types of sensors return the distance of the object that is being sensed, or the maximum value if nothing is sensed. An additional sensor (count sensor) returns the percentage of nearby robots (within a radius of 25\,cm), relative to the desired cluster size (the total swarm size in our experiments). The simulated sensors are not based on any specific hardware. Nevertheless, the obstacle sensors could be implemented with active IR sensors, while the robot sensors and the robot count sensor could be implemented with short-range communication~\citep{correll07,gutierrez2008}. The inputs of the neural network controller are the normalised readings from the sensors mentioned above. The controller has three outputs: one to control the speed of each motor, and one dedicated to completely stopping the robot if its activation is above 0.5.
+
+We evaluate each controller 10 times. In each simulation, we vary the initial position and orientation of each robot. The initial positions are randomised in such a way that the robots are placed at least 50\,cm from one another, which ensures that the robots always are reasonably well distributed at the beginning of the simulation. Each simulation lasts for 2500 simulation steps, which corresponds to 250\,s of simulated time. The best individual of each generation was post-evaluated in 100 simulations, in order to obtain a more accurate fitness estimate.
+
+\subsection{Configuration of the Evolutionary Algorithms}
+\label{sec:aggregation_algsetup}
+
+Fitness-based evolution and random evolution use the default NEAT implementation provided by the NEAT4J library. In random evolution, random fitness scores are assigned to each individual. Novelty search was implemented over NEAT, following the description and parameters in~\citep{stan11a}. We used a $k$ value of 15 nearest neighbours and individuals are stochastically added to the archive with a probability of 2\%, as suggested in \citep{stan10b}. The parameters for NEAT were the same in all experiments: recurrent links are allowed, crossover rate -- 25\%, mutation rate -- 10\%, population size -- 200, and each evolutionary process was conducted for 250 generations. The remaining parameters were assigned their default value according to the NEAT4J implementation.
+
+The fitness function is based on the average distance to the centre of mass~(also used in \citep{trianni03}). The fitness $F_{a}$ of a simulation with $T$ time steps and $N$ robots is defined as:
+\begin{equation}
+F_{a}=\sum_{i=1}^{N}\frac{1-dist(\mathbf{R}_T,\mathbf{r}_{i,T})}{N} \enspace ,
+\end{equation}
+where $\mathbf{R}_T$ is the centre of mass at the end of the simulation, and $\mathbf{r}_{i,T}$ is the position of robot $i$ at the same instant. The distance values are normalised to $[0,1]$. The fitness scores obtained in each of the 10 simulations are combined to a single value using the harmonic mean, as advocated in~\citep{sahin05b}.
+
+The behaviour characterisations we use in novelty search are based on spatial inter-robot relationships, measured at regular intervals of 5\,s throughout the simulation. We devised three characterisations:
+
+\begin{description}
+\item[$\mathbf{b_{cm}}$:] The average distance to centre of mass of the swarm is sampled throughout the simulation. Considering a simulation with $N$ robots and $\tau$ temporal samples, the behaviour characterisation $\mathbf{b_{cm}}$ is given by:
+\begin{equation}
+\mathbf{b_{cm}}=\frac{1}{N} \left [ \sum_{i=1}^{N}dist(\mathbf{R}_1,\mathbf{r}_{i,1}),\cdots , \sum_{i=1}^{N}dist(\mathbf{R}_\tau,\mathbf{r}_{i,\tau}) \right ] \enspace .
+\label{eq:cm}
+\end{equation}
+
+\item[$\mathbf{b_{cl}}$:] The number of robot clusters is sampled at regular intervals throughout the simulation, inspired by the metric used in \citep{sahin05b}. Two robots belong to the same cluster if the distance between them is less than their sensor range (25\,cm). The behaviour characterisation $\mathbf{b_{cl}}$ is given by:
+\begin{equation}
+\mathbf{b_{cl}}=\frac{1}{N}\left [clustersCount(1), \cdots , clustersCount(\tau) \right ] \enspace .
+\label{eq:cl}
+\end{equation}
+
+\item[$\mathbf{b_{cmcl}}$:] The two characterisations $\mathbf{b_{cm}}$ and $\mathbf{b_{cl}}$ are concatenated to form a single characterisation. Both $\mathbf{b_{cm}}$ and $\mathbf{b_{cl}}$ have the same length and each element of the characterisation vectors ranges from 0 to 1. Thus both components of the behaviour characterisation approximately have the same contribution to the novelty metric. The new characterisation $\mathbf{b_{cmcl}}$ is given by:
+\begin{equation}
+\mathbf{b_{cmcl}}=(\mathbf{b_{cm}},\mathbf{b_{cl}}) \enspace .
+\label{eq:comb}
+\end{equation}
+\end{description}
+
+We computed the spatial inter-robot relationships at every 5\,s and the simulation lasted for 250\,s. This resulted in behaviour characterisation vectors of length 50 for $\mathbf{b_{cm}}$ and $\mathbf{b_{cl}}$, and vectors of length 100 for $\mathbf{b_{cmcl}}$. As 10 simulations are conducted to evaluate each controller, the corresponding final behaviour characterisation vector is the element-wise mean of the vectors obtained in all 10 simulations. In order to establish a basis for comparison, all the controllers evolved by novelty search and by random evolution were also scored by the fitness function $F_{a}$. It is important to note that the fitness scores did not have any influence on the evolutionary process in the novelty search experiments.
+
+\subsection{Performance Comparison}
+
+The fitness trajectories for novelty search, fitness-based evolution, and random evolution, are depicted in Figure~\ref{fig:ccm_graph}(left). The data points plotted are the averages of the highest fitness score found so far from the start of the evolutionary run and until the current generation.\footnote{The values that are plotted are fitness scores measured by the fitness function $F_{a}$, and not the actual scores used for selection in novelty search or in random evolution. Note that even random evolution has an ascending fitness trajectory because the data points plotted are the highest score achieved so far in the evolutionary process. The trajectory for random evolution can thus increase from time to time when an individual, by chance, scores higher than any previously evaluated individual.} Note that since novelty search does not follow a fitness gradient, the best solutions are not necessarily found in the last generation. As such, it is necessary to save the interesting solutions (for instance, the best one found so far) throughout the evolutionary process. We continued the evolutionary process beyond the 150th generation for all experiments, but there was no significant change in the fitness scores after that point. Although the lowest possible fitness score is $\approx 0.05$, the highest fitness of an initial random population is on average $\approx 0.55$. The relatively high fitness of an initial random population is explained by the fact that stochastically moving robots tend be significantly closer to one another than in the worst case scenario where robots are located in opposite corners of the arena.
+
+\begin{figure}
+	\centering
+	\includegraphics[width=1\textwidth]{pic/aggregation_performance.pdf}
+\caption{Highest fitness scores achieved in the aggregation task with fitness-based evolution (\emph{Fit}), random evolution (\emph{Random}), and novelty search with the three behaviour characterisations (\emph{NS-cmcl}, \emph{NS-cm}, \emph{NS-cl}). Left: average fitness value of the highest scoring individual found so far at each generation. The values are averaged over 30 independent evolutionary runs for each method. Right: box-plots of the highest fitness score found in each evolutionary run, for each method. The whiskers extend to the lowest and the highest data point within 1.5 times the interquartile range. Outliers are indicated by circles.}
+\label{fig:ccm_graph}
+\end{figure}
+
+Figure~\ref{fig:ccm_graph}(right) shows box-plots of the highest fitness score for each method in 30 evolutionary runs. The results show that novelty search could consistently find relatively high scoring solutions, with all the behaviour characterisations. There was no significant differences between the highest fitness scores achieved with fitness-based evolution and with novelty search with $\mathbf{b_{cmcl}}$ (Mann--Whitney U test, $p$-value $<$ 0.05). With $\mathbf{b_{cl}}$, the highest fitness scores were significantly lower than the highest scores found by novelty search with $\mathbf{b_{cmcl}}$ and fitness-based evolution. The capacity of novelty search to bootstrap the evolutionary process should be noted. From around generation 5 to generation 40, all novelty search variants achieve fitness scores significantly higher than fitness-based evolution ($p$-value $<$ 0.01).
+
+Previous studies have shown that novelty search can perform better than fitness-based evolution in deceptive tasks, but fails to match the performance of fitness-based evolution when the task is non-deceptive \citep{stan11a,mouret11}. Our results reveal that in the aggregation task, the fitness-function is not deceptive, as fitness-based evolution typically converges to the most effective strategy, achieving high fitness scores (except in a single run, see Figure~\ref{fig:ccm_graph}). Still, novelty search managed to achieve fitness scores that are comparable to the scores achieved in fitness-based evolution. 
+
+\subsection{Behavioural Diversity}
+
+The analysis of the explored behaviour space in novelty search and in fitness-based evolution allows for a better understanding of the evolutionary dynamics. Since each behaviour characterisation vector has either 50 or 100 dimensions, we applied a dimensionality reduction method to facilitate visualisation of the explored regions of the behaviour space. We used a Kohonen self-organising map \citep{kohonen90}. Kohonen maps are neural networks trained using unsupervised learning to produce a two-dimensional discretisation of the input space of the training samples, while preserving the topological relations. We trained a Kohonen map with the behaviour vectors found both by novelty search and by fitness-based evolution, and then mapped each individual to the region whose vector is more similar to the individual's behaviour vector.
+
+\subsubsection{Centre of mass behaviour characterisation} \label{sec:agg_cm}
+
+\afterpage{
+\begin{figure}
+\centering 
+	\includegraphics[width=1\textwidth]{pic/aggregation_som_cm.pdf}
+\caption{Kohonen maps representing the explored behaviour space in fitness-based evolution (Fit) and in novelty search with $\mathbf{b_{cm}}$ (NS-cm). Each circle is a neuron corresponding to the vector depicted by the embedded plot (the average distance to the centre of mass over time). Each behaviour vector is mapped to the neuron with the most similar vector. The darker the background of a neuron is, the more behaviours were mapped to it. The regions associated with higher fitness scores are indicated with a bold circle (regions \emph{c} to \emph{g}).}
+\label{fig:som_cm}
+\end{figure}
+
+\begin{table}
+\caption{The number of individuals mapped to each behaviour region \emph{a-g} (see Figure~\ref{fig:som_cm}), relative to the total number of mapped individuals.}
+\centering
+\begin{tabular}{r r r}
+\toprule
+Behaviour region & Fit exploration (\%) & NS-cm exploration (\%) \\
+\midrule
+a & 18.17 & 3.80 \\
+b & 22.18 & 6.39 \\
+c & 10.27 & 1.82 \\
+d & 4.57 & 1.54 \\
+e & 1.23 & 2.75 \\
+f & 0.15 & 1.90 \\
+g & 0.14 & 3.50 \\
+\bottomrule
+\end{tabular}
+\label{tab:som_cm}
+\end{table}
+}
+
+The Kohonen maps corresponding to the explored behaviour space in fitness-based evolution and novelty search with $\mathbf{b_{cm}}$ can be seen in Figure~\ref{fig:som_cm}. The results show that fitness-based evolution focused the search on only a subset of the behaviour regions. In contrast, novelty search explored the behaviour space much more uniformly. If we consider the behaviour regions associated with higher fitness scores (regions \emph{c} to \emph{g}), important differences become apparent: fitness-based evolution avoids behaviour regions where the average distance to the centre of mass rises beyond the initial value, such as the regions \emph{f} and \emph{g} (see Table~\ref{tab:som_cm}). Instead, the evolutionary process is much more focused on behaviours that lead to a monotonic decrease in the average distance to the centre of mass. This bias is introduced by the fitness function, as it favours a low average distance to centre of mass. Evolving solutions where the average distance rises beyond the initial value might require going against the fitness gradient. As such, these types of solutions are impeded in the fitness-based evolutionary process. Novelty search, on the other hand, is not subject to a static evolutionary pressure, and can therefore explore and discover a wider range of solutions to the task.
+
+The analysis of the behaviour patterns (see plots inside the neurons in Figure~\ref{fig:som_cm}) reveals an interesting point: the regions explored by novelty search are characterised by vectors that differ much less than uniformly sampled vectors of length 50 would. This happens because the elements of a given behaviour vector are inherently correlated. Robots cannot, for instance, travel instantly to any location in the environment, and the difference between consecutive samples of the average distance to the centre of mass is therefore limited by the speed of the robots. As such, the reachable behaviour regions constitute only an (often small) subset of the total behaviour space. This explains why novelty search can consistently find successful solutions to the task, even in a high-dimensional behaviour space.
+
+The results also show that fitness-based evolution spends a considerable amount of time in behaviour regions where there are no aggregation dynamics at all (regions \emph{a} and \emph{b}). These regions correspond to the initial best solutions, where robots do not move or move randomly in the arena, in order to maintain an average distance to the centre of mass that is at least as low as the average distance at the start of the simulation. This class of behaviours constitutes a local maximum. Novelty search does not spend as much time in such behaviour regions (see Table~\ref{tab:som_cm}), as the search moves towards regions with novel behaviours. Since the initial average distance to the centre of mass is situated in the middle of the spectrum, the novel behaviours can be aggregation behaviours as well as dispersion behaviours. Typically, each novelty search evolutionary run explores both types of behaviour simultaneously, maintaining a healthy diversity in the population. This phenomenon can offer an explanation for the relatively good performance of novelty search in the earlier stages of evolution: novelty search does not get stuck in the early local maximum, and as such can explore and discover better solutions faster.
+
+To confirm the behavioural diversity evolved by each method, we resorted to the visual inspection of the best solutions. In fitness-based evolution, the highest scoring individuals tended to follow the same behaviour pattern (Figure~\ref{fig:behaviours_cm},~\textbf{fit}):
+
+\begin{description}
+\item[\bf fit:] The robots explore the environment in large circles, and form static clusters when they encounter one another. If a cluster is small, the robots abandon it after a while and recommence the circular exploration.
+\end{description}
+
+The \textbf{fit} behaviour pattern was also often found by novelty search. However, novelty search commonly evolved a different type of solutions in which walls are exploited to achieve aggregation. Examples of behaviour patterns that use the walls are described below and depicted in Figure~\ref{fig:behaviours_cm}~(\textbf{cm1} and \textbf{cm2}).
+
+\begin{description}
+\item[\bf cm1:] The robots go towards the walls while avoiding any other robots encountered. When they reach a wall, they follow the wall for a while and then depart with a certain circular trajectory that causes them to pass through the centre of the arena. Eventually, the robots end up forming a loose cluster close to the centre.
+\item[\bf cm2:] The robots move in straight lines until they encounter a wall, and then, depending on the approach angle, they either remain static for a while or start to follow the wall. When two or more robots encounter one another, they stop and form a cluster near the wall.
+\end{description}
+
+\begin{figure}
+\centering 
+	\includegraphics[width=1\textwidth]{pic/behaviours_cm_new.pdf}
+\caption{The typical best solution evolved by fitness-based evolution (fit), and two examples of solutions found by novelty search with $\mathbf{b_{cm}}$ (cm1 and cm2). Each line represents the trajectory of a single robot throughout the simulation. The circles depict the initial positions of the robots and the squares depict their final positions. Videos of the behaviours are available as online supplemental material.}
+\label{fig:behaviours_cm}
+\end{figure}
+
+Visual inspection of the behaviours confirms that fitness-based evolution did not explore some classes of solutions, and  in particular, solutions where the robots navigate near the walls. If all the robots initially move towards one of the walls surrounding the arena, they will often end up far apart. Consequently, the centre of mass of the robots will often be close to the centre of the arena, far from the robots, which explains the initial high average distance to the centre of mass (regions \emph{e, f, g} in Figure~\ref{fig:som_cm}). Learning to navigate near the walls potentially requires the evolution of many solutions with very low fitness scores. Avoiding navigation close to walls, on the other hand, results in higher fitness scores, because robots will, by chance, be closer to one another, and therefore to the centre of mass. Given the opportunistic nature of fitness-based evolution, the stepping stone of first navigating along walls to later achieve aggregation, is thus unlikely to be found. In fact, we have been unable to find reports in the literature on the evolution of aggregation behaviours that exploit walls. Such behaviours have, however, proven successful in biological systems, such as in self-organised aggregation of cockroaches \citep{jeanson05}.
+
+\subsubsection{Number of clusters behaviour characterisation}
+
+The difference between the fitness scores of the solutions achieved with $\mathbf{b_{cm}}$ and $\mathbf{b_{cl}}$ was not significant. Nevertheless, we found that the different characterisations affected the evolved behaviours. Many of the best solutions evolved with $\mathbf{b_{cl}}$ were similar to the solutions evolved by fitness-based evolution, namely the formation and disbandment of small clusters. However, new behaviour patterns were also found. The distinctive behaviours evolved by novelty search with $\mathbf{b_{cl}}$ were focused on the exploitation of inter-robot relations and of flocking in particular. For example, the following two behaviour patterns were identified (see Figure~\ref{fig:behaviours_cl}):
+
+\begin{description}
+\item[\bf cl1:] The robots navigate in circles, and when two robots meet, one starts to follow the other, which leads to flocking with circular trajectories. Eventually, a single moving file is formed.
+\item[\bf cl2:] Similar to (a), but when a robot cluster reaches a reasonable size, the cluster becomes static.
+\end{description}
+
+\begin{figure}
+\centering 
+	\includegraphics[width=0.66\textwidth]{pic/behaviours_cl_new.pdf}
+\caption{Examples of distinctive behaviours evolved by novelty search with $\mathbf{b_{cl}}$. Each line represents the trajectory of a single robot throughout the simulation. The circles depict the initial positions of the robots and the squares depict their final positions. Videos of the behaviours are available as online supplemental material.}
+\label{fig:behaviours_cl}
+\end{figure}
+
+Overall, novelty search with $\mathbf{b_{cl}}$ focused on different classes of behaviours than novelty search with $\mathbf{b_{cm}}$. One of the main reasons for the difference in the evolved behaviours is conflation. Conflation occurs when individuals with distinct observable behaviours have very similar behaviour characterisation vectors~\citep{stan11a}. The consequence is that an individual with a distinct observable behaviour might not be considered novel by the novelty measure, and may thus disappear from the population. Conflation can represent both an advantage in terms of efficiency because it reduces the size of the search space, and a disadvantage when it inhibits the discovery of successful solutions or important stepping stones.
+
+Two examples of behaviours that can be conflated are shown in Figure~\ref{fig:conflation}. For the $\mathbf{b_{cm}}$ characterisation, the degree of clustering of the robots is irrelevant; while for the $\mathbf{b_{cl}}$ characterisation, the distance between robots (and clusters) is irrelevant. The impact of conflation can be seen in the evolved behaviours: with the $\mathbf{b_{cm}}$ characterisation, there were more behaviours that exploited walls, because navigating near them has a great impact on the novelty measure; while with $\mathbf{b_{cl}}$, the behaviours focused on the interactions between the robots and clusters, including following one another and disbanding clusters.
+
+\begin{figure}[h]
+\centering 
+	\includegraphics[width=0.8\textwidth]{pic/conflation.pdf}
+\caption{An illustration of conflation for the centre of mass behaviour characterisation $\mathbf{b_{cm}}$ (left) and for the number of clusters behaviour characterisation $\mathbf{b_{cl}}$ (right). In both cases, the differences would not be reflected in the respective behaviour characterisations.}
+\label{fig:conflation}
+\end{figure}
+
+\subsubsection{Combined behaviour characterisation}
+\label{sec:combined_aggregation}
+%
+Novelty search with the composed behaviour characterisation $\mathbf{b_{cmcl}}$ achieved on average marginally higher fitness scores than $\mathbf{b_{cm}}$ and $\mathbf{b_{cl}}$ (Mann--Whitney U test, $p$-value $<$ 0.05), see Figure~\ref{fig:ccm_graph}(right). The composed behaviour characterisation considers both the average distance to centre of mass and the number of clusters formed. As such, different behaviours are less likely to be conflated, which can potentially lead to better solutions.
+
+It should, however, be noted that $\mathbf{b_{cm}}$ and $\mathbf{b_{cl}}$ are closely related with one another. It is not possible, for instance, to have a low average distance to the centre of mass and at the same time a large number of clusters. A large number of clusters implies that the swarm is scattered, and as such, the robots will have a high average distance to the centre of mass. Combining $\mathbf{b_{cm}}$ and $\mathbf{b_{cl}}$ reduces conflation to some extent, but since the two characterisations are related to one another, no additional effort is needed to explore the larger behaviour space. This explains why the behaviour space with more dimensions ($\mathbf{b_{cmcl}}$) did not have a negative impact in the effectiveness of novelty search in this case.
+
+\subsection{Neural Network Complexity}
+
+Previous work has shown that an advantage of novelty search, when used together with NEAT, is its ability to evolve solutions with lower genomic complexity \citep{stan11a}. To determine if such advantage holds in the aggregation task, we analysed the complexity (sum of the number of neurons and number of connections) of the solutions found by fitness-based evolution and by novelty search. The comparison is established by analysing the average complexity (across the multiple evolutionary runs) of the least complex solution with a fitness score above a certain threshold. The results are shown in Table~\ref{tab:complexity}. We only show the results for the $\mathbf{b_{cmcl}}$ characterisation because the results for the $\mathbf{b_{cm}}$ and $\mathbf{b_{cl}}$ characterisations are similar.
+
+\begin{table}[b]
+\caption{Comparison of the least complex solutions evolved by fitness-based evolution (Fit) and novelty search with $\mathbf{b_{cmcl}}$ (NS). The \emph{Complexity} columns lists the network complexity (sum of the number of neurons and the number of connections) of the least complex individual with a fitness score above a certain \emph{Fitness level}. The \emph{Generation} column lists the average generation in which the least complex individual was generated. The values are averages of 30 evolutionary runs for each method.}
+\centering
+\begin{tabular}{r r r r r r r}
+\toprule
+\multicolumn{ 1}{c}{} & \multicolumn{ 2}{c}{Generation} & \multicolumn{ 2}{c}{Complexity} \\ \cmidrule{ 2- 5}
+\multicolumn{ 1}{r}{Fitness level} & \multicolumn{1}{r}{Fit} & \multicolumn{1}{r}{NS} & \multicolumn{1}{r}{Fit} & \multicolumn{1}{r}{NS} \\ \midrule
+0.60 &  9 & 5  & 74.20 & 71.33 \\
+0.65 &  18 & 7  & 75.77 & 71.67 \\
+0.70 &  28 & 14 & 77.10 & 72.40 \\
+0.75 &  42 & 22 & 79.10 & 74.13 \\
+0.80 &  55 & 41 & 80.90 & 77.33 \\
+0.85 &  76 & 63 & 83.17 & 81.70 \\
+\bottomrule
+\end{tabular}
+\label{tab:complexity}
+\end{table}
+
+The results show that on average, for the same fitness levels, novelty search finds individuals with significantly less complex neural networks (Mann--Whitney U test, $p$-value $<$ 0.05). The difference is especially pronounced in the lower fitness levels. Note that the networks in the initial populations (without any hidden neurons) have a complexity of 71 (20 neurons and 51 links). The difference in the network complexity can be ascribed to the convergent nature of fitness-based evolution. If the best controllers in the earlier stages of evolution have more complex neural networks, fitness-based evolution starts to converge to such complex structures. As novelty search does not converge, and has tendency to explore simple solutions before moving on to more complex ones \citep{stan11a}, it is capable of finding solutions with a lower network complexity.

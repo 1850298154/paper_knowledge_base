@@ -1,0 +1,287 @@
+%!TEX root =paper.tex
+\vspace{-1mm}
+\section{Algorithm}
+\label{sec:algorithm}
+
+In this section, we develop an algorithm to solve the optimization
+problem \eqref{eq:constrained}.  Note that both the objective function
+and the constraint in \eqref{eq:constrained} are nonconvex and involve
+expectation without closed-form expression.  As a constrained problem,
+a straightforward approach to solve \eqref{eq:constrained} is to
+define the following Lagrangian function
+\#
+L(\theta, \lambda) = J(\theta) + \lambda \cdot \big[ D(\theta) - D_0 \big],
+\#
+and solve the dual problem
+\#
+\inf_{\lambda \geq 0}  \sup_{\theta} L(\theta, \lambda).
+\#
+However, this problem is a nonconvex minimax problem and, therefore,
+is hard to solve and establish theoretical guarantees for solutions
+\cite{adolphs2018non}.  Another approach to solve
+\eqref{eq:constrained} is to replace $J(\theta)$ and $D(\theta)$ by
+surrogate functions with nice properties.  For example, one can
+iteratively construct local quadratic approximations that are strongly
+convex \cite{scutari2013decomposition}, or are an upper bound for the
+original function \cite{sun2016majorization}.  However, an immediate
+problem of this naive approach is that, even if the original problem
+\eqref{eq:constrained} is feasible, the convex relaxation problem need
+not be.  Also, these methods only deal with deterministic and/or
+convex constraints.
+
+
+In this work, we propose an iterative algorithm that approximately
+solves \eqref{eq:constrained} by constructing a sequence of convex
+relaxations, inspired by \cite{liu2018stochastic}.  Our method is able
+to handle the possible infeasible situation due to the convex
+relaxation as mentioned above, and handle stochastic and nonconvex
+constraint.
+Since we do not have access to $J(\theta)$ or $D(\theta)$, we first
+define the sample negative cumulative reward and cost functions as
+\#
+J^*(\theta) = - \sum_{t\geq 0} \gamma ^t \cdot  r(s_t, a_t) 
+\qquad \text{and}\qquad
+D^*(\theta) = \sum_{t\geq 0} \gamma ^t \cdot  d(s_t, a_t).
+\#
+Given $\theta$, $J^*(\theta)$ and $D^*(\theta)$ are the sample
+negative cumulative reward and cost value of a realization (i.e., a
+trajectory) following policy $\pi_{\theta}$.  Note that both
+$J^*(\theta)$ and $D^*(\theta)$ are stochastic due to the randomness
+in the policy, state transition distribution, etc.  With some abuse of
+notation, we use $J^*(\theta)$ and $D^*(\theta)$ to
+denote both a function of $\theta$ and a value obtained by the
+realization of a trajectory.  Clearly we have
+$J(\theta) = \EE \big[ J^*(\theta) \big]$ and
+$D(\theta) = \EE \big[ D^*(\theta) \big]$.
+
+
+We start from some (possibly infeasible) $\theta_0$.  Let $\theta_k$
+denote the estimate of the policy parameter in the $k$-th iteration.
+As mentioned above, we do not have access to the expected cumulative
+reward $J(\theta)$. Instead we sample a trajectory following the
+current policy $\pi_{\theta_k}$ and obtain a realization of the
+negative cumulative reward value and the gradient of it as
+$J^*(\theta_k)$ and $\nabla_{\theta} J^*(\theta_k)$, respectively. The
+cumulative reward value is obtained by Monte-Carlo estimation, and the
+gradient is also obtained by Monte-Carlo estimation according to the
+policy gradient theorem in \eqref{eq:pg_theorem}.  We provide more
+details on the realization step later in this section.  Similarly, we
+use the same procedure for the cost function and obtain realizations
+$D^*(\theta_k)$ and $\nabla_{\theta} D^*(\theta_k)$.
+
+We approximate $J(\theta)$ and $D(\theta)$ at $\theta_k$ by the quadratic surrogate functions
+\#
+\label{eq:quadratic_appriximation_J}
+\tilde J(\theta, \theta_k, \tau ) & = J^*(\theta_k) + \la \nabla_{\theta} J^*(\theta_k), \theta - \theta_k \ra + \tau \| \theta - \theta_k \|_2^2, \\
+\label{eq:quadratic_appriximation_D}
+\tilde D(\theta, \theta_k, \tau ) &= D^*(\theta_k)  +  \la \nabla _{\theta} D^*(\theta_k), \theta - \theta_k \ra + \tau  \| \theta - \theta_k \|_2^2,
+\# 
+where $\tau > 0$ is any fixed constant.
+In each iteration, we solve the optimization problem 
+\begin{align}
+\label{eq:QCQP}
+\overline \theta_k =  
+  \argmin _{\theta }  \overline J^{(k)} (\theta)   \qquad 
+  \text{subject to} \qquad  \overline  D^{(k)} (\theta) \leq D_0,
+\end{align}
+where we define  
+\#
+\label{eq:J_bar}
+\overline J^{(k)} (\theta) = (1 - \rho_k) \cdot \overline J^{(k-1)} (\theta) + \rho_k \cdot \tilde J(\theta, \theta_k, \tau), \\
+\label{eq:D_bar}
+\overline D^{(k)} (\theta) = (1 - \rho_k) \cdot \overline D^{(k-1)} (\theta) + \rho_k \cdot \tilde D(\theta, \theta_k, \tau),
+\# 
+with the initial value
+$\overline J^{(0)}(\theta) = \overline D^{(0)}(\theta) = 0$. Here
+$\rho_k$ is the weight parameter to be specified later.  According to
+the definition \eqref{eq:quadratic_appriximation_J} and
+\eqref{eq:quadratic_appriximation_D}, problem \eqref{eq:QCQP} is a
+convex quadratically constrained quadratic program (QCQP). Therefore,
+it can be efficiently solved by, for example, the interior
+point method.  However, as mentioned before, even if the original
+problem \eqref{eq:constrained} is feasible, the convex relaxation
+problem \eqref{eq:QCQP} could be infeasible. In this case, we instead
+solve the following feasibility problem
+\begin{equation}
+\begin{aligned}
+\label{eq:QCQP_alternative}
+\overline \theta_k = ~
+ \argmin _{\theta, \alpha } ~~ \alpha \qquad
+ \text{subject to} \qquad \overline  D^{(k)} (\theta) \leq D_0 + \alpha.
+\end{aligned}
+\end{equation}
+In particular, we relax the infeasible constraint and find
+$\overline \theta_k$ as the solution that gives the minimum
+relaxation.  Due to the specific form in~\eqref{eq:quadratic_appriximation_D},
+$\overline D^{(k)} (\theta)$ is decomposable into quadratic forms of each component of $\theta$,
+with no terms involving $\theta_i \cdot \theta_j$. Therefore, the
+solution to problem \eqref{eq:QCQP_alternative} can be written in a
+closed form.  Given $\overline \theta_k$ from either \eqref{eq:QCQP}
+or \eqref{eq:QCQP_alternative}, we update $\theta_k$ by
+\#
+\label{eq:theta_update}
+\theta_{k+1} = ( 1- \eta_k) \cdot \theta_k + \eta_k \cdot \overline \theta_k, 
+\# 
+where $\eta_k$ is the learning rate to be specified later. 
+Note that although we consider only one constraint in the algorithm,
+both the algorithm and the theoretical result in Section
+\ref{sec:theoretical} can be directly generalized to multiple
+constraints setting.  The whole procedure is summarized in Algorithm
+\ref{algo}.
+
+\begin{algorithm}[tb]
+   \caption{Successive convex relaxation algorithm for constrained MDP}
+   \label{algo}
+\begin{algorithmic}[1]
+   \STATE {\bfseries Input:} Initial value $\theta_0$, $\tau$, $\{ \rho_k \}, \{ \eta_k \}$.
+   \FOR{$k=1, 2, 3, \dots$}
+   \STATE Obtain a sample $J^*(\theta_k)$ and $D^*(\theta_k)$ by Monte-Carlo sampling.
+   \STATE Obtain a sample $\nabla _{\theta} J^*(\theta_k)$ and $\nabla _{\theta} D^*(\theta_k)$ by policy gradient theorem.
+       \IF {problem \eqref{eq:QCQP} is feasible}
+        \STATE Obtain $\overline \theta_k$ by solving \eqref{eq:QCQP}.
+    \ELSE
+        \STATE Obtain $\overline \theta_k$ by solving \eqref{eq:QCQP_alternative}.
+    \ENDIF
+   \STATE Update $\theta_{k+1}$ by \eqref{eq:theta_update}.
+   \ENDFOR
+\end{algorithmic}
+\end{algorithm}
+
+
+\vspace{-1.5mm}
+\paragraph{Obtaining realizations $J^*(\theta_k)$ and $\nabla_{\theta} J^*(\theta_k)$.}
+We detail how to obtain realizations $J^*(\theta_k)$ and
+$\nabla_{\theta} J^*(\theta_k)$ corresponding to the lines 3 and 4 in
+Algorithm \ref{algo}. The realizations of $D^*(\theta_k)$ and
+$\nabla_{\theta} D^*(\theta_k)$ can be obtained similarly.
+
+
+First, we discuss finite horizon setting, where we can sample the full
+trajectory according to the policy $\pi_{\theta}$. In particular, for
+any $\theta_k$, we use the policy $\pi_{\theta_k}$ to sample a
+trajectory and obtain $J^*(\theta_k)$ by Monte-Carlo method.  The
+gradient $\nabla _{\theta} J(\theta)$ can be estimated by the policy
+gradient theorem \cite{sutton2000policy},
+\#
+\label{eq:pg_theorem_algo}
+\nabla_{\theta} J(\theta) = - \EE_{\pi_{\theta}} \Big[ \nabla_{\theta} \log \pi_{\theta}(s,a) \cdot Q^{\theta}(s,a) \Big].
+\#
+Again we can sample a trajectory and obtain the policy gradient
+realization $\nabla _{\theta} J^*(\theta_k)$ by Monte-Carlo method.
+
+In infinite horizon setting, we cannot sample the infinite length
+trajectory. In this case, we utilize the truncation method introduced
+in \cite{rhee2015unbiased}, which truncates the trajectory at some
+stage $T$ and scales the undiscounted cumulative reward to obtain an
+unbiased estimation.  Intuitively, if the discount factor $\gamma$ is
+close to $0$, then the future reward would be discounted heavily and,
+therefore, we can obtain an accurate estimate with a relatively small
+number of stages. On the other hand, if $\gamma$ is close to $1$, then
+the future reward is more important compared to the small $\gamma$
+case and we have to sample a long trajectory. Taking this intuition
+into consideration, we define $T$ to be a geometric random variable
+with parameter $1 - \gamma$: $\Pr(T = t) = (1-\gamma)
+\gamma^{t}$. Then, we simulate the trajectory until stage $T$ and use
+the estimator
+$J_{\text{truncate}}(\theta) = - (1-\gamma) \cdot \sum_{t = 0}^T r(s_t, a_t) $,
+which is an unbiased estimator of the expected
+negative cumulative reward $J(\theta)$, as proved in proposition 5 in \cite{paternain2018stochastic}. 
+We can apply the same truncation procedure to estimate the policy
+gradient $\nabla_{\theta} J(\theta)$.
+
+
+\vspace{-1.5mm}
+\paragraph{Variance reduction.} 
+
+Using the naive sampling method described above, we may suffer from
+high variance problem.  To reduce the variance, we can modify the
+above procedure in the following ways.  First, instead of sampling
+only one trajectory in each iteration, a more practical and stable way
+is to sample several trajectories and take average to obtain the
+realizations. As another approach, we can subtract a baseline
+function from the action-value function $Q^{\theta}(s,a)$ in the
+policy gradient estimation step \eqref{eq:pg_theorem_algo} to reduce
+the variance without changing the expectation. A popular choice of
+the baseline function is the state-value function $V^{\theta} (s)$ as
+defined in \eqref{eq:value_funcs}. In this way, we can replace
+$Q^{\theta}(s,a)$ in \eqref{eq:pg_theorem_algo} by the advantage
+function $A^\theta(s, a)$ defined as
+\begin{equation*}
+  A^\theta(s, a) =
+Q^{\theta}(s,a) - V^{\theta} (s).
+\end{equation*}
+This modification corresponds to the standard REINFORCE with Baseline
+algorithm \cite{sutton2018reinforcement} and can significantly reduce
+the variance of policy gradient.
+
+\vspace{-1.5mm}
+\paragraph{Actor-critic method.}
+Finally, we can use an actor-critic update to improve the
+performance further.  In this case, since we need unbiased estimators for both the gradient
+and the reward value in \eqref{eq:quadratic_appriximation_J} and
+\eqref{eq:quadratic_appriximation_D} in online fashion, we modify our original problem
+\eqref{eq:constrained} to average reward setting as
+\begin{equation}
+\begin{aligned}
+\label{eq:constrained_average}
+&\mathop{\textrm{minimize}}_{\theta \in \Theta} 
+~~J(\theta) =  \lim_{T \to \infty}  \EE_{\pi_{\theta} } \biggl [ - \frac{1}{T} \sum_{t = 0}^T r(s_t, a_t) \biggr ],  \\
+&\text{subject to}
+~~D(\theta) =  \lim_{T \to \infty} \EE_{\pi_{\theta} } \biggl [ \frac{1}{T} \sum_{t = 0}^T d(s_t, a_t) \biggr ]  \leq  D_0.
+\end{aligned}
+\end{equation}
+Let $V^J_\theta(s)$ and $V^D_\theta(s)$ denote the value and cost
+functions corresponding to \eqref{eq:value_funcs}.  We use possibly
+nonlinear approximation with parameter $w$ for the value function:
+$V^J_w (s)$ and $v$ for the cost function: $V^D_v (s)$.  In the critic
+step, we update $w$ and $v$ by TD(0) with step size $\beta_w$ and
+$\beta_v$; in the actor step, we solve our proposed convex relaxation
+problem to update $\theta$.  The actor-critic procedure is summarized
+in Algorithm \ref{algo_ac}.  Here $J$ and $D$ are estimators of
+$J(\theta_k)$ and $D(\theta_k)$. Both of $J$ and $D$, and the TD error
+$\delta^J$, $\delta^D$ can be initialized as 0.
+
+The usage of the actor-critic method helps reduce variance by using a
+value function instead of Monte-Carlo sampling. Specifically, in
+Algorithm \ref{algo} we need to obtain a sample trajectory and
+calculate $J^*(\theta)$ and $\nabla_\theta J^*(\theta)$ by Monte-Carlo
+sampling. This step has a high variance since we need to sample a
+potentially long trajectory and sum up a lot of random rewards.  In
+contrast, in Algorithm \ref{algo_ac}, this step is replaced by a value
+function $V^J_w(s)$, which reduces the variance.
+
+
+
+\begin{algorithm}[tb]
+   \caption{Actor-Critic update for constrained MDP}
+   \label{algo_ac}
+\begin{algorithmic}[1]
+   \FOR{$k=1, 2, 3, \dots$ }
+   \STATE Take action $a$, observe reward $r$, cost $d$, and new state $s'$.
+   \STATE {\bf Critic step:}
+   \STATE ~~~ $w \leftarrow w + \beta_w \cdot \delta^J \nabla_w V^J_w (s), ~~ J \leftarrow J + \beta_w \cdot\big( r - J \big)$.
+   \STATE ~~~ $v \leftarrow v + \beta_v \cdot \delta^D \nabla_v V^J_v (s), ~~ D \leftarrow D + \beta_v \cdot\big( d - D \big)$.
+   \STATE {\bf Calculate TD error:}
+   \STATE ~~~ $\delta^J = r - J + V^J_w(s') - V^J_w(s)$.
+   \STATE ~~~ $\delta^D = d - D + V^D_v(s') - V^D_v(s)$.
+   \STATE {\bf Actor step:}
+   \STATE ~~~ Solve $\overline \theta_k$ by \eqref{eq:QCQP} or \eqref{eq:QCQP_alternative} with \\
+   \qquad $J^*(\theta_k)$, $\nabla _{\theta} J^*(\theta_k)$ in \eqref{eq:quadratic_appriximation_J} replaced by $J$ and $\delta^J \cdot \nabla_{\theta} \log \pi_{\theta}(s,a) $; \\
+   \qquad $D^*(\theta_k)$, $\nabla _{\theta} D^*(\theta_k)$ in \eqref{eq:quadratic_appriximation_D} replaced by $D$ and $\delta^D \cdot \nabla_{\theta} \log \pi_{\theta}(s,a) $.
+   \STATE $s \leftarrow s'$.
+   \ENDFOR
+\end{algorithmic}
+\end{algorithm}
+
+
+
+
+
+
+
+
+
+
+%%% Local Variables:
+%%% TeX-master: "paper"
+%%% End:

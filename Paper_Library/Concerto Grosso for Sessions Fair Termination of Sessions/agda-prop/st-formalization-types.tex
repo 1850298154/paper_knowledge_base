@@ -1,0 +1,200 @@
+\beginbass
+%
+We postulate the existence of $\Message$, representing the set of
+values that can be exchanged in communications.
+The actual Agda formalization is parametric on an
+arbitrary set $\Message$, the only requirement being that $\Message$
+must be equipped with a decidable notion of equality. We will make
+some assumptions on the nature of $\Message$ when we present
+specific examples.
+To begin the formalization, we declare the two data types we use to represent session types. 
+Because these types are mutually recursive, we declare them in advance so that 
+we can later refer to them from within the definition of each.
+
+\begin{lstlisting}
+data SessionType : Set
+record $\infty$SessionType : Set
+
+data SessionType where
+  nil : SessionType
+  inp out : Continuation $\rightarrow$ SessionType
+  
+record $\infty$SessionType where
+  coinductive
+  field force : SessionType
+\end{lstlisting}
+
+The \lstinline{SessionType} data type provides three constructors corresponding 
+to the three forms of a session type (see \Cref{def:agda_st}).
+The	\lstinline{$\infty$SessionType} wraps a session type
+within a coinductive record, so as to make it possible to represent
+\emph{infinite} session types. The record has just one field
+\lstinline{force} that can be used to access the wrapped session
+type. By opening the record, we make the \lstinline{force} field
+publicly accessible without qualifiers. 
+
+\begin{remark}
+	Coinductive records are the built-in technique for dealing with infinite
+	datatypes. It has been already used in \Cref{ch:gis_lib} and \Cref{sec:agda_ft}
+	for implementing the coinductive interpretations of an inference system and
+	possibly infinite runs in a labeled transitions system. 
+	Although the \emph{sized types} approach leads to syntactically easier datatypes,
+	a recent Agda update highlighted an inconsistency when using both approaches together.
+	Since \emph{thunks}, on which sized types are based on, are defined as a coinductive
+	record, we decided to mainly rely on the former approach for the sake of simplicity.
+	%
+	\eor
+\end{remark}
+
+A key design choice of our formalization is the representation of continuations 
+$\set{x:S_x}_{x\in\Message}$, which may have infinitely many branches if $\Message$ is infinite. 
+We represent continuations in Agda as \emph{total functions} from $\Message$ to session types, thus:
+
+\begin{lstlisting}
+Continuation : Set
+Continuation = $\Message$ $\rightarrow$ $\infty$SessionType
+\end{lstlisting}
+
+\begin{example}
+	\label{ex:agda_st_ex_form}
+	Consider once again the session type $T_1$ discussed in \Cref{ex:agda_st_ex}:
+	\[
+  	T_1 = \Out\vtrue.\Out\Nat.\T_1 + \Out\vfalse.\End[\In]
+	\]
+	%
+	In this case we assume that $\Message$ is the disjoint sum of $\Nat$
+	(the set of natural numbers) and $\Bool$ (the set of boolean values)
+	with constructors \lstinline{nat} and \lstinline{bool}. 
+	It is useful to also define once and for all the \emph{continuation} \lstinline{empty},
+	which maps every message to $\TNil$:
+
+\begin{lstlisting}
+empty : Continuation
+empty _ .force = nil
+\end{lstlisting}
+
+	Now, the Agda encoding of $T_1$ is shown below:
+	
+\begin{lstlisting}
+T$_1$ : SessionType
+T$_1$ = out f
+  where
+    f g : Continuation
+    f (nat _) .force = nil
+    f (bool true) .force = out g
+    f (bool false) .force = inp empty
+    g (nat _) .force = out f
+    g (bool _) .force = nil
+\end{lstlisting}
+
+	The continuations \lstinline{f} and
+	\lstinline{g} are defined using pattern matching on the
+	message argument and using copattern matching to specify the value of the \lstinline{force}
+	field of the resulting coinductive record. They represent the two stages of the protocol:
+	\lstinline{f} allows sending a boolean (but no natural number)
+	and, depending on the boolean, it continues as \lstinline{g} or
+	it terminates; \lstinline{g} allows sending a natural number
+	(but no boolean) and continues as \lstinline{f}.
+	%
+	\eoe
+\end{example}
+
+\Cref{ex:agda_st_ex_form} illustrates a simple form of \emph{dependency} whereby
+the structure of a communication protocol may depend on the content
+of previously exchanged messages. The fact that we use Agda to write
+continuations means that we can model sophisticated forms of
+dependencies that are found only in the most advanced theories of
+dependent session types
+\citep{ToninhoCairesPfenning11,ToninhoYoshida18,ThiemannVasconcelos20,CicconePadovani20}.
+
+\begin{example}
+	Consider the Agda encoding of a session type
+	\[
+  	\Out{(n:\Nat)}.\underbrace{\Out\Bool\dots\Out\Bool}_n.\End[\Out]
+	\]
+	describing a channel used for sending a natural number $n$ followed by $n$ boolean values:
+	
+\begin{lstlisting}
+BoolVector : SessionType
+BoolVector = out g
+  where
+    f : $\Nat$ $\rightarrow$ Continuation
+    f zero _ .force = nil
+    f (suc n) (bool _) .force = out (f n)
+    f (suc n) (nat _) .force = nil
+    g : Continuation
+    g (nat n) .force = out (f n)
+    g (bool _) .force = nil
+\end{lstlisting}
+
+	We will not discuss further examples of dependent session types. 
+	However, note that the possibility of encoding protocols such as \lstinline{BoolVector} 
+	has important implications on the scope of our study: it means that the results we have 
+	presented and formally proved in Agda hold for a large 
+	family of session types that includes dependent ones.
+	%
+	\eoe
+\end{example}
+
+We now provide a few auxiliary predicates on session types and continuations. 
+First of all, we say that a session type is \emph{defined} if it is different from $\TNil$:
+
+\begin{lstlisting}
+data Defined : SessionType $\rightarrow$ Set where
+  inp : $\forall${f} $\rightarrow$ Defined (inp f)
+  out : $\forall${f} $\rightarrow$ Defined (out f)
+\end{lstlisting}
+
+Concerning continuations, we define the \emph{domain} of a continuation function $f$ 
+to be the subset of $\Message$ such that $f~x$ is defined, 
+that is \lstinline{dom} $f = \set{x \in \Message \mid f~x \ne \TNil }$.
+We say that a continuation is \emph{empty} if so is its domain.
+On the contrary, a non-empty continuation is said to have a \emph{witness}. 
+We define a \lstinline{Witness} predicate to characterize this condition.
+
+\begin{lstlisting}
+dom : Continuation $\rightarrow$ Pred $\Message$ Level.zero
+dom f x = Defined (f x .force)
+
+EmptyContinuation : Continuation $\rightarrow$ Set
+EmptyContinuation f = Relation.Unary.Empty (dom f)
+
+Witness : Continuation $\rightarrow$ Set
+Witness f = Relation.Unary.Satisfiable (dom f)
+\end{lstlisting}
+
+where \lstinline{Satisfiable P} and \lstinline{Empty P} mean that
+at least an element satisfies \lstinline{P} and no elements satisfy \lstinline{P}, respectively.
+
+\begin{example}
+	Consider the \lstinline{empty} continuation defined in \Cref{ex:agda_st_ex_form}.
+	We can prove that it is indeed an empty one.
+	
+\begin{lstlisting}
+empty-is-empty : EmptyContinuation empty
+empty-is-empty _ ()
+\end{lstlisting}
+	%
+	\eoe
+\end{example}
+
+We now define a predicate \lstinline{Win} to characterize the session type $\End[\Out]$ and
+\lstinline{End} to characterize $\End[\Pol]$:
+
+\begin{lstlisting}
+data Win : SessionType $\rightarrow$ Set where
+  out : $\forall${f} $\rightarrow$ EmptyContinuation f $\rightarrow$ Win (out f)
+
+data End : SessionType $\rightarrow$ Set where
+  inp : $\forall${f} (U : EmptyContinuation f) $\rightarrow$ End (inp f)
+  out : $\forall${f} (U : EmptyContinuation f) $\rightarrow$ End (out f)
+\end{lstlisting}
+
+At last, we need a representation of sessions as pairs $\session{R}{S}$ of session types.
+To this aim, we introduce the \lstinline{Session} data type as an alias for pairs of session types.
+
+\begin{lstlisting}
+Session : Set
+Session = SessionType $\times$ SessionType
+\end{lstlisting}
+

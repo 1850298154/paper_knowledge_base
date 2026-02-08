@@ -1,0 +1,67 @@
+\section{Problem Formulation} \label{sec:pf}
+
+% Describe the system:
+
+In this paper, we consider the problem of regulating discrete-time dynamical systems of the form \begin{align}
+    x_{t+1} = Ax_t + Bu_t + d_t \label{eqn:2-26-5}
+\end{align} where $x_t \in \R^n$ is the system state at time $t$, $u_t \in \R^m$ is the control input, and $d_t \in \R^n$ is an uncertain input that captures exogenous disturbances and/or linearization error (if the true system dynamics are nonlinear) \cite{Boyd1994}. We assume the pair $(A,B)$ is stabilizable.
+%Let $\X \subset \R^n$ and $\U \subset \R^m$ be sets representing the constraints of the system. The set $\X$ represents the region of safe operation within the state space, defined by engineering constraints. The set $\U$ represents actuation limits. We assume $\X$ and $\U$ are polytopes given by $\X = \{x \in \R^n \mid F_x x \leq g_x\}$ and $\U = \{u \in \R^m \mid F_u u \leq g_u\}.$
+\revision{The input constraints (actuation limits) are $\U = \{u \in \R^m \mid F_u u \leq g_u\}$ while the state constraints arising from safety-critical engineering considerations are $\X = \{x \in \R^n \mid F_x x \leq g_x\}$.}
+
+% State the MPC problem:
+
+We consider the problem of operating the system \eqref{eqn:2-26-5} using finite-horizon model predictive control. The goal is to choose, given initial condition $x_0 \in \X$, a sequence of inputs $\textbf{u}$ of length $\tau$ that minimizes the cost of operating the system while respecting the operational constraints.
+
+% Once $\hat{\u}^*_t$ is chosen, the first action is implemented, i.e. we take $u_t = \hat{u}_t^*$. After a state evolution step, a new state is observed, and $\hat{\u}^*_{t+1}$ is computed given the observation of $x_{t+1}$.
+
+However, since the disturbances $d_t$ are unknown ahead of time, the designer must carefully consider how to achieve both optimality and constraint satisfaction. 
+% we cannot compute the cost \eqref{eqn:2-26-1} or guarantee satisfaction of the state constraints \eqref{eqn:2-26-3}. However,
+Robust MPC literature contains many ways to handle the presence of disturbances in both the cost and constraints \cite{Bemporad1999}. For example, the \textit{certainty-equivalent}  approach \cite{Alessio2009} considers only the nominal system trajectory, while the \textit{min-max} approach \cite{Grancharova2009} considers the worst-case disturbance. Interpolating between these two extremes, the \textit{tube-based} approach \cite{Langson2004} considers the cost of a nominal trajectory while guaranteeing that the true trajectory satisfies constraints. A \textit{stochastic} point of view in \cite{Farina2016} considers the disturbance as a random variable and minimizes the expected cost while providing probabilistic guarantees for constraint satisfaction. 
+
+\revision{In most robust MPC formulations, the set of possible disturbances is modeled as either a finite set, a bounded set, or a probability distribution \cite{Saltk2018}.} In this paper, we assume the disturbances lie in a closed and bounded set $\D := \{d \in \R^n \mid F_d d \leq g_d\}$. \revision{In order to ensure constraint satisfaction, we operate the system within a \textit{robust control invariant set} (RCI) $\S \subseteq \X$, defined as a set of initial conditions for which there exists a feedback policy in $\U$ keeping all system trajectories in $\S$, under any disturbance sequence in $\D$ \cite{Blanchini2015}. In our simulations, we used approximately-maximal RCIs computed with the semidefinite program from \cite{Liu2015}.} 
+
+\revision{With $\S := \{x \in \R^n \mid F_s x \leq g_s\}$, we define the \textit{target set} $\T$ as $\{x \in \R^n \mid x + d \in \S, \ \forall\ d \in \D\} = \{x \in \R^n \mid F_s x \leq \tilde{g}_s\}$ where for each row $i$, $\tilde{g}_s^{(i)} = g_s^{(i)} - \max_{d \in \D} F_s^{(i)T}d$ \cite{Blanchini2015}}. \newrevision{Any policy that maps $\S$ to $\T$ under the nominal dynamics will map $\S$ to itself under the true dynamics, rendering $\S$ robustly invariant.} \revision{By constraining the nominal state to the target set, robust constraint satisfaction is guaranteed for the first time step. Since $\S$ is RCI, this is sufficient for keeping closed-loop trajectories inside $\S$. Under this formulation, the MPC problem is posed as follows, given initial state $x_0$:
+\begin{subequations} \label{eqn:2-26-7} \begin{gather}
+    \min_{\u} \sum_{k=0}^{\tau-1} l(x_k,u_k) + l_F(x_{\tau}) \label{eqn:2-26-8}\\
+    \text{subject to $\forall\ k$: } x_{k+1} = Ax_k + Bu_k \label{eqn:2-26-9}\\
+    x_{k+1} \in \T \label{eqn:2-26-10}\\
+    u_k \in \U \label{eqn:2-27-9}
+\end{gather} \end{subequations} where $l$ and $l_F$ are stage and terminal costs that are differentiable but possibly nonlinear or even non-convex.} \newrevision{Although \eqref{eqn:2-26-7} differs from the standard tube-based approach, the techniques introduced in this paper can be applied to a variety of MPC formulations.}
+
+%Due to the assumption that $\X$ is an RCI, \eqref{eqn:2-26-10} is feasible for any $x_t \in \X$, giving rise to the property of \textit{recursive feasibility}. 
+%This in turn implies that \eqref{eqn:2-26-7} is feasible when the optimal solution is implemented in a receding horizon fashion. 
+%Since $\X$ and $\D$ are polytopes, the constraint \eqref{eqn:2-26-10} is itself a polytopic constraint, hence tractable.
+
+\revision{In this paper, we seek to derive a safe feedback policy $\pi_\theta: \R^n \rightarrow \R^m$ that approximates the explicit solution to \eqref{eqn:2-26-7} by first approximating the optimal control sequence with a function $\mu_\theta: \R^n \rightarrow \R^{m\tau}$ and then implementing the first action of the sequence in the closed loop. In practice, any MPC policy implemented in closed loop must be stabilizing and recursively feasible. Recursive feasibility is the property that closed-loop trajectories generated by the MPC controller will not lead to states in which the MPC problem is infeasible. This property is guaranteed when $\S$ is RCI \cite{Blanchini2015}. If recursive feasibility is not guaranteed, then a backup controller must be developed or a control sequence that is feasible for the most immediate time steps can be used. There is suggestion in the literature that the latter approach performs quite well in practice~\cite{Wang2010}, but the theoretical aspects remain open. In terms of stability, recursive feasibility guarantees that trajectories will remain within a bounded set. Since this work focuses on constraint satisfaction, we do not consider stricter notions of stability.}
+
+%Two important questions are the closed-loop stability and recursive feasibility of the system \eqref{eqn:2-26-5} when the controls are given by a finite horizon MPC. Roughly speaking, the system is stable and recursively feasible if \eqref{eqn:2-26-10} is satisfied at every step. The present focus is on constraint satisfaction, and for more discussion on stability and recursive feasibility, we refer the reader to \cite{Scokaert1999,Pannocchia2011,Mayne2005,Lofberg2012}.
+
+% for relevant results on stability. Recursive feasibility is the property of \eqref{eqn:2-26-7} being feasible for all $x \in \X$ \cite{Lofberg2012}, but situations in which \eqref{eqn:2-26-7} is infeasible are outside the scope of this paper.
+
+%However, in this paper we focus on systems with persistent disturbances, so asymptotic stability of the origin is not of chief concern. We focus on robustness/recursive feasibility and refer the reader to previous results on stability of MPC \todo{cite}. 
+
+
+% Restate as parametric MPC problem
+
+% In this paper, we are interested in parametric solutions to \eqref{eqn:2-26-7}. Specifically, 
+
+%\subsection*{Proposed Approach}
+
+ %The first goal of this paper is to derive a class of functions $\M := \{\mu_\theta(x_0): \S \rightarrow \F(x_0) \mid \theta \in \R^d\}$ consisting of functions that return feasible solutions to \eqref{eqn:2-26-7} for any initial condition $x_0 \in \S$ without using an iterative procedure, projection algorithm, or penalty function. The second goal is to find a set of parameters $\theta$ allowing $\mu_\theta$ to approximate the optimal solution to \eqref{eqn:2-26-7} as a function of $x_0$.
+    
+%In this paper, we propose a novel function class $\Pi := \{\pi_\theta: \R^n \rightarrow \R^{mT} \mid \theta \in \R^d\}$ consisting of functions that return feasible solutions to \eqref{eqn:2-26-7}, and we find a set of parameters $\theta$ allowing $\pi_\theta(x_t)$ to approximate the optimal solution.
+%The selection of $\theta$ is posed as follows: \begin{subequations} \label{eqn:2-26-11} \begin{gather}
+%    \min_\theta \sum_{t=0}^{T-1} l_t(x_t,u_t) + l_T(x_T) \label{eqn:2-27-2}\\
+%    \text{subject to} \ \forall\ t \geq 0: x_{t+1} = Ax_t + Bu_t \\
+%    x_{t+1} + d_t \in \X, \ \forall\ d_t \in \D \label{eqn:2-27-3}\\
+%    u_t \in \U \label{eqn:2-27-4}\\
+%    \u = \pi_\theta(x_0)
+%\end{gather} \end{subequations}
+%\todo{The cost \eqref{eqn:2-27-2} needs to be summarized over the unknown initial conditions, for example by taking the expectation or maximum with respect to $x_0 \in \X$. What is the correct thing to write? In other words, what function are we actually minimizing when we sample $x_0$ and run SGD?}
+
+%A feedforward function $\mu_\theta$ would be much more computationally efficient than solving \eqref{eqn:2-26-7} using a standard solver~(which may require a large number of iterations).  The challenge comes in enforcing the constraints of \eqref{eqn:2-26-7} on the parameter $\theta$. The main contribution of this paper is to provide a function class $\M$ based on a neural network architecture that encodes these constraints explicitly through the structure of the network.
+
+%The construction of $\M$ bears similarity to standard interior-point algorithms~\cite{Boyd2009}, in that there is a Phase I (find a strictly feasible starting point) and a Phase II (find the optimal solution). However, unlike interior-point methods, neither Phase I nor Phase II in our algorithm requires iterative steps, resulting in a feasible approximation to the solution of \eqref{eqn:2-26-7} that is efficient in terms of both computational cost and memory requirements. Phase I is solved by exploiting the structure of the MPC problem, and Phase II is solved using the proposed NN architecture. 
+
+% We denote  as the feasible set of \eqref{eqn:2-26-7}, parameterized by initial condition $x_t$. Below, we introduce a class of policies  that return feasible solutions to \eqref{eqn:2-26-7}, and we describe the process for choosing the optimal $\theta$.
+

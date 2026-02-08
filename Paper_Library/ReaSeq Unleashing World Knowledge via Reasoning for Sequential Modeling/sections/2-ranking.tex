@@ -1,0 +1,233 @@
+
+\section{Reasoning-Enhanced Representation for Ranking}\label{sec:knowledge_enhanced_ranking}
+
+This section presents the technical architecture of ReaSeq's knowledge-enhanced item ranking system, which addresses the critical challenge of transforming surface-level collaborative item representations into semantically rich, knowledge-grounded embeddings. Our approach captures both \textbf{user-centric demand patterns} and \textbf{product-intrinsic attributes} through a carefully designed multi-agent reasoning framework powered by large language models. By integrating these enriched item representations into the ranking pipeline, we enable the recommender system to move beyond mere co-occurrence statistics toward a deeper understanding of item semantics and user intent.
+
+The core innovation lies in our hierarchical multi-agent reasoning framework in Section~\ref{sec:structured_knowledge}, which constructs structured item knowledge through progressive refinement, advancing from coarse categorical patterns to fine-grained, item-specific semantic features. This explicit reasoning mechanism provides interpretable, disentangled representations that directly combat representation collapse and cold-start limitations inherent in conventional collaborative filtering approaches. Section~\ref{sec:ranking} details how these enriched item representations are integrated into the existing ranking architecture through efficient encoding and fusion mechanisms designed for industrial-scale deployment.
+
+\subsection{Structured Product Knowledge System}
+\label{sec:structured_knowledge}
+
+Traditional ID-based item embeddings, while effective for capturing collaborative signals, suffer from a fundamental bootstrapping problem: they require substantial interaction history to achieve meaningful representation quality. This data dependency creates a vicious cycle in which long-tail items, precisely those that would benefit most from enhanced representation, remain perpetually under-represented, thereby reinforcing popularity bias and limiting catalog diversity~\citep{tang2025think,yi2025recgpt,yi2025recgptv2}. The emergence of large language models~\citep{liu2024deepseek,bai2023qwen}, with their billions of parameters encoding extensive world knowledge and superior reasoning capabilities, offers a promising avenue to break this cycle. Rather than learning item representations purely learned from observed item-user interactions, we leverage LLMs as \textbf{semantic engines} to distill structured knowledge from item metadata, contextual information, and domain expertise.
+
+Our structured product knowledge system operationalizes this insight through a \textbf{hierarchical multi-agent knowledge enhancement framework} that constructs item representations from two complementary perspectives: (1) \textit{user demand orientation}, which captures the latent needs, motivations, and expectations that drive users toward specific items, and (2) \textit{product attribute characterization}, which articulates the intrinsic properties, functionalities, and distinguishing features of items themselves. By orchestrating multiple specialized LLM agents in a progressive refinement pipeline consisting of \textbf{information extraction}, \textbf{dimension refinement}, and \textbf{knowledge generation}, we systematically enrich item semantics while maintaining interpretability and factual grounding.
+
+\subsubsection{Multi-Agent Knowledge Reasoning}
+
+Our knowledge reasoning architecture comprises three hierarchical layers of specialized agents, each designed to progressively refine and instantiate semantic knowledge at increasing levels of granularity, as shown in Figure~\ref{fig:makr}. In what follows, we detail the specific functions and prompting strategies employed at each layer.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.8\textwidth]{figs/multi_agent.pdf}
+    \caption{The workflow of our Multi-Agent Knowledge Reasoning framework. (1) Categorical Information Extraction Agents first distill a dual-perspective taxonomy (User-centric Demand and Product-centric Attribute) from category-wide user queries. (2) Item-Specific Knowledge Generation Agents are then prompted with this taxonomy to reason over an item's raw content (Item CPV), systematically populating the defined dimensions with specific values (e.g., 'Daily Commute').}
+    \label{fig:makr}
+\end{figure}
+
+\paragraph*{Layer 1:  Categorical Information Extraction Agents.} The foundational layer establishes comprehensive categorical taxonomies that serve as scaffolding for subsequent reasoning stages. This layer consists of two parallel agent streams:
+
+\begin{itemize}
+    \item   \textit{User Demand Orientation Stream}: We deploy a demand extraction agent that analyzes historical user queries and search patterns within each primary category. These queries directly reveal user intent through expressions such as ``style preferences'', ``comfort requirements'', or ``fit concerns''. The agent performs semantic clustering to group related demand expressions while ensuring the resulting dimensions are orthogonal and collectively comprehensive. Specifically, the agent iteratively consolidates semantically similar expressions into unified demand dimensions, creating new dimensions only when existing ones cannot adequately capture novel user concerns. This process yields a \textbf{compact user-centric demand taxonomy} that characterizes items from the user's perspective, independent of merchant-defined schemas (see Prompt~\ref{prompt:user_demand}).
+    
+    \item   \textit{Product Attribute Orientation Stream}: 
+    In parallel, we deploy an attribute extraction agent that processes merchant-provided attribute specifications across all items in a category. These specifications, typically represented as key-value pairs (e.g., ``material: cotton'', ``style: casual''), describe product features but often exhibit significant heterogeneity and inconsistency across merchants. The agent performs semantic abstraction and clustering to consolidate related attributes into unified dimensions from a product taxonomy perspective. Through iterative grouping, the agent identifies which attributes characterize the same underlying product aspect (e.g., ``grouping fabric type'', ``material composition'', and ``textile quality'' into a single dimension). This process yields a \textbf{normalized product-centric attribute taxonomy} that captures the essential dimensions along which products can be objectively characterized, such as ``technical specifications'', ``design aesthetics'', ``material properties'', and ``functional features,'' transcending merchant-specific schemas (see Prompt~\ref{prompt:product_attribute}).
+\end{itemize}
+
+\paragraph*{Layer 2: Dimension Refinement Agents.}
+Given the categorical taxonomies established by Layer 1, the second layer specializes these high-level frameworks to finer-grained subcategories at secondary and tertiary levels. This refinement is critical because item characteristics and user demand patterns often exhibit significant variation across subcategories. For example, laptops versus smartphones within electronics, or running shoes versus hiking boots within footwear, necessitate distinct semantic characterizations.
+
+For each subcategory, refinement agents receive both the parent category's taxonomy and a representative sample of items from the subcategory. The agents then perform \textbf{context-aware specialization}: they identify which dimensions from the parent taxonomy remain relevant, which require adaptation, and which new dimensions emerge as distinctive to the subcategory. Crucially, these agents are instructed to ensure that refined dimensions satisfy three key properties: 
+(1) \textit{orthogonality}, wherein dimensions should capture distinct, non-redundant aspects; (2) \textit{comprehensiveness}, such that the dimension set collectively spans the semantic space relevant to the subcategory; and (3) \textit{objectivity}, ensuring dimensions are grounded in observable and verifiable attributes.
+
+To enhance reasoning quality, we implement these agents using \textbf{Chain-of-Thought (CoT) prompting}~\citep{wei2022chain,tang-etal-2025-kapa,talebirad2023multi}, requiring them to explicitly articulate their reasoning process before outputting the refined dimension set. The structured output includes: (1) a reasoning trace documenting inheritance and adaptation decisions, (2) the refined dimension list with justifications linking each dimension to either parent taxonomy inheritance or subcategory-specific requirements, and (3) mappings between dimensions and their corresponding item attributes or user expressions (see Prompt~\ref{prompt:dimension_refinement}).
+
+
+
+
+\paragraph*{Layer 3: Item-Specific Knowledge Generation Agents.}
+The final layer instantiates abstract dimensions into concrete, item-specific semantic knowledge. Given a target item and the refined dimension framework from Layer 2, knowledge generation agents systematically analyze the item across each dimension from both user demand and product attribute perspectives.
+
+For each dimension, the agent performs \textbf{evidence-grounded reasoning}: (1) extracting factual evidence from the item's metadata (\textit{e.g.,} title and description); (2) synthesizing this evidence into an interpretable characterization along that dimension; and (3) distilling key concepts that accurately capture the dimension-specific insight. This three-component structure—dimension label, evidence-based analysis, and keyword extraction—ensures that generated knowledge is both semantically rich and factually grounded, preventing hallucination while maintaining interpretability.
+
+Critically, agents provide explicit justification by citing specific attributes or metadata fields that support each characterization. For instance, when analyzing a shirt along the user demand dimension of ``style preference,'' the agent references concrete evidence such as ``minimalist collar design'' or ``neutral color palette'' rather than making unsupported inferences. This evidence-attribution mechanism ensures factual fidelity and enables downstream verification of knowledge quality. The specific agent prompt template is provided in Prompt~\ref{prompt:knowledge_generation}.
+
+By integrating these three hierarchical layers (coarse-to-fine taxonomization, context-aware specialization, and evidence-grounded instantiation), our multi-agent framework effectively transforms raw item metadata into structured, multi-perspective semantic representations. These enriched representations provide a principled foundation for downstream encoding and ranking processes, enabling the system to reason about items based not only on co-occurrence statistics but also on explicit, interpretable semantic knowledge. This approach effectively bridges the gap between observable user behavior and latent user intent, thereby advancing the depth and reliability of item understanding within the recommendation pipeline.
+
+
+\subsubsection{Reasoning-Enhanced Representation Construction}\label{sec:semantic_item_encoding}
+
+Having established the multi-agent knowledge reasoning framework, we now formalize the process of encoding the generated semantic knowledge into dense vector representations that can be seamlessly integrated into industrial ranking systems.
+
+\paragraph*{Formal Problem Setup.}
+Let $\mathcal{I}$ denote the item catalog. For any item $i \in \mathcal{I}$, the knowledge generation agents in Layer 3 produce structured semantic characterizations along two orthogonal perspectives based on the dimensions refinement agents in Layer 2.
+
+\textbf{User Demand Perspective.} Let $\mathcal{D}^u = \{\delta_1^u, \delta_2^u, \ldots, \delta_{m}^u\}$ denote the set of user demand dimensions identified for the item's category, where $m$ represents the total number of dimensions. For item $i$, the knowledge generation process yields:
+\begin{equation*}
+\mathcal{K}_i^u = \left\{ \left(\delta_j^u, w_{i,j}^u\right) : \delta_j^u \in \mathcal{D}^u \right\}_{j=1}^{m}
+\end{equation*}
+where $w_{i,j}^u$ denotes the extracted keyword sequence characterizing item $i$ along dimension $\delta_j^u$.
+
+\textbf{Product Attribute Perspective.} Similarly, let $\mathcal{D}^p = \{\delta_1^p, \delta_2^p, \ldots, \delta_{n}^p\}$ represent the product attribute dimension set, where $n$ denotes the attribute number. The corresponding knowledge structure is:
+\begin{equation*}
+\mathcal{K}_i^p = \left\{ \left(\delta_k^p, w_{i,k}^p\right) : \delta_k^p \in \mathcal{D}^p \right\}_{k=1}^{n}
+\end{equation*}
+where $w_{i,k}^p$ captures the distilled attribute value along dimension $\delta_k^p$.
+
+\paragraph*{Semantic Encoding.}
+To operationalize these structured knowledge representations, we employ pre-trained sentence embedding models to map textual knowledge into dense semantic vectors. 
+% Specifically, we leverage BGE~\citep{chen2024bge}, a contrastive learning-based encoder that has demonstrated superior generalization across diverse semantic matching and retrieval tasks.
+Specifically, we employ a pre-trained text encoder that has been trained on large-scale corpora to capture general semantic relationships across diverse domains.
+
+For each perspective, we construct a unified textual sequence by concatenating dimension labels with their corresponding keywords:
+\begin{equation*}
+\mathbf{t}_i^u = \textsc{Concat}\left(\left[\delta_j^u \oplus w_{i,j}^u\right]_{j=1}^{m}\right), \quad
+\mathbf{t}_i^p = \textsc{Concat}\left(\left[\delta_k^p \oplus w_{i,k}^p\right]_{k=1}^{n}\right)
+\end{equation*}
+where $\oplus$ denotes string concatenation with appropriate delimiters. These textual sequences are then encoded through the pre-trained semantic encoder $\Phi$ to obtain dual-perspective embeddings, and the final knowledge-enhanced item representation is obtained through element-wise addition:
+\begin{equation*}
+\mathbf{h}_i^t = \Phi\left(\mathbf{t}_i^u\right) + \Phi\left(\mathbf{t}_i^p\right) \in \mathbb{R}^{d}
+\end{equation*}
+where $d$ denotes the embedding dimension. This unified representation encapsulates both user-centric demand and product-intrinsic attributes as holistic semantic features.
+
+
+
+\subsection{Reasoning-Enhanced Sequential Modeling}
+\label{sec:ranking}
+
+
+Having established knowledge-enhanced item representations through multi-agent reasoning, we now explore their integration into mainstream behavioral modeling frameworks for industrial ranking. This section presents two complementary paradigms that leverage semantic representations to model user preferences from ultra-long user behavioral sequences:
+
+\textbf{Retrieval-Based Modeling} (Section \ref{sec:behavior_extraction}) employs a two-stage General Search Unit (GSU) and Exact Search Unit (ESU) pipeline, where GSU performs efficient semantic-guided retrieval over long sequences, followed by ESU's target-aware attention refinement to extract relevant patterns.
+
+\textbf{Compression-Based Modeling} (Section \ref{sec:behavior_compression}) adopts learnable interest anchor groups to compress behavioral sequences via cross-attention, capturing diverse user interests through end-to-end optimization while enabling direct interaction with target items.
+
+These two modeling pathways are jointly integrated with other contextual features for CTR prediction, enabling the system to reason jointly about item semantics and user behavioral dynamics.
+
+
+\begin{figure}
+    \centering
+    \includegraphics[width=\textwidth]{figs/rank_model.pdf}
+    \caption{Overall architecture of the ranking model, processing user sequences through two complementary paths. \textbf{(1) The Retrieval-Based Modeling} employs a Top-K Retrieval Service to create a target-relevant subsequence, followed by an efficient batch-gathered attention mechanism for online scoring. \textbf{(2) The Compression-Based Modeling} uses learnable interest anchors to distill the entire long sequence into a compact representation, which is then queried by the target item. The resulting vectors from both paths are combined with other features for the final pCTR prediction.}
+    \label{fig:rank_model}
+\end{figure}
+
+
+% Having established knowledge-enhanced item representations through multi-agent reasoning, we now integrate these semantic embeddings into the ranking architecture. While structured knowledge addresses item-level semantic deficiencies, industrial ranking systems must efficiently model user preferences from extensive behavioral histories while maintaining computational tractability. We address this through three integrated components:
+
+% \textbf{Retrieval-Based Modeling} (Section \ref{sec:behavior_extraction}) employs a two-stage General Search Unit (GSU) and Exact Search Unit (ESU) pipeline. GSU leverages the knowledge-enhanced semantic representations from Section~\ref{sec:semantic_item_encoding} to perform efficient retrieval over long behaviors, while ESU applies target attention to refine retrieved interactions and extract contextually relevant patterns.
+
+% \textbf{Compression-Based Modeling} (Section \ref{sec:behavior_compression}) mitigates potential retrieval-ranking inconsistency through learnable interest anchor groups. These anchors compress behavioral sequences via cross-attention, capturing diverse user interests while enabling direct target-item interaction to complement the retrieval pathway.
+
+% \textbf{Semantic-Guided Behavior Retrieval} (Section \ref{sec:behavior_extraction}) employs a two-stage General Search Unit (GSU) and Exact Search Unit (ESU) pipeline. GSU leverages the knowledge-enhanced semantic representations from Section~\ref{sec:semantic_item_encoding} to perform efficient retrieval over long behaviors, while ESU applies target attention to refine retrieved interactions and extract contextually relevant patterns.
+
+% \textbf{Anchor-Based Behavior Compression} (Section \ref{sec:behavior_compression}) mitigates potential retrieval-ranking inconsistency through learnable interest anchor groups. These anchors compress behavioral sequences via cross-attention, capturing diverse user interests while enabling direct target-item interaction to complement the retrieval pathway.
+
+% Finally, these components integrate with user profiles and contextual signals for CTR prediction, enabling the system to reason jointly about item semantics and user behavioral dynamics.
+
+\subsubsection{Retrieval-Based Modeling}
+\label{sec:behavior_extraction}
+
+% User behaviors in industrial e-commerce platforms often span tens of thousands of historical interactions, posing a severe computational challenge. 
+% Existing methods rely primarily on collaborative embeddings learned from interaction patterns, which suffer from \textbf{representation homogeneity}: behaviorally co-occurring items cluster together regardless of semantic diversity, causing retrieval to favor frequently interacted items while excluding semantically relevant but sparse long-tail products. This issue is amplified by \textbf{popularity bias}, where dense interaction patterns reinforce popular item dominance and limit diverse content discovery.
+
+% We address the above issue through \textbf{semantic-guided behavior retrieval}, leveraging knowledge-enhanced representations as the foundation for relevant behavioral retrieval. By grounding retrieval in explicit semantic knowledge rather than purely collaborative signals, our approach achieves:
+% \begin{itemize}
+%   \item \textbf{Expanded Coverage}: The retrieval process can identify historical interactions that are semantically related to the target item, even if they do not frequently co-occur in user behaviors.
+%   \item \textbf{Multi-Faceted Matching}: The dual-perspective representations enable simultaneous matching along both item-to-item attribute similarity (\textit{product characteristics}) and item-to-user demand alignment (\textit{user intent fulfillment}), mitigating the representation homogeneity inherent.
+% \end{itemize}
+
+% To comprehensively model user preferences, we leverage users' complete interaction histories for behavioral sequence modeling. In our industrial e-commerce scenario, user behavioral sequences typically exceed 10,000 interactions, capturing rich long-term preference patterns. However, directly applying Transformer-based architectures to such ultra-long sequences incurs prohibitive quadratic computational complexity $\mathcal{O}(n*T)$, rendering inference impractical for real-time serving constraints.
+
+% We address this challenge through a \textbf{retrieval-based modeling framework} inspired by sparse attention mechanisms. Rather than attending over the full sequence, we employ a two-stage pipeline that first retrieves a compact subset of relevant interactions, then applies attention refinement within this reduced context. This design reduces computational complexity to $\mathcal{O}(T \cdot N + N^2)$ where $N \ll T$, enabling efficient processing of ultra-long sequences.
+
+% Following the existing mainstream approaches, our framework adopts a two-stage architecture where \textbf{General Search Unit (GSU)} performs efficient target-aware retrieval, and \textbf{Exact Search Unit (ESU)} applies target attention to refine retrieved interactions.
+Following the existing mainstream approaches~\citep{chang2023twin,wu2025muse,guo2025miss}, our framework adopts a two-stage architecture where \textbf{General Search Unit (GSU)} performs efficient target-aware retrieval, and \textbf{Exact Search Unit (ESU)} applies target attention to refine retrieved interactions. Notably, we leverage the knowledge-enhanced semantic representations from Section~\ref{sec:semantic_item_encoding} as the retrieval foundation in GSU, enabling fine-grained interest capture through semantic similarity matching.
+
+\paragraph*{Stage 1: General Search Unit (GSU).}
+Given user behavioral sequence $\mathcal{B}_u = \{b_1, b_2, \ldots, b_T\}$ where $b_t$ denotes the item at timestep $t$, and target item $i_{\text{target}}$, GSU retrieves top-$N$ most relevant historical interactions based on semantic similarity:
+\begin{equation}
+\mathcal{S}_{\text{GSU}} = \text{TopK}\left(\left\{\text{sim}\left(\mathbf{h}_{i_{\text{target}}}^t, \mathbf{h}_{b_t}^t\right)\right\}_{t=1}^{T}, N\right)
+\end{equation}
+where $\text{sim}(\cdot, \cdot)$ denotes cosine similarity, and $\text{TopK}(\cdot, N)$ returns indices of top-$N$ items with highest scores.
+This semantic indexing strategy differs fundamentally from conventional approaches:
+\begin{itemize}
+    \item \textbf{Dual-Perspective Representation}: Each $\mathbf{h}_i^t$ encapsulates both user demand orientation (what users seek) and product attribute (what items inherently are), enabling the similarity computation to perform multi-perspective matching that identifies historical items semantically related to the target through either similar user needs or shared product characteristics.
+    \item \textbf{Knowledge-Grounded Diversity}: Representations grounded in explicit metadata-derived knowledge exhibit greater semantic diversity and reduced popularity bias compared to purely interaction-learned embeddings, enabling retrieval of related long-tail items.
+\end{itemize}
+
+
+\paragraph*{Stage 2: Exact Search Unit (ESU).}
+Retrieved interactions $\mathcal{S}_{\text{GSU}} = \{b_{t_1}, b_{t_2}, \ldots, b_{t_N}\}$ are refined through target-aware attention. We employ multi-head attention where the target item representation from Section~\ref{sec:item_tokenizer} serves as query, and retrieved historical item serve as keys and values:
+
+\begin{gather}
+\mathbf{Q} = \mathbf{W}_Q \mathbf{x}_{i_{\text{target}}}, \quad
+\mathbf{K} = \mathbf{W}_K \left[\mathbf{x}_{b_{t_1}}; \ldots; \mathbf{x}_{b_{t_N}}\right], \quad
+\mathbf{V} = \mathbf{W}_V \left[\mathbf{x}_{b_{t_1}}; \ldots; \mathbf{x}_{b_{t_N}}\right] \\
+\mathbf{h}_u^b = \text{MultiHeadAttn}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) \in \mathbb{R}^{d}
+\end{gather}
+where $\mathbf{W}_Q, \mathbf{W}_K, \mathbf{W}_V$ are learnable projection matrices, $\mathbf{x}_i = \left[\sum_{\ell=1}^{L} \mathbf{e}_{i}^{(\ell)}; \mathbf{f}_i\right]$ denotes the item representation comprising semantic ID embeddings and statistical features from Section~\ref{sec:item_tokenizer}, and $\mathbf{h}_u^b$ represents the extracted behavioral representation tailored to the target item context. 
+
+\paragraph*{System Deployment and Optimization}
+In the GSU stage, an efficent Top-K Retrieval Service is employed. For each candidate item, this service efficiently queries a pre-built vector index to retrieve the top-K most relevant items from the user's ultra-long behavior sequence, forming a condensed, relevant context. During the ESU's online serving phase, we implement a critical batch-level optimization to minimize computational overhead. First, the retrieved Top-K sequences for all candidate items within a request batch are merged and deduplicated to create a single, unique set of historical items. The Key ($\mathbf{K}$) and Value ($\mathbf{V}$) projections are then computed only once for this unique set. Subsequently, for each candidate item, we construct a gather index that maps to its corresponding K/V pairs within the batch-wide tensors. A highly efficient Batch Gather operation uses this index to assemble the specific context for the attention calculation, thereby eliminating redundant K/V projections and ensuring low-latency performance.
+
+By grounding both retrieval (GSU) and refinement (ESU) in knowledge-enhanced representations, our framework achieves \textbf{semantic-behavioral synergy}: semantic knowledge guides selection of relevant historical context, while attention mechanisms adaptively weigh retrieved interactions based on target-specific relevance. This design expands the retrieval space beyond frequently co-occurring items to include semantically related but behaviorally distant interactions, addressing the coverage limitations of purely collaborative approaches. The resulting $\mathbf{h}_u^b$ is then integrated with other user profile features, target item representations, and contextual signals for CTR prediction.
+
+% \jiakai{Engineering Deployment Optimization}
+
+
+\subsubsection{Compression-Based Modeling}
+\label{sec:behavior_compression}
+
+% While the GSU-ESU pipeline enables efficient retrieval over long behavioral sequences, it suffers from two limitations: (1) \textbf{Retrieval Bottleneck}: GSU's retrieval quality establishes a performance ceiling for ESU—if relevant interactions are not retrieved, ESU cannot recover them regardless of attention capacity. (2) \textbf{Non-Differentiable Cascade}: Discrete retrieval decisions prevent end-to-end gradient flow, hindering joint optimization of retrieval and ranking objectives.
+
+% We address this through \textbf{anchor-based behavior compression}, inspired by Q-Former in BLIP-2~\citep{li2023blip}. Rather than discrete retrieval, we compress the entire sequence into learnable interest anchor vectors via cross-attention, offering three advantages: \textbf{end-to-end optimization} through full differentiability, \textbf{bypass of retrieval bottleneck} by attending over the full sequence, and \textbf{computational efficiency} with fixed compressed size.
+
+% Besides retrieval-based modeling efficiently identifies relevant interactions through semantic-guided search, we also explore an alternative compression-based paradigm. This approach employs learnable interest anchors to directly compress the entire behavioral sequence via cross-attention, offering complementary advantages: \textbf{(1) full sequence coverage} without discrete retrieval decisions, and \textbf{(2) end-to-end differentiability} enabling joint optimization with ranking objectives.
+
+% In addition to retrieval-based modeling that identifies relevant interactions through semantic-guided search, we also introduce a compression-based paradigm. This approach employs learnable interest anchors to directly compress the entire behavioral sequence via cross-attention, offering complementary advantages: \textbf{(1) full sequence coverage} without discrete retrieval decisions, and \textbf{(2) end-to-end differentiability} enabling joint optimization with ranking objectives.
+
+While retrieval-based modeling efficiently processes ultra-long sequences through sparse attention, its discrete selection mechanism introduces a fundamental limitation: items not retrieved by GSU receive zero gradient updates during training, leading to insufficient optimization of item representations and slow model convergence.
+
+% To address this limitation, we introduce a compression-based paradigm that ensures dense gradient coverage across the entire behavioral sequence. This approach employs learnable interest anchors to compress the full sequence via cross-attention, offering complementary advantages: \textbf{(1) complete gradient flow} where every item contributes to training, and \textbf{(2) end-to-end differentiability} enabling joint optimization with ranking objectives.
+% To address this limitation, we introduce a compression-based paradigm that ensures dense gradient coverage across the entire behavioral sequence. This approach employs learnable interest anchors to compress the full sequence via cross-attention, offering complementary advantages: \textbf{(1) complete gradient flow} where every item contributes to training, and \textbf{(2) end-to-end differentiability} enabling joint optimization with ranking objectives. Additionally, by leveraging semantic IDs (SIDs) derived from knowledge-enhanced representations rather than random initialization, our approach provides semantically informed starting points for item embeddings, which partially mitigates the insufficient optimization issue even for items with sparse retrieval patterns.
+To address this limitation, we introduce a compression-based paradigm~\citep{chai2025longer,chen2025massive,li2023blip} that ensures dense gradient coverage across the entire behavioral sequence. This approach employs learnable interest anchors to compress the full sequence via cross-attention, offering complementary advantages: \textbf{(1) complete gradient flow} where every item contributes to training, and \textbf{(2) end-to-end differentiability} enabling joint optimization with ranking objectives. Additionally, semantic IDs enable semantically similar items to share common ID prefixes, accelerating convergence through parameter sharing even for infrequently retrieved items.we combine the SID-based embeddings with existing item side-information features:
+\begin{equation*}
+\mathbf{x}_i = \left[\sum_{\ell=1}^{L} \mathbf{e}_{i}^{(\ell)}; \mathbf{f}_i\right]
+\end{equation*}
+where $\mathbf{e}_{i}^{(\ell)} \in \mathbb{R}^{d_e}$ denotes the embedding of item $i$'s $\ell$-th layer SID from the reinitialized codebook $\tilde{\mathcal{C}}^{(\ell)}$, and $\mathbf{f}_i \in \mathbb{R}^{d_f}$ represents other item features including categorical attributes (\textit{e.g.}, brand, category), continuous statistical feature (\textit{e.g.}, popularity, price), \textit{etc.}
+
+\paragraph*{Architecture Design.}
+Given behavioral sequence $\mathcal{B}_u = \{b_1, \ldots, b_T\}$, we introduce $M$ learnable interest anchors $\mathbf{A} = \{\mathbf{a}_1, \ldots, \mathbf{a}_M\} \in \mathbb{R}^{M \times d}$ initialized randomly and learned end-to-end.
+
+\textbf{Stage 1: Cross-Attention Compression.} Anchors attend over the full sequence:
+\begin{align*}
+\mathbf{Q}_{\text{anchor}} &= \mathbf{W}_Q^{\text{anchor}} \mathbf{A}, \quad
+\mathbf{K}_{\text{seq}} = \mathbf{W}_K^{\text{seq}} \left[\mathbf{x}_{b_1}; \ldots; \mathbf{x}_{b_T}\right], \quad
+\mathbf{V}_{\text{seq}} = \mathbf{W}_V^{\text{seq}} \left[\mathbf{x}_{b_1}; \ldots; \mathbf{x}_{b_T}\right] \\
+\tilde{\mathbf{A}} &= \text{MultiHeadAttn}(\mathbf{Q}_{\text{anchor}}, \mathbf{K}_{\text{seq}}, \mathbf{V}_{\text{seq}}) \in \mathbb{R}^{M \times d}
+anchor\end{align*}
+This performs soft clustering of historical interactions into $M$ interest groups.
+
+\textbf{Stage 2: Target-Aware Extraction.} Compressed anchors interact with target item:
+\begin{align*}
+\mathbf{Q}_{\text{target}} &= \mathbf{W}_Q^{\text{target}} \mathbf{x}_{i_{\text{target}}}, \quad
+\mathbf{K}_{\text{anchor}} = \mathbf{W}_K^{\text{anchor}} \tilde{\mathbf{A}}, \quad
+\mathbf{V}_{\text{anchor}} = \mathbf{W}_V^{\text{anchor}} \tilde{\mathbf{A}} \\
+\mathbf{h}_u^a &= \text{MultiHeadAttn}(\mathbf{Q}_{\text{target}}, \mathbf{K}_{\text{anchor}}, \mathbf{V}_{\text{anchor}}) \in \mathbb{R}^{d}
+\end{align*}
+
+\paragraph*{Dual-Pathway Integration.}
+We integrate anchor-based compression with GSU-ESU outputs:
+\begin{equation}\label{eq:final_representation}
+\mathbf{h}_u^{\text{final}} = \left[\mathbf{h}_u^b; \mathbf{h}_u^a\right], \quad
+\hat{y} = \text{MLP}\left(\left[\mathbf{h}_u^{\text{final}}; \mathbf{x}_{i_{\text{target}}}; \mathbf{f}_u; \mathbf{f}^c\right]\right)
+\end{equation}
+where $\mathbf{f}_u$ and $\mathbf{f}^c$ denote user profile and contextual features. This dual-pathway design combines explicit semantic retrieval (interpretable, grounded) with implicit learned compression (differentiable, complete coverage), mitigating individual weaknesses while capturing complementary behavioral patterns. The final CTR prediction $\hat{y}$ is obtained through a MLP over the integrated representation, enabling the model to reason jointly about item semantics and user behavioral dynamics for accurate click-through rate estimation.
+
+\paragraph*{Training Objective.}
+The entire ranking model is trained end-to-end to minimize the binary cross-entropy (BCE) loss for click-through rate prediction:
+\begin{equation}
+\mathcal{L}_{\text{CTR}} = -\frac{1}{|\mathcal{D}|} \sum_{(u,i,y) \in \mathcal{D}} \left[ y \log \hat{y}_{u,i} + (1-y) \log (1-\hat{y}_{u,i}) \right]
+\end{equation}
+where $\mathcal{D}$ denotes the training dataset consisting of user-item interaction tuples $(u, i, y)$, $y \in \{0, 1\}$ is the binary click label (1 for click, 0 for non-click), and $\hat{y}_{u,i}$ is the predicted CTR from Eq.~\eqref{eq:final_representation}.
+
+% \jiakai{Engineering Deployment Optimization}

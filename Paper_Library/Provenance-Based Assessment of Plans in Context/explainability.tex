@@ -1,0 +1,149 @@
+\section{Assessing Explainability of our Approach}
+
+The majority of prior work on explainable planning focuses on inspecting algorithms (\ie{}, explicating the decision-making process), synchronizing mental models (\eg{}, because the user views the problem differently than the planner), and improving usability (\eg{}, making complex plans more interpretable) \cite{ChakrabortiEtAlIJCAI2020} and assumed fixed background domain knowledge.  In contrast, our provenance-based approach treats the plan as a tripartite (\textbf{Agents}, \textbf{Entities}, and \textbf{Activities}) dependency graph.
+This adds connections among the plan's beliefs and goals (PROV entities), actions (PROV activities), and actors (PROV agents) via type-specific dependency relations.
+The plan's provenance graph connects to other provenance information (if available), including belief derivations (\eg{}, describing how initial state beliefs were inferred, as in \figref{prov-to-plan}), agent descriptions, and sensor descriptions (\eg{}, including reliability information), which comprise a larger global provenance graph.
+This complements previous explainable planning work with additional decision-relevant information and thereby new explanation capabilities.
+
+\subsection{Explanation in Information Analysis}
+
+We review questions from information analysis that are relevant but under-explored for automated planning, especially when a plan's world state is derived and supported by diverse information.
+These questions stem primarily from directives for integrity in intelligence analysis \cite{icd_203,icd_206}, and measurements of rigor in analytic workflows \cite{zelik2010measuring}.
+For each question, we briefly note whether our approach addresses it adequately (\textcolor{ForestGreen}{\cmark}) or partially ($\sim$) or whether it is out of scope (\textcolor{BrickRed}{\xmark}).
+
+\vspace{-0.15in}
+\paragraph{(\textcolor{ForestGreen}{\cmark}) How reliable is the information supporting this course of action?}
+We answer this question of information reliability with graph propagation, using all DIVE \textbf{Appraisal} instances with numerical confidence ratings and propagating them forward to estimate downstream nodes' confidence.
+\figref{ss-compare} illustrates the \textbf{Elevation Map} appraised with moderately high (0.80) confidence and the \textbf{Terrain Map} appraised with moderately low (0.20) confidence.
+We see that the downstream goal (rightmost node) is supported by two paths of varying estimated confidence, where the low confidence begins at the \textbf{Terrain Map} and flows through the \textbf{rover0} sub-plan.
+In the present propagation policy, a conjunction is as reliable as the lowest-confidence upstream input and a disjunction is as reliable as the greatest-confidence source upstream, but Bayesian approaches may also apply here \cite{kuter10using}.
+
+\begin{figure*}[ht!]
+  \begin{center}
+  \frame{
+  \includegraphics[width=\textwidth]{figures/ss-refute-take-image.pdf}}
+  \frame{
+  \includegraphics[width=\textwidth]{figures/ss-refute-terrain-map.pdf}}
+  \frame{
+  \includegraphics[width=\textwidth]{figures/ss-refute-flier.pdf}}
+  \caption{Counter-factually refutation of: a class of operations \textbf{take\_image} (top); an information source \textbf{Terrain Map} (middle); and an entire agent \textbf{flier1} (bottom) from the plan.
+  Refuting elements allows us to see the impact on downstream goals and actions, and the confidence of the information supporting them.}
+  \label{fig:ss-refutation}
+  \end{center}
+\end{figure*}
+
+\vspace{-0.15in}
+\paragraph{(\textcolor{ForestGreen}{\cmark}) What information sources, sensors, or actors are pertinent to this [class of] belief or action?}
+Our system answers this question of \textit{information support} using the pre-computed environment (described above) to identify all upstream necessary and sufficient nodes in constant time.
+The \figref{ss-impact-take-image} screenshot shows the effect of hovering over the \textbf{take\_image} action in the right-hand panel: the system (1) identifies all nodes catalogued with that action (highlighted with purple glow in \figref{ss-impact-take-image}), and then (2) de-emphasizes all nodes and paths that are not pertinent, so all relevant supporting nodes (upstream of the \textbf{take\_image} nodes) are available for assessment.
+We see that all \textbf{take\_image} actions rely solely on (1) a belief about \textbf{objective1} visibility from \textbf{waypoint0} and (2) a high-confidence information source.
+
+\vspace{-0.15in}
+\paragraph{(\textcolor{ForestGreen}{\cmark}) How far has this belief/agent/information source influenced my plan?}
+Our approach answers this \textit{impact assessment} question using belief environments: the impact of a belief, agent, or information source $m$ in the provenance graph is the set of elements with $m$ in any subset of their environments.
+The impact of the \textbf{take\_image} nodes is shown downstream of those nodes in the \figref{ss-impact-take-image} screenshot: the \textbf{take\_image} actions directly impact the communication of image data, in both sub-plans, thereby indirectly impacting the rightmost goal along both avenues.
+
+\vspace{-0.15in}
+\paragraph{(\textcolor{ForestGreen}{\cmark}) How necessary are these sources, beliefs, actions, or actors for an action or goal?}
+This is known as \textit{sensitivity analysis}, and is answerable using environments, as defined above.
+Given an element $m$, we can answer whether one or more other elements $N$ are necessary by computing $m$'s environment contracted by $N$:
+
+\newcommand{\ssep}{:}
+
+\[
+E(m)/N = \{\, S \in E(m) \ssep N \cap S = \emptyset \,\}
+\]
+
+\noindent
+If $E(m)/N = \emptyset$, at least one element in $N$ is necessary for $m$.
+This allows us to interactively \textit{refute} elements in the provenance graph and observe the downstream effects, answering counter-factual ``\textit{what-if}'' questions about the necessity of information and actors in the plan.
+
+Our system supports sensitivity analyses via dynamic \emph{refutation} as shown in \figref{ss-refutation}: the user may refute a class of elements (\figref{ss-refutation}, top); information sources (\figref{ss-refutation}, middle); agents (\figref{ss-refutation}, bottom); or any individual node.
+The system contracts nodes' belief environments, as described above, to identify downstream that have lost all support.
+Note that the downstream goal is still reachable in two of these \figref{ss-refutation} refutations; however, the confidence of the goal varies depending on which element we refute.
+
+\vspace{-0.15in}
+\paragraph{(\textcolor{ForestGreen}{\cmark}) What assumptions are necessary or sufficient to hold this belief or apply this planned action?}
+Deriving beliefs from information sources often requires making some assumptions.
+For instance, using a rover's GPS sensor to measure its position assumes that \textit{the GPS sensor is on the rover}.
+This assumption affects the integrity of all downstream beliefs and planned actions that rely directly or indirectly on positional data.
+
+As with numerical confidence, we express assumptions using DIVE \textbf{Appraisal} instances related to the relevant elements (\eg{}, a GPS sensor).
+For any node $m$, we compute the set of necessary and sufficient upstream assumptions as the set of explicit assumptions on the necessary and sufficient nodes in $E(m)$.
+
+
+\subsection{Explanation in Automated Planning}
+
+We consider explainable planning questions from
+\citeauthor{MariaFoxExplainablePlanning2017} \shortcite{MariaFoxExplainablePlanning2017} in relation to our approach:
+\hide{
+\begin{enumerate*}[label=(\arabic*)]
+\item \emph{Why did you do that?}
+\item Why didn't you do something else?
+\item \emph{Why is what you propose to do more efficient/safe/cheap than something else?}
+\item Why can't you do that?
+\item \emph{Why do I need to replan or repair the plan at this point?}
+\item \emph{Why do I not need to replan or repair the plan at this point?}
+\end{enumerate*}
+}
+
+\vspace{-0.15in}
+\paragraph{(\textcolor{ForestGreen}{\cmark}) Why did you do that?}
+Given any action, our approach uses the provenance structure to identify source nodes (\ie{}, information sources), sink nodes (\ie{}, goals), and intermediate nodes (\ie{}, beliefs and other actions) that explain upstream information support and downstream depenedencies.  Through the interface, one can simply hover
+their mouse over the inquired action and view these relationships from the provenance structure (see \figref{ss-impact-take-image}).  The
+upstream information support indicates a justification for how the decision contributes to the goals, and
+the downstream dependencies provide reasons for why the decision was possible to make (compared to other
+potential decisions that could also achieve the goal).
+
+While this can be as simple as visualizing causal
+links of preconditions and effects, the reliability of information can also play a role.  The inquired action
+may involve entities with greater DIVE \textbf{Appraisal}, for example.
+
+\vspace{-0.15in}
+\paragraph{(\textcolor{BrickRed}{\xmark}) Why can't you do that?}
+
+This question concerns an action that was \emph{not} included in the plan, and the analysis in this work is limited to analyzing components within the plan (\ie{}, only actions emitted by the planner).
+The provenance
+structures are constructed based on the \emph{outcome of the planning process}, which is an annotated HTN
+without vestigial structures from actions that were not selected for the returned plan.
+Therefore, this question is out of scope for our provenance-based analysis.
+
+
+\vspace{-0.15in}
+\paragraph{(\textcolor{BrickRed}{\xmark}) Why didn't you do something else?}
+
+This question frames a planned action against the space of other, unplanned actions.  Thus it is also out
+of scope for similar reasons to the above explainability question.  Without the context of an unplanned (novel) action, such comparisons between actions cannot be made.
+
+\vspace{-0.15in}
+\paragraph{($\sim$) Why is that more efficient/safe/cheap than something else?}
+Our provenance-based approach propagates confidence---or alternatively, source reliability or operational risk---downstream through the provenance graph, allowing upstream agents, beliefs, and information sources to color downstream actions and beliefs in the plan.
+This estimation of downstream confidence and risk (as an inverse of ``safe,'' per the question) allows us to compare alternatives across numerical measures.
+This does not fully address the question, since propagating confidence does not explain resource costs and efficiency.
+
+\vspace{-0.15in}
+\paragraph{($\sim$) Why do I [not] need to replan or repair the plan at this point?}
+
+This extends to specific questions about plan robustness such as, ``What can go wrong with this plan, and why?'' \eg, ``what will happen if this rover breaks down?''
+Connecting
+the rover to actions and goals that involve it enable the planning system to explain the overall impacts
+of such a query, rather than simply identify the chain of broken causal links in a single plan instance
+\cite{Bercher14HybridPlanningApplication}.
+
+It is trivial to reassign a DIVE \textbf{Appraisal} of an entity,
+since the provenance structures do not change: the new values propagate after updating the confidence and reliability of the remaining plan components.  Hence reducing the reliability of a
+rover that seems likely to break down will downgrade the estimated confidence in the portion of the plan that the rover supports.
+Similarly, dynamically refuting the unreliable rover, as illustrated in \figref{ss-refutation}, will instantly remove elements of the plan that rely on it.
+
+If there are still sufficient paths to the goal condition---or paths that are of the desired confidence---then the plan is robust enough to
+address the inquired failure points, and it does not require revision.  Alternatively, if the remaining paths to the goal are not of a desired confidence, then these refuted elements (and the degraded paths) explain why revising the plan is necessary.
+
+\vspace{-0.15in}
+\paragraph{}
+\noindent{}
+
+
+%%% Local Variables:
+%%% mode: latex
+%%% TeX-master: "main"
+%%% End:

@@ -1,0 +1,231 @@
+
+\section{Implementation and Evaluation}
+
+We have implemented ownership semantics with omitted set and deadlock
+detection in Java. We give a brief discussion of some of the practical
+considerations in the design of this implementation. We then present
+the results of a performance evaluation on a set of benchmark
+programs.
+
+\subsection{Objected-Oriented Promise Movement}
+
+Introducing an explicit conception of ownership is minimally
+disruptive. It is already the case that every promise is fulfilled by
+at most one task, since two sets cause a runtime error. We only ask
+that the programmer identify this task by leveraging the existing
+structure of \kwasync directives.
+%
+However, for large, complex synchronization patterns that rely on many
+promises, it can become tedious for a programmer to specify all the
+relevant promises, one by one.
+
+\lstChannel
+
+In our Java implementation, an object-oriented approach can reduce the
+burden of identifying which promises should be moved to new tasks.
+%
+In our Java implementation of these language features, classes
+containing many promises may implement a \textsf{PromiseCollection}
+interface so that moving a composite object to a new task is
+equivalent to moving each of its constituent promises.
+%
+A channel class is shown in \cref{lst:channel}, illustrating that
+complex and versatile primitives can be built on top of promises with
+the aid of \textsf{PromiseCollection}.
+%
+This class behaves like a promise that can be used repeatedly, where
+the $n$th \textsf{recv} operation obtains the value from the $n$th
+\textsf{send} operation.
+%
+This behavior depends on dynamically allocated promises, and the
+responsibility for the sending end of the channel is associated not to
+the ownership of a single promise, but to the ownership of different
+promises at different times. It is abstraction-breaking to ask the
+channel user to manually specify which promise to move to a new task
+in order to effectively move the sending end of the channel.
+%
+Instead, we give the impression that the channel object itself is
+movable like a promise (line~\ref{ln:channel:b}), since it is a
+\textsf{PromiseCollection}, and the implementation of \kwasync relies on
+the \textsf{getPromises} method (line~\ref{ln:channel:a}) to
+determine which promises should be moved.
+
+\subsection{Exception Handling}
+
+In an implementation of \cref{alg:owners}, some care must go into an
+exception handling mechanism.
+%
+What code is capable of and responsible for recovering from the failed
+assertion in line~\ref{ln:owners:async:E}?
+%
+And what happens if a task terminates early, with unfulfilled
+promises, because of an exception?
+
+Observe that line~\ref{ln:owners:async:E} occurs within an
+asynchronous task after the user-supplied code for that task has
+completed.
+%
+One solution is to add a parameter to \textsc{Async} so that the user
+can supply a post-termination exception handler, which accepts the
+list of unfulfilled promises, $t'.\fldowned$, as input.
+%
+Indeed, the fix for the AWS omitted set bug included such a mechanism
+(not shown in \cref{lst:amazon})~\cite{AWSBugFixed}.
+%
+Alternatively, the runtime could automatically fulfill every
+unfulfilled promise upon an assertion failure in
+line~\ref{ln:owners:async:E}.
+%
+Some APIs, including in C++ and Java, provide an exceptional variant
+of the completion mechanism for
+promises~\cite{Cpp17,JavaCompletableFuture}.
+%
+In our implementation, we use this mechanism to propagate an exception
+through the promises that were left unfulfilled.
+
+Finally, observe that the correctness of \cref{alg:owners} only
+depends on knowing when a task's $\fldowned$ list is empty. Therefore,
+the $\fldowned$ list could be correctly replaced with a counter, which
+would at least reduce the memory footprint of ownership tracking, if
+not also the execution time of maintaining a list. However, doing so
+would mean that an assertion failure in line~\ref{ln:owners:async:E}
+could not indicate \emph{which} promises went unfulfilled. Therefore,
+the implementation we evaluate uses an actual list.
+
+\subsection{Benchmarks}
+
+We evaluate the execution time and memory usage overheads introduced
+by our promise deadlock detector on nine task-parallel programs. The
+overheads are measured relative to the original, unverified baseline
+versions.
+
+\begin{enumerate}
+\item Conway~\cite{ConwayBench} parallelizes a 2D cellular automaton
+  by dividing the grid into chunks. We adapted the code from C to
+  Java, using our \textsf{Channel} class (\cref{lst:channel}) in place
+  of MPI primitives used by worker tasks to exchange chunk borders
+  with their neighbors.
+
+\item Heat~\cite{HeatBench} simulates diffusion on a one-dimensional
+  surface, with 50 tasks operating on chunks of 40,000 cells for 5000
+  iterations. Neighboring tasks again use \textsf{Channel} in place of
+  MPI primitives.
+
+\item QSort sorts 1M integers using a parallelized divide-and-conquer
+  recursion; the partition phase is not parallelized. This is a
+  standard technique for parallelizing Quicksort~\cite{QuicksortAlg}
+  and has been previously implemented using the Habanero-Java
+  Library~\cite{HJlib}. We implemented the finish construct, which
+  awaits task termination using promises.
+
+\item Randomized distributes 5000 promises over 2535 tasks spawned in
+  a tree with branching factor of 3. Each task awaits a random promise
+  with probability 0.8 before performing some work, fulfilling its own
+  promises, and awaiting all its child tasks. We chose a random seed
+  that does not construct a deadlock.
+
+\item Sieve counts the primes below 100,000 with a pipeline of tasks,
+  each filtering out the multiples of an earlier prime. A similar
+  program is found in prior work~\cite{Ng16}.
+
+\item SmithWaterman (adapted from HClib~\cite{hclib}; also used in
+  prior work \cite{TJ,KJ}) aligns DNA sequences having 18,000--20,000
+  bases. Each task operates on a $25 \times 25$ tile.
+
+\item Strassen (such a program is found in the Cilk, BOTS, and KASTORS
+  suites~\cite{Cilk,BOTS,Kastors}) multiplies sparse $128 \times 128$
+  matrices containing around 8000 values. Divide-and-conquer recursion
+  issues asynchronous addition and multiplication tasks, up to depth
+  5.
+
+\item StreamCluster (from PARSEC~\cite{Parsec}) computes a streaming
+  $k$-means clustering of 102,400 points in 128 dimensions, using 8
+  worker tasks at a time. We replaced the OpenMP barriers with
+  promises in an all-to-all dependence pattern.
+
+\item StreamCluster2 reduces synchronization in StreamCluster by
+  replacing some of the all-to-all patterns with all-to-one when it is
+  correct to do so. We also correct a data race in the original
+  implementation.
+\end{enumerate}
+
+All benchmarks were run on a Linux machine with a 16-core AMD Opteron
+processor under the OpenJDK 11 VM with a 1 GB memory limit.
+%
+A thread pool schedules asynchronous tasks by spawning a new thread
+for a new task when all existing threads are in use. This execution
+strategy is necessary in general for promises because there is no
+\emph{a priori} bound on the number of tasks that can block
+simultaneously.
+%
+We measured both execution time and, in a separate run, average memory
+usage by sampling every 10 ms.
+%
+Each measurement is averaged over thirty runs within the same VM
+instance, after five discarded warm-up runs; this is a standard
+technique to mitigate the variability of JVM overheads, including JIT
+compilation~\cite{Georges07}.
+
+\tabResults
+
+\begin{figure}
+    \includegraphics[width=\columnwidth]{time-plot.pdf}
+    \caption{Execution times for each benchmark
+      showing the mean with a 95\% confidence interval (red).}
+    \label{fig:time}
+    \Description{A plot of the baseline and verified execution times
+      for each benchmark. The Sieve, SmithWaterman, and StreamCluster
+      benchmarks have noticeable overheads.}
+\end{figure}
+
+\Cref{tab:results} gives the unverified baseline measurements for each
+program and the overhead factors introduced by the verifiers.
+%
+The table also gives the geometric mean of overheads across all
+benchmarks. There is an overall factor of \geomeanTime in execution
+time and \geomeanMem in memory usage.
+%
+The total number of tasks in the program and the average rates of
+promise get and set actions per millisecond (with respect to the
+baseline execution time) are also reported.
+%
+\Cref{fig:time} represents the execution times of each benchmark,
+showing the 95\% confidence interval.
+%
+The low overheads indicate that our deadlock detection algorithm does
+not introduce serialization bottlenecks.
+
+The overall execution time overheads are within 1.1$\times$ for each
+of Conway, Heat, QSort, Randomized, SmithWaterman, Strassen, and
+StreamCluster2. The same is true of the memory overheads for this
+subset of benchmarks, excepting SmithWaterman. In many cases, the
+verified run narrowly out-performs the baseline, which can be
+attributed to perturbations in scheduling and garbage collection.
+
+It is worth noting that the execution overhead for Sieve is in excess
+of 2$\times$. Sieve has the single highest rate of get operations by
+an order of magnitude (over 37,000, compared to SmithWaterman's
+536). The Sieve program requires almost 9594 tasks to be live
+simultaneously, each waiting on the next, with the potential to form
+very long dependence chains for \cref{alg:detector} to traverse.
+
+We can also remark on the 1.4$\times$ memory overhead in
+SmithWaterman. Unlike Conway, Heat, Sieve, and both of the
+StreamCluster benchmarks, in which most promises are allocated by the
+same task that fulfills them, SmithWaterman (and Randomized) allocates
+all promises in the root task and moves them later. In maintaining the
+$\fldowned$ lists in \cref{alg:owners}, one can make trade-offs
+between speed and space. Our implementation favors speed, so instead
+of literally removing a promise $p$ from $t.\fldowned$ in
+lines~\ref{ln:owners:async:Y} and~\ref{ln:owners:set:C}, we simply
+rely on the fact that $p.\fldowner \ne t$ anymore to detect that $p$
+should no longer be counted in line~\ref{ln:owners:async:E}.
+
+For comparison with deadlock verification in other settings, the Armus
+tool~\cite{Armus} can identify barrier deadlocks as soon as they
+occur, with execution overheads of up to 1.5$\times$ on Java
+benchmarks.
+%
+Our benchmark results represent an acceptable performance overhead
+when one desires runtime-identifiable deadlocks and omitted sets with
+attributable blame.

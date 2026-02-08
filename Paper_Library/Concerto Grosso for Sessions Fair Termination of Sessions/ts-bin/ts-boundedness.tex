@@ -1,0 +1,311 @@
+\beginbass
+%
+In \Cref{ch:fs}
+we have introduced a fair subtyping relation that is liveness preserving but,
+as we will see in a moment, the adoption of fair subtyping alone is not enough
+to rule out all potential liveness violations. The type system must also enforce
+three properties that we call \emph{action boundedness}, \emph{session
+boundedness} and \emph{cast boundedness} guaranteeing that the overall effort
+required to terminate the process is finite. In the rest of the section we
+describe informally these properties and we show that violating even just one of
+them may compromise fair process termination.
+
+%%%%%%%%%%%%%%
+%%% ACTION %%%
+%%%%%%%%%%%%%%
+
+\begin{definition}[Action Boundedness]
+	We say that a process is \emph{action bounded} if there is a finite upper bound
+	to the number of actions it has to perform in order to terminate. An
+	action-unbounded process cannot terminate.
+\end{definition}
+
+\begin{example}
+	\label{ex:action_boundedness}
+	Compare the following processes
+	\[
+  \begin{array}{ll}
+    \Definition{A}{}{A \pchoice \Done}
+  	\qquad & \qquad
+  	\Definition{B}{}{B \pchoice B}
+  \end{array}
+  \]
+  and observe that $A$ may always reduce to $\Done$, whereas $B$ can only reduce
+	forever into itself. So $A$ is action bounded whereas $B$ is not. 
+	\eoe
+\end{example}
+
+We consider a
+parallel composition action bounded if so are \emph{both} processes composed in
+parallel.
+%
+Action boundedness is a necessary condition for (fair) process termination,
+hence the type system must guarantee that well-typed processes are action
+bounded. As we will see in \Cref{ssec:ts_bin_rules}, this can be easily achieved by means
+of \emph{typing corules} (see \Cref{sec:gis}). 
+Besides, action boundedness carries along two welcome side effects.
+%
+The first one is that degenerate process definitions such as
+$\Definition{A}{}{A}$ are not action bounded and therefore are flagged as ill
+typed by the type system. This guarantees that finitely many unfoldings of
+recursive process invocations always suffice to expose some observable process
+behavior.
+%
+The second is that action boundedness allows us to detect recursive processes
+that claim to use a channel in a certain way when in fact they never do so. 
+\begin{example}
+	Consider the following processes
+	\[
+	\begin{array}{ll}
+		\Definition{A}{x,y}{
+    	\POutput\x\la.\Call{A}{x,y} \pchoice \POutput\x\lb.\Close\x
+  	}
+  	\qquad & \qquad
+  	\Definition{B}{x,y}{\POutput\x\la.\Call{B}{x,y}}
+	\end{array}
+	\]
+	where $\Call{A}{x,y}$ is action bounded and $\Call{B}{x,y}$ is not. An ordinary
+	session type system with coinductively interpreted typing rules would accept
+	$\Call{B}{x,y}$ regardless of $y$'s type on the grounds that $y$ occurs once in
+	the body of $B$, hence it is ``used'' linearly. This is unfortunate, since $y$
+	is not used in any meaningful way other than being passed as an argument of $B$.
+	In $A$, the same linearity check promptly detects that $y$ is not used along the
+	path to $\Close\x$ that proves the boundedness of $\Call{A}{x,y}$.
+	\eoe
+\end{example}
+
+%%%%%%%%%%%%%%%
+%%% SESSION %%%
+%%%%%%%%%%%%%%%
+
+\begin{definition}[Session Boundedness]
+	We say that a process is \emph{session bounded} if there is a finite upper bound
+	to the number of sessions it has to create in order to terminate.
+\end{definition}
+
+ It is easy
+to construct non-terminating processes by chaining together an infinite number
+of finite (or fairly terminating) sessions.
+
+\begin{example}
+  \label{ex:session_bounded}
+  Compare the following processes
+  \[
+  \begin{array}{rl}
+  	\Definition{A}{}{& \NewPar\x{\Close\x}{\Wait\x{\Call{A}{}}} \pchoice \Done}
+  	\\
+  	\Definition{B_1}{}{& \NewPar\x{\Close\x}{\Wait\x{\Call{B_1}{}}}}
+  \end{array}
+  \]
+	where $A$ always has a possibility to terminate without creating new sessions
+	(it is session bounded) while $B_1$ does not (it is session unbounded). It could
+	be argued that $B_1$ is already ruled out because it is not action bounded.
+	Indeed, while the left-hand side of the
+	parallel composition in $B_1$ is finite, the right hand side is not (recall that
+	we require \emph{both} sides of a parallel composition to admit a finite path to
+	either $\Done$ or $\Close\x$). 
+	\eoe
+\end{example}
+
+\begin{example}
+	Below is a slightly more complex variation of
+	$B_1$ that is action bounded and session unbounded. The trick is to have a
+	finite branch on one side of the parallel composition matched by an infinite one
+	on the other side:
+	\[
+	  \Definition{B_2}{}{
+    \NewPar\x{
+      \PSend\x{
+        \la : \Close\x,
+        \lb : \Wait\x{\Call{B_2}{}}
+      }
+    }{
+      \PRecv\x{
+        \la : \Wait\x{\Call{B_2}{}},
+        \lb : \Close\x
+      }
+    }
+  }
+  \]
+  \eoe
+\end{example}
+
+\Cref{ex:session_bounded} shows that a session bounded process like $A$ may
+still create an unbounded number of sessions. Below is another example of
+session bounded process that creates unboundedly many \emph{nested} sessions,
+such that the first session being created is also the last one being completed.
+\begin{example}
+  \label{ex:infinite_sessions}
+  \[
+  \begin{array}{ll}
+    \NewPar\x{\Call{C}{x}}{\Wait\x\Done}
+  	&
+  	\Definition{C}{x}{
+    	\NewPar\y{\Call{C}{y}}{\Wait\y{\Close\x}} \pchoice \Close\x
+  	}
+  \end{array}
+  \]
+	While both $A$ and $C$ \emph{may} create an arbitrary number of sessions, they
+	do not \emph{have to} do so in order to terminate. This is what sets them apart
+	from $B_1$ and $B_2$.
+	\eoe
+\end{example}
+
+To ensure session boundedness, we check that no new sessions are found in loops that 
+occur along inevitable paths leading to the termination of a process. For example, 
+the creation of a new session $x$ is inevitable in both $B_1$ and $B_2$ but it is not in $A$ and $C$.
+
+%%%%%%%%%%%%
+%%% CAST %%%
+%%%%%%%%%%%%
+
+\begin{definition}[Cast Boundedness]
+	We say that a process is \emph{cast bounded} if there is a finite upper bound to
+	the number of casts it has to perform in order to terminate.
+\end{definition}
+
+Performing a cast
+means applying \refrule{sm-cast-new}, which corresponds to a usage of fair
+subtyping. The reason why cast boundedness is fundamental is that the
+liveness-preserving property of fair subtyping holds as long as fair
+subtyping is used finitely many times. Conversely, infinitely many usages of
+fair subtyping may have the overall effect of a single usage of unfair subtyping
+(see \Cref{ssec:unfair_sub}). By ``infinitely many usages'' we mean usages of
+fair subtyping that occur within a loop in a recursive process. 
+
+\begin{remark}[0-weight casts]
+	Notably, cast boundedness refers to those situations in which a cast with a strictly
+	positive weight is applied inside a loop. It might be the case that a 0-weighted cast
+	is performed (\eg no output contravariance). 
+	In this case we allow such application of fair subtyping as the 
+	liveness of the session is preserved. This is a substantial difference with respect
+	to \cite{CicconePadovani22}.
+	%
+	\eor
+\end{remark}
+
+\begin{example}
+  \label{ex:infinite_fair}
+  Consider the following variants of \actor{buyer} and \actor{seller} from \Cref{ex:bsc} 
+  where we can assume that the \actor{seller} closes the session as soon as he receives 
+  a tag $\lpay$.
+  \[
+  \begin{array}{ll}
+    \NewPar\x{\Call \Buyer x}{\Call \Seller x}
+  	&
+  	\begin{array}{r@{~}l}
+    	\Definition{\Buyer}{x}{& \Cast\x \POutput\x\ladd.\Call \Buyer x} \\
+    	\Definition{\Seller}{x}{&
+      	\PRecv\x{
+        	\ladd : \Call \Seller x,
+        	\lpay : \dots
+      	}
+    	}
+  	\end{array}
+  \end{array}
+  \]
+  and the session type $S_b = \Out\ladd.S_b \choice \Out\lpay.\End[\Out]$.
+	%
+	It can be argued that the channel $x$ is used according to $S_b$ in $\Buyer(x)$ and
+	according to $\co{\S_b}$ in $\Seller(x)$. Indeed, the structure of $\Seller(x)$ matches
+	perfectly that of $\co{\S_b}$ and note that $\POutput\x\ladd.\Buyer(x)$ uses $x$ according to
+	$\Out\ladd.S_b$, which is a fair supertype of $S_b$ accounted for by the cast
+	$\Cast\x$ in $\Buyer$. With this cast it is as if $\Buyer(x)$ promises to make a choice
+	between sending $\ladd$ and sending $\lpay$ at each iteration, but
+	systematically favors $\ladd$ over $\lpay$. The overall effect of these
+	unfulfilled promises is that the actual behavior of $\Buyer(x)$ over $x$ is better
+	described by the session type $S_b^\infty = \Out\ladd.S_b^\infty$, which is
+	\emph{not} a fair supertype of $S_b$ as we have seen in
+	\Cref{ex:unfair_sub}.
+	\eoe
+\end{example}
+
+Although $\Buyer(x)$ could be rejected on the grounds that it is not action bounded,
+it is possible to find an action-bounded (but slightly more involved) variation
+of \Cref{ex:infinite_fair} in which the same phenomenon
+occurs.
+
+\begin{example}
+  \label{ex:infinite_fair_bounded}
+  \[
+  \begin{array}{r@{~}l}
+    \Definition{A}{x}{&
+      \Cast\x
+      \POutput\x\lmore.
+      \PRecv\x{
+        \lmore : \Call A x,
+        \lstop : \Wait\x\Done
+      }
+    }
+    \\
+    \Definition{B}{x}{&
+      \PRecv\x{
+        \lmore : \Cast\x \POutput\x\lmore. \Call B x,
+        \lstop : \Wait\x\Done
+      }
+    }
+  \end{array}
+  \]
+  both $A(x)$ and $B(x)$ have a chance to continue or to terminate the session by 
+  sending either $\lmore$ or $\lstop$, except that they systematically favor $\lmore$ over $\lstop$.
+	%
+	Now, if we consider the session types
+	\[
+	\begin{array}{lcl}
+		S & = & \Out\lmore.(\In\lmore.S \branch \In\lstop.\End[\In]) \choice \Out\lstop.\End[\Out]
+		\\
+		S_A & = & \Out\lmore.(\In\lmore.S \branch \In\lstop.\End[\In])
+		\\
+		S_B & = & \In\lmore.\Out\lmore.\co\S \branch \In\lstop.\End[\In]
+	\end{array}
+	\]
+	it can be argued that $A(x)$
+	uses $x$ according to $S_A$, which is a fair supertype of $S$, and that $B(x)$ uses $x$
+	according to $S_B$, which
+	is a fair supertype of $\co\S$. The casts
+	account for the differences between $S$ and $S_A$ in $A(x)$ and between $\co\S$
+	and $S_B$ in $B(x)$, but they occur within loops along paths that lead to
+	process termination, hence $A$ and $B$ are not cast bounded.
+	\eoe
+\end{example}
+
+It is worth discussing one last attempt to work around the problem, by moving
+the casts outward from within $A(x)$ and $B(x)$.
+
+\begin{example}
+  \label{ex:finite_unfair}
+  \[
+  	\begin{array}{@{}r@{~}l@{}}
+  		& \NewPar\x{\Cast\x \Call A x}{\Cast\x \Call B x}
+  		\\
+    	\Definition{A}{x}{&
+      	\POutput\x\lmore.
+      	\PRecv\x{
+        	\lmore : \Call A x,
+        	\lstop : \Wait\x\Done
+      	}
+    	}
+    	\\
+    	\Definition{B}{x}{&
+      	\PRecv\x{
+        	\lmore : \POutput\x\lmore. \Call B x,
+        	\lstop : \Wait\x\Done
+      	}
+    	}
+  	\end{array}
+  \]
+  Now $A(x)$ uses $x$  according to $T_A = \Out\lmore.(\In\lmore.T_A
+	\branch \In\lstop.\End[\In])$ and $B(x)$ uses $x$ according to $T_B =
+	\In\lmore.\Out\lmore.T_B \branch \In\lstop.\End[\In]$, but while $S \usubt T_A$
+	and $\co\S \usubt T_B$ both hold neither $S \subt T_A$ nor $\co\S \subt T_B$
+	does.
+	\eoe
+\end{example}
+
+In summary, the non-terminating process in \Cref{ex:finite_unfair} is
+action bounded, session bounded and cast bounded, but it is typeable only using
+\emph{unfair} subtyping.
+% 
+As we will see in \Cref{ssec:ts_bin_rules}, we enforce cast boundedness using the same 
+technique already introduced for session boundedness. 
+That is, we check that casts do not occur along ``inevitable'' paths leading to recursive process invocations.

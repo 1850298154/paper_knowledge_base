@@ -1,0 +1,65 @@
+\begin{algorithm}
+\caption{Lock-Free Dequeue}
+\begin{algorithmic}[1]
+\Function{dequeue}{queue}
+    \State $current \gets$ LOAD$(queue.head)$ \Comment{Non-NULL value}
+    \State $last\_deque\_cycle \gets 0$
+    
+    \While{$current \neq$ NULL}
+        \State \textit{// Phase 1: Load scan cursor - starting position}
+        \State $deque\_cycle \gets$ LOAD$(queue.deque\_cycle)$
+        \If{$deque\_cycle \neq last\_deque\_cycle$}
+            \State $last\_deque\_cycle \gets deque\_cycle$
+            \State $current \gets$ LOAD$(queue.scan\_cursor)$
+            \State $last\_cursor \gets current$
+            \State $cursor\_cycle \gets last\_cursor.cycle$
+        \EndIf
+        
+        \State \textit{// Phase 2: Atomic node claiming}
+        \State $expected \gets$ AVAILABLE
+        \If{\textbf CAS$(current.state, expected,$ CLAIMED$)$}
+            \State \textbf{break}
+        \EndIf
+            
+	\State $current \gets current.next$
+    \EndWhile
+    \State if {$current =$ NULL} \textbf{then} \Return NULL
+    \State \textit{// Phase 3: Claim Data with CAS}
+    \If{$current.state =$ AVAILABLE}
+        \State \Return NULL  \Comment{Detect ABA/reassignment}
+    \EndIf
+    
+    \State $data \gets current.data$
+    \If{$data =$ NULL \textbf{or not} CAS$(current.data, data,$ NULL$)$}
+        \State \Return NULL
+    \EndIf
+    
+    \State $advance\_boundary \gets$ true
+    
+    \State \textit{// Phase 4: Scan\_cursor Advance \& Cycle Announce}
+    \If{$last\_cursor =$ LOAD$(queue.scan\_cursor)$ \textbf{and} 
+    \Statex \hspace{2em} $cursor\_cycle = queue.scan\_cursor.cycle$}
+        \State $next \gets$ LOAD$(current.next)$
+        \State $advance\_boundary \gets$ false
+        
+        \If{$next =$ NULL \textbf{or} ($next \neq$ NULL \textbf{and}
+        \Statex \hspace{2em} CAS$(queue.scan\_cursor, last\_cursor, next))$}
+            \State $advance\_boundary \gets$ true
+        \EndIf
+    \EndIf
+    
+    \State \textit{// Phase 5: Protection Boundary Update}
+    \If{$advance\_boundary$}
+        \State $cycle \gets$ LOAD$(queue.deque\_cycle)$
+        \While{$cycle < current.cycle$}
+        \If{CAS$(queue.deque\_cycle, cycle, current.cycle)$}
+            \State \textbf{break}
+        \EndIf
+        \State $cycle \gets$ LOAD$(queue.deque\_cycle)$
+        \EndWhile
+    \EndIf
+    
+    \State \Return $data$
+\EndFunction
+\end{algorithmic}
+\end{algorithm}

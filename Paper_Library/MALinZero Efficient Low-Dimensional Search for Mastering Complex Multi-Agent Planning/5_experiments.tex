@@ -1,0 +1,102 @@
+\section{Experiments}
+We evaluate MALinZero on three reinforcement learning benchmarks: MatGame, StarCraft Multi-Agent Challenge (SMAC)\cite{samvelyan19smac} and SMACv2 \cite{ellis2023smacv2}.
+MatGam is a stateless‑matrix game that generalizes the classic normal‑form setting to \(n\) agents. At every step, all agents select an action from the same discrete set; the environment then looks up the joint action in a predefined payoff (with or without noise) tensor and returns the corresponding shared reward, which is used to evaluate algorithms' performance. MALinZero is compared with both model-based and model-free baseline models on these environments. The model-based algorithms are MAZero~\cite{MAZero}, MAZero without prior information (MAZero-NP) and MuZero implemented for multi-agent tasks (MA-AlphaZero). We also choose two mainstream model-free MARL algorithms: MAPPO~\cite{mappo} and QMIX~\cite{QMIXmixmab}.   
+
+\paragraph{Model architecture} MALinZero consists of 6 neural networks to be learned during the training and the parameter \(\theta\) is to be estimated from initialization for a single MCTS process. Specifically, with network parameter \(\phi\), there are 6 key functions: the representation function \(s^i_{t,0}=h_\phi(o^i_{\le t})\) that maps the current individual observation history into the latent space, the communication function $e^1_{t,k},\dots, e^n_{t,k} = e_\phi(s^1_{t,k},\dots,s^n_{t,k},a^1_{t,k},\dots,a^n_{t,k})$ that generates cooperative information for each agent via the attention mechanism, the dynamic function \(s^i_{t,k+1} = g_\phi(s^i_{t,k}, a^i_{t+k}, e^i_{t,k})\) that plays the role of transition function, the reward function \(r_{t,k}=r_\phi (s^1_{t,k},\dots,s^n_{t,k},a^1_{t,k},\dots,a^n_{t,k})\) and the value function \(v_{t,k}=v_\phi(s^1_{t,k},\dots,s^n_{t,k})\) that predicts the reward and value respectively, and the policy function \(p^i_{t,k} = p_\phi(s^i_{t,k})\) that predicts the policy distribution for the given state. The subscript \(k\) denotes the index of unrolling steps within one simulation from the root node in MCTS. The update of estimated \(\theta\) takes place in the Back-propagation stage and the detailed process is analyzed above. For all these modules except for the communication function \(e_\phi\), the neural networks are implemented by Multi-Layer Perception (MLP) networks and a Rectified Linear Unit (ReLU) activation and Layer Normalization (LN) follows each linear layer in MLP networks. Agents process local dynamics and make predictions with the encoded information.
+
+\paragraph{Experiment setting} All experiments are conducted using NVIDIA RTX A6000 GPUs and NVIDIA A100 GPUs. For MatGame environments, the number of sampled actions for each node in MCTS is 3 and the number of MCTS simulations is 50. For both SMAC and SMACv2 benchmarks, we set them as 7 and 100, respectively. We build our training pipeline similar to EfficientZero \cite{efficientzero} which synchronizes parallel stages of data collection, reanalysis, and training.
+
+
+
+\begin{table*}[h]
+\centering
+\setlength{\tabcolsep}{0.6mm}{
+\scalebox{0.8}{
+\begin{tabular}{@{}cccc|c|c|c|c|c|c@{}}
+\toprule\toprule
+Agent & Action & Type & Steps & MAZero & MAZero-NP & MA-AlphaZero & MAPPO & QMIX & MALinZero(Ours) \\ \hline
+2     & 3      & Linear   & 500  & \(51.9\pm2.3\)      & \(49.7\pm3.9\)         &  \(50.8\pm3.2\)            &  \(50.2\pm2.9\)     &  \(50.4\pm3.5\)    & \(\mathbf{53.1\pm0.9}\) \\
+2     & 3      & Linear   & 1000  & \(57.8\pm2.4\)      & \(53.1\pm3.3\)         & \(55.2\pm2.7\)            & \(56.4\pm3.1\)      & \(54.3\pm3.17\)    & \(\mathbf{59.9\pm0.2}\) \\
+\hline
+2     & 3      & Non-Linear   & 500  & \(49.1\pm15.3\)      & \(48.9\pm17.2\)         & \(49.0\pm16.4\)            & \(49.1\pm19.1\)     & \(48.7\pm18.6\)    & \(\mathbf{49.2\pm8.6}\) \\
+2     & 3      & Non-Linear   & 1000  & \(47.6\pm14.7\)      & \(49.3\pm14.3\)         & \(49.2\pm12.9\)            & \(49.5\pm18.1\)      & \(49.1\pm17.7\)     & \(\mathbf{49.6\pm15.5}\) \\
+\hline
+
+4     & 5      & Linear   & 1000  & \(175.2\pm4.4\)     & \(171.7\pm5.6\)         & \(172.7\pm4.1\)            & \(173.1\pm5.4\)     & \(171.8\pm4.9\)    & \(\mathbf{184.3\pm3.2}\) \\
+4     & 5      & Linear   & 2000  & \(191.7\pm2.3\)       & \(190.1\pm1.2\)         & \(190.4\pm1.9\)            & \(189.8\pm2.1\)     & \(190.2\pm1.8\)    & \(\mathbf{197.4\pm2.1}\) \\
+\hline
+4     & 5      & Non-Linear   & 1000  & \(179.4\pm11.7\)      & \(173.2\pm10.0\)         & \(174.5\pm9.3\)            & \(173.1\pm8.0\)     & \(174.7\pm9.4\)    & \(\mathbf{182.4\pm11.7}\) \\
+4     & 5      & Non-Linear   & 2000  & \(195.4\pm20.0\)      & \(192.4\pm12.8\)         & \(192.7\pm11.4\)            & \(191.9\pm12.5\)     & \(190.3\pm10.7\)    & \(\mathbf{197.8\pm21.1}\) \\
+\hline
+
+6     & 8      & Linear   & 1000  & \(393.7\pm9.9\) &\(387.2\pm10.1\)  & \(389.3\pm8.4\) & \(390.6\pm9.2\)    & \(386.1\pm10.4\)  & \(\mathbf{396.6\pm8.4}\)   \\
+6     & 8      & Linear   & 2000  & \(434.2\pm7.2\)     & \(427.3\pm9.3\)         & \(432.6\pm9.5\)            & \(431.8\pm8.4\)     & \(430.1\pm9.5\)    & \(\mathbf{439.8\pm6.8}\)   \\
+\hline
+6     & 8      & Non-Linear   & 1000  & \(399.8\pm13.7\)      & \(391.3\pm10.3\)         &  \(393.1\pm12.1\)           & \(388.8\pm13.1\)     & \(390.5\pm12.2\)    & \(\mathbf{410.6\pm8.9}\) \\
+6     & 8      & Non-Linear  & 2000  & \(443.9\pm12.1\)      & \(429.1\pm9.3\)         & \(427.1\pm8.6\)            & \(430.1\pm8.5\)     & \(431.7\pm7.6\)    & \(\mathbf{451.1\pm12.8}\) \\
+\hline
+
+8     & 10      & Linear   & 1000  & \(618.8\pm16.9\)      & \(608.8\pm17.6\)         & \(613.1\pm13.1\)           & \(617.1\pm11.1\)     & \(612.7\pm15.4\)    & \(\mathbf{637.1\pm15.8}\) \\
+8     & 10     & Linear   & 2000  & \(692.7\pm14.5\)      & \(671.5\pm13.9\)         & \(654.3\pm14.5\)             & \(681.8\pm12.5\)      & \(679.4\pm12.7\)     & \(\mathbf{705.2\pm15.7}\) \\
+\hline
+8     & 10      & Non-Linear   & 1000  & \(615.2\pm18.7\)      & \(536.6\pm24.1\)         & \(573.2\pm22.7\)            & \(561.4\pm20.9\)      & \(558.7\pm19.1\)    & \(\mathbf{630.1\pm16.3}\) \\
+8     & 10      & Non-Linear  & 2000  & \(672.3\pm16.1\)      & \(587.2\pm18.4\)         & \(633.2\pm15.6\)            & \(657.1\pm17.3\)     & \(648.2\pm18.7\)5    & \(\mathbf{693.4\pm15.6}\) \\
+
+\bottomrule\bottomrule
+\end{tabular}}}
+\vspace{-0.1in}
+\caption{Evaluation in MatGame with different numbers of agents and actions. We consider both linear and non-linear reward structures. MALinZero is shown to outperform both MCTS and MARL baselines, especially in more complex MatGames with larger action spaces and with less numbers of steps. Interestingly, the improvement is higher for non-linear reward structures (up to \%11), as baselines may stuck in local optima.
+Detailed MatGame settings can be found in Appendix D.}
+\label{tab:table_1}
+\end{table*}
+
+\paragraph{Performance Evaluation} MALinZero outperforms all baselines in 8 MatGame environments. 
+As shown in Table~\ref{tab:table_1}, the performance improvements are achieved in even simple MatGames (a few percent for 2 agents with 3 actions each, thus a space of only 9 joint actions) and increases for more complex MatGames (such as up to 11\% for 8 agents each with 10 actions, thus a space of \(8^{10}\) joint actions). This makes sense since the benefit of MALinZero comes from representing high-dimensional joint action space into lower-dimensional ones. Interestingly, the improvements are higher in MatGames with non-linear reward structures. This is because MALinZero is able to model the entire joint action space -- despite in a lower dimensional space, while baselines may get stuck in local optima. MALinZero is also able to achieve the rewards much faster than baselines. Running the LinUCB algorithm will incur minor additional cost. However, the computation leverages a linear structure with sampling \(\mathcal{O}(dn)\) actions rather than the standard \(\mathcal{O}(d^n)\). Our evaluation shows that the computational cost is comparable to that of the MAZero \cite{MAZero} method.
+
+
+\begin{figure}[H]
+  \vspace{-0.1in}
+  \centering
+  \includegraphics[width=0.32\linewidth]{fig/smac/2m_vs_1z.pdf}\hfill
+  \includegraphics[width=0.32\linewidth]{fig/smac/3m.pdf}\hfill
+  \includegraphics[width=0.32\linewidth]{fig/smac/so_many_baneling.pdf}
+  \vspace{-0.1in}
+  \caption{Evaluations on 3 SMAC tasks/maps. Y-axis denotes the win rate and X-axis denotes training steps. Each algorithm is executed with 3 random seeds. MALinZero achieves over 95\% winning rate on all 3 maps, outperforming all baselines and also gets high winning rate much faster.}
+    \vspace{-0.1in}
+  \label{fig:smac}
+\end{figure}
+
+Figure \ref{fig:smac} shows performance measured by win rate on three different SMAC maps. MALinZero beats all five MCTS and MARL baselines, in both higher winning rate (over 95\% across all maps) and faster convergence speed. Comparing with the closest baseline MAZero, our MALinZero reaches the same winning rate with 50\% to 70\% less steps/samples, implying 2-3$\times$ speedup. The results demonstrate LinUCT's ability to represent complex multi-agent decision-making problems in low‑dimensional latent space. This efficient representation supports fast MCTS by exploring and exploiting the global reward structure of the joint action space (in an approximated low-dimensional fashion), rather than getting trapped in local optima as in the baselines. This is validated by comparison with MCTS baselines with pUCT applied to MAZero, MAZero-NP, and MA-AlphaZero.
+
+
+
+
+\begin{figure}[H]
+  \centering
+    \vspace{-0.1in}
+  \includegraphics[width=0.32\linewidth]{fig/smacv2/protoss_5_vs_5.pdf}\hfill
+  \includegraphics[width=0.32\linewidth]{fig/smacv2/terran_5_vs_5.pdf}\hfill
+  \includegraphics[width=0.32\linewidth]{fig/smacv2/zerg_5_vs_5.pdf}
+    \vspace{-0.1in}
+  \caption{Comparisons on 3 SMACv2 tasks/maps.Y-axis denotes the win rate and X-axis denotes the training steps. MALinZero nearly doubles the winning rate on these challenging maps in SMACv2 and consistently outperforms all baselines. Each algorithm is executed with 3 random seeds.}
+    \vspace{-0.1in}
+  \label{fig:smacv2}
+\end{figure}
+
+Different from SMAC, SMACv2 significantly increases difficulty by adding larger heterogeneous unit teams, more varied map layouts, and stochastic enemy formations, which all demand advanced coordination and generalization by the learning algorithms. Figure~\ref{fig:smacv2} shows the training curves of our proposed MALinZero and baseline algorithms on SMACv2, including 3 widely-used maps. Compared with all baselines, MALinZero doubles the winning rate on protoss\_5\_vs\_5 and zerg\_5\_vs\_5, and nearly doubles it on terran\_5\_vs\_5. Our MALinZero shows very robust performance across different scenarios, which comes from the parameterization of LinUCT, allowing MALinZero to conduct more adaptive and efficient modeling of heterogeneous unit teams.
+
+\paragraph{Ablation Study} We intend to validate the necessity and effectiveness of DNG and the general function \(f\) applied in LinUCT. To accomplish this, we compare the proposed MALinZero under two MatGame environments: (1) Medium difficulty scenario containing 4 agents and each with 5 actions; (2) Hard difficulty scenario containing 8 agents and each with 10 actions. 
+\begin{figure}[H]
+  \vspace{-0.07in}
+  \centering
+  \includegraphics[width=0.43\linewidth]{fig/ablation/MatGame10.pdf}\hfill
+  \includegraphics[width=0.43\linewidth]{fig/ablation/MatGame13.pdf}\hfill
+  \vspace{-0.07in}
+  \caption{Ablation study of MALinZero by removing various design components, such as DNG and the introduction of general convex loss $f$ in the contextual bandit problem.}
+  \label{fig:abaltion}
+    \vspace{-0.07in}
+\end{figure}
+
+In Figure~\ref{fig:abaltion}, we evaluate the impact of removing the DNG component, the use of the general convex loss \(f\) (to place more importance on better actions), and both simultaneously. It is shown that these components are critical for the superior performance of MALinZero. In particular, 
+
+without DNG, it is hard for MALinZero to model and explore the joint action space, thus the performance becomes limited. The observed performance degradation when using a Euclidean distance rather than general convex loss \(f\) validates our design principle that by placing more importance on the better actions can boost maximal action selection in this low-dimension representation.

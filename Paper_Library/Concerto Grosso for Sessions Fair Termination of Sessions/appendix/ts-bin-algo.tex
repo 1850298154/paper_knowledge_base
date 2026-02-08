@@ -1,0 +1,285 @@
+\beginbass
+%
+In this section we show how to obtain an alternative version of the typing rules
+from which it is easy to derive a type checking algorithm, provided that bound
+names and casts are explicitly annotated with session types and the weight of the
+subtyping being applied. As we pointed out in \Cref{ssec:app_min_rank}, we assume that
+non deterministic choices are labeled with the branch which leads to successful termination.
+There are three
+aspects that make the type system presented in \Cref{fig:ts_bin} not strictly
+algorithmic:
+\begin{enumerate}
+    \item\label{item:alg_coind} the fact that typing derivations are potentially
+    infinite
+    \item\label{item:alg_ind} the need for building finite derivations using the
+        corules \refrule{cob-choice} and \refrule{cob-tag}, which overlap with
+        \refrule{tb-choice} and \refrule{tb-tag} respectively
+    \item\label{item:alg_rank} the rank annotation to be used in each typing
+    judgment
+\end{enumerate}
+
+Concerning \Cref{item:alg_rank}, in \Cref{ssec:app_min_rank} we have seen how the
+rank annotation can be computed for any process in a safe program. So here we
+focus on \Cref{item:alg_coind,item:alg_ind}.
+
+\begin{figure}[t]
+    \framebox[\textwidth]{
+      \begin{mathpar}
+        \displaystyle
+          \inferrule[a-done]{\mathstrut}{
+            \wtp\EmptyCtx\Done
+          } \defrule[a-done]{}
+          \and
+          \inferrule[a-call]{
+              \mathstrut
+          }{
+              \wtp{\seqof{x : S}}{\Call A {\seqof x}}
+          }
+          ~ \tass{A}{\seqof{S}}{n} \defrule[a-call]{}
+          \and
+          \inferrule[a-choice]{
+            \wtp\Ctx{P}
+            \\
+            \wtp\Ctx{Q}
+          }{
+            \wtp\Ctx{P \pchoice Q}
+          } \defrule[a-choice]{}
+          \and
+          \inferrule[a-close]{\mathstrut}
+          {
+            \wtp{x : \End[\Out]}{\Close\x}
+          } \defrule[a-close]{}
+          \and
+          \inferrule[a-wait]
+          {
+            \wtp\Ctx{P}
+          }{
+            \wtp{\Ctx, x : \End[\In]}{\Wait\x P}
+          } \defrule[a-wait]{}
+          \and
+          \inferrule[a-channel-in]{
+            \wtp{\Ctx, x : S, y : T}{P}
+          }{
+            \wtp{\Ctx, x : \In\T.S}{\PInput\x{(y)}.P}
+          } \defrule[a-channel-in]{}
+          \and
+          \inferrule[a-tag]
+          {
+            \forall i \in I : \wtp{\Ctx, x : S_i}{P_i}
+          }{
+            \textstyle
+            \wtp{
+              \Ctx, x : \Pol\set{\l_i : S_i}_{i \in I}
+            }{
+              x\Pol\set{\l_i : P_i}_{i \in I}
+            }
+          } \defrule[a-tag]{}
+          \and
+          \inferrule[a-channel-out]{
+            \wtp{\Ctx, x : S}{P}
+          }{
+            \wtp{\Ctx, x : \Out\T.S, y : T}{\POutput\x\y.P}
+          } \defrule[a-channel-out]{}
+          \and
+          \inferrule[a-par]{
+            \wtp{\CtxC, x : S}{P}
+            \\
+            \wtp{\CtxD, x : T}{Q}
+          }{
+            \wtp{
+              \CtxC, \CtxD
+            }{
+              \NewPar{x}{P}{Q}
+            }
+          }
+          ~
+          S \compatible T \defrule[a-par]{}
+          \and
+          \inferrule[a-cast]{
+            \wtp{\Ctx, x : T}{P}
+          }{
+            \wtp{\Ctx, x : S}{\Cast{x} P}
+          }
+          ~ S \subt T \defrule[a-cast]{}
+      \end{mathpar}
+    }
+    \caption{Algorithmic typing rules for processes}
+    \label{fig:as}
+\end{figure}
+
+\Cref{fig:as} presents an (inductively interpreted) set of typing rules that are
+a ``stripped down'' version of those given in \Cref{fig:ts_bin}. There are two main
+differences between these rules and those given in the main body of the paper:
+first, there is no rank annotation in typing judgments; second, \refrule{a-call}
+is an \emph{axiom}, unlike \refrule{tb-call}. The remaining structure of the
+rules and the kind of constraints they impose is exactly the same as before.
+Henceforth, we write $\wtpa\Ctx{P}$ if $\wtp\Ctx{P}$ is (inductively)
+derivable using the typing rules in \Cref{fig:as}.
+
+\begin{lemma}
+    \label{lem:coind_alg}
+    Let $\set{ \Definition{A_i}{\seqof{x_i}}{P_i}}_{i\in I}$ be a safe program
+    and let $\set{ \tass{A_i}{\seqof{S_i}}{n_i} }_{i\in I}$ be a global assignment.
+    The following properties are equivalent:
+    \begin{enumerate}
+        \item $\wtpc[n_i]{\seqof{x_i : S_i}}{P_i}$ for every $i\in I$;
+        \item $\wtpa{\seqof{x_i : S_i}}{P_i}$ for every $i\in I$.
+    \end{enumerate}
+\end{lemma}
+\begin{proof}
+    \newcommand{\relr}{\mathcal{R}}
+    %
+    $1 \Rightarrow 2$. Just observe that a (finite) derivation for
+    $\wtpa\Ctx{P}$ can be obtained from a (possibly infinite) derivation for
+    $\wtpc\Ctx{P}$ by truncating each application of \refrule{tb-call} in the
+    latter derivation to an application of \refrule{a-call} with the same
+    conclusion.
+
+    $2 \Rightarrow 1$. Let $\relr \eqdef \set{ \wtp[n]\Ctx{P} \mid
+    \wtpa\Ctx{P}, \Rank[]P \leq n }$. Using the coinduction principle it
+    suffices to show that each judgment found in $\relr$ is the conclusion of a
+    rule in \Cref{fig:ts_bin} whose premises are also in $\relr$.
+    %
+    Let $\wtp[n]\Ctx{P} \in \relr$, meaning that $\wtpa\Ctx{P}$ and
+    $\Rank[]P \leq n$.
+    %
+    We reason by cases on the rule used to derive $\wtpa\Ctx{P}$. We only discuss a few cases.
+
+    \proofrule{a-done}
+    %
+    We conclude observing that $P$ is the conclusion of \refrule{tb-done}.
+
+    \proofrule{a-call}
+    %
+    Then $P = \Call{A}{\seqof\x}$ for some $\Definition{A}{\seqof\x}{Q}$.
+    %
+    Note that $n \geq \Rank[]P = \Rank[]Q$.
+    %
+    From the hypothesis we know that $\wtpa\Ctx{Q}$ and we conclude by observing that $\wtp[n]\Ctx{P}$ 
+    is the conclusion of \refrule{tb-call} and that $\wtp[n]\Ctx{Q} \in \relr$ by definition of $\relr$.
+
+    \proofrule{a-par}
+    %
+    Then $P = \NewPar\x{P_1}{P_2}$ and $\Ctx = \Ctx_1, \Ctx_2$ and
+    $\wtpa{\Ctx_i, x : S_i}{P_i}$ for $i=1,2$ and $S_1 \compatible S_2$.
+    %
+    Note that $n \geq \Rank[]P = 1 + \Rank[]{P_1} + \Rank[]{P_2}$. Hence, there
+    exist $n_1$ and $n_2$ such that $n = 1 + n_1 + n_2$ and $\Rank[]{P_i} \leq
+    n_i$ for $i=1,2$.
+    %
+    We conclude by observing that $\wtp[n]\Ctx{P}$ is the conclusion of
+    \refrule{tb-par} and that $\wtp[n_i]{\Ctx_i, x : S_i}{P_i} \in \relr$ by
+    definition of $\relr$.
+
+    \proofrule{a-tag}
+    %
+    Then $P = x\Pol\set{\l_i:P_i}_{i\in I}$ and $\Ctx = \Ctx', x : \Pol\set{\l_i:S_i}_{i\in I}$ 
+    and $\wtpa{\Ctx', x : S_i}{P_i}$ for every $i\in I$.
+    %
+    Note that $n \geq \Rank[]P = \bigsqcup_{i\in I} \Rank[]{P_i}$, 
+    hence $n \geq \Rank[]{P_i}$ for every $i\in I$.
+    %
+    We conclude by observing that $\wtp[n]\Ctx{P}$ is the conclusion of \refrule{tb-tag} 
+    and that $\wtp[n]{\Ctx', x : S_i}{P_i} \in \relr$ by definition of $\relr$.
+\end{proof}
+
+\begin{figure}[t]
+    \framebox[\textwidth]{
+      \begin{mathpar}
+        \displaystyle
+            \inferrule{\mathstrut}{
+                \pbounded\Done
+            }
+            \and
+            \inferrule{\mathstrut}{
+                \pbounded{\Close\x}
+            }
+            \and
+            \inferrule{
+                \pbounded[\aset \cup \set{A}]P
+            }{
+                \pbounded{\Call{A}{\seqof\x}}
+            }
+            ~ A \not\in \aset, \Definition{A}{\seqof\x}{P}
+            \and
+            \inferrule{
+                \pbounded P_k
+            }{
+                \pbounded{P_1 \pchoice_k P_2}
+            }
+            ~ k \in \set{1,2}
+            \and
+            \inferrule{
+                \pbounded P
+            }{
+                \pbounded{\PInput\x{(\y)}.P}
+            }
+            \and
+            \inferrule{
+                \pbounded P
+            }{
+                \pbounded{\POutput\x\y.P}
+            }
+            \and
+            \inferrule{
+                \pbounded{P_k}
+            }{
+                \pbounded{x\Pol\set{\l_i:P_i}_{i\in I}}
+            }
+            ~ k\in I
+            \and
+            \inferrule{
+                \forall i \in \set{1,2} : \pbounded{P_i}
+            }{
+                \pbounded{\NewPar\x{P_1}{P_2}}
+            }
+            \and
+            \inferrule{
+                \pbounded P
+            }{
+                \pbounded{\Cast\x P}
+            }
+    \end{mathpar}
+    }
+    \caption{Algorithmic rules for action boundedness}
+    \label{fig:pbounded}
+\end{figure}
+
+To filter out those judgments derivable in the algorithmic type system for which
+there is no finite derivation using the original type system with the corules
+\refrule{cob-choice} and \refrule{cob-label}, we separately define the (inductive)
+inference system shown in \Cref{fig:pbounded} for action boundedness. Note that
+this inference system can be trivially turned into an algorithm by checking
+whether, for a process of the form $x\Pol\set{\l_i:P_i}_{i\in I}$, there is at least
+one branch for which $\pbounded{P_i}$ is derivable.
+
+\begin{lemma}
+    \label{lem:ind_alg}
+    If $\wtpc[n]\Ctx{P}$, then $\wtpi[n]\Ctx{P}$ if and only if
+    $\pbounded[\emptyset]P$.
+\end{lemma}
+\begin{proof}
+    For the ``if'' part we prove that $\pbounded P$ implies
+    $\wtpi[A]\Ctx{P}$ by induction on the derivation of $\pbounded P$.
+    %
+    For the ``only if'', we first prove that if $\wtpi[A]\Ctx{P}$ and none
+    of the process names occurring in the \refrule{tb-call} applications of this
+    derivation is in $\aset$, then $\pbounded P$.
+    %
+    Then, the result follows by considering the \emph{smallest} derivation
+    $\wtpi[A]\Ctx{P}$, in which no process definition is expanded twice.
+\end{proof}
+
+\begin{theorem}
+    Let $\set{\Definition{A_i}{\seqof{x_i}}{P_i}}_{i\in I}$ be a safe program
+    and let $\set{\tass{A_i}{\seqof{S_i}}{n_i} }_{i\in I}$ be a global assignment.
+    The following properties are equivalent:
+    \begin{enumerate}
+        \item $\wtp[n_i]{\seqof{x_i : S_i}}{P_i}$ for every $i\in I$;
+        \item $\wtpa{\seqof{x_i : S_i}}{P_i}$ for every $i\in I$ and $\pbounded[\emptyset]Q$ 
+        is derivable for every $Q$ occurring in the derivations.
+    \end{enumerate}
+\end{theorem}
+\begin{proof}
+    Consequence of \Cref{lem:coind_alg,lem:ind_alg}.
+\end{proof}

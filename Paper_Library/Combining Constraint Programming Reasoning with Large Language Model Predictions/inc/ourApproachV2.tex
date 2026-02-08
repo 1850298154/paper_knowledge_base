@@ -1,0 +1,213 @@
+
+\section{Method: LLM alongside OTFS}
+\label{sec:mmethod}
+% \flo{Ici introduit \otf, explique amelioration c'est helping function et generation function, mets sur le graphe une bulle à cote du 2 avec LLM qui revient vers 2 pour indiquer apres (dans le text dira callLLM)}
+
+% FGCSP formalism allows the \otf definition of a variable domain, permitting us to embed LLM in CP, combining CP and ML. Our new approach use a reformated FGCSP \cite{FGCSPICTAI} and embedded LLM in it.
+%The approach is based on \otf \cite{FGCSPICTAI} (\otf), a variant of CSP that generates variables/domains/constraints during the search for a solution. 
+
+The approach of this paper extends \otf by having an embedded LLM generate the domains of variables. Figure \ref{fig:toplevel} graphically depicts the interplay between those components. The approach also adds a minor improvement in the form of helping functions, to differentiate between implicit constraints (prevent infinite loops, ensure a variable represents a word, etc.) and explicit constraints (constraints of the problem). 
+% In the next subsection, the new version of \otf is described (from now on, \otf is directly used to refer to the modified version).
+In the next subsection, the new version of \otf called GenCP is described.
+
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.80\textwidth]{ima/RadneSent-17.pdf}
+    % 
+     \caption{This scheme presents the integration of ML into CP performed by GenCP. It is freely inspired by Sec. 3.2.3 of Bengio et al.'s survey \cite{BENGIO-survey:2021}, which introduces an architecture for ML alongside Optimization Algorithms. The similarity is highlighted because the master algorithm (here, GenCP) repeatedly queries an ML model (here, an LLM) to obtain a prediction as a subroutine. In the context of this paper, the decision (search or propagation) has an impact on the problem definition (the CSP) because it may generate new variables, domains, or constraints during the solving process. The state is the current assignment of the variables.}
+    \label{fig:toplevel}
+\end{figure}
+%
+
+% 
+\subsection{New version of \otf: GenCP}
+
+% 
+
+In traditional CP it is not common to generate new variables/domains/constraints during the search, while \otf is based on this idea.
+\otf begins with an empty or partially defined CSP (the CSP has less variables/domains/constraints than the CSP in traditional CP) and will generate variable/domains/constraints during the search for solutions.
+
+GenCP is a new version of \otf that makes two changes to the original version: \textbf{1)} the function that generates the domain $genD$ calls an LLM to generate the domain of the current variable. \textbf{2)} Helping functions are added to represent implicit constraints.
+
+Here is GenCP applied to \tg.
+% 
+An GenCP model can be defined as a pair of sets $\{\mc{M},\mc{F}\}$, where:
+\begin{itemize}
+    \item $\mc{M} = \{X,D,C\}$ represents the model of the problem.
+    \item $X$ represents the variables. The variables represent words.
+    \item $D$ represents the domain of the variables. A domain $d_i \in D$ contains a list of predicted words by an LLM.
+    \item $C$ represents the explicit constraints (constraints of the problem). A constraint $c_i \in C$ represents rules over text (e.g., number of words, number of characters, forbidden words, or symbols).
+    \item $\mc{F} = \{G,B,H\}$ is a set of functions. 
+    \item $G$ represents the set of generative functions: these functions explain to the solver how to generate variables/domains/constraints. 
+    \item $B$ represents the set of Boolean functions: these functions tell the solver when a solution is found. 
+    % 
+     \item $H$ represents the set of helping functions: these functions are used to represent implicit constraints, for example ensuring that when a variable is generated, it helps obtaining a solution (to prevent the solver from attaining an infinite loop of generating variables).
+\end{itemize}
+
+\subsubsection{Generative Functions}
+
+The set of generative functions $G = \{genV, genD, genC\}$ is such that:
+
+\begin{itemize}
+    \item $genV$ generates a new variable with an empty domain and adds it to $X$.
+    \item $genD$ calls the LLM with the current sentence formed by the model and sets the domain of the previously generated variable to the output.
+    \item $genC$ generates the constraint(s) relevant to the current variables of the model to $C$. The constraints generated depend on the problem (e.g., generate a sentence that does not contain the letter ``e"). 
+    % 
+\end{itemize}
+
+
+\subsubsection{LLM integration}\label{sec:callLLM}
+
+A variable is generated with an empty domain. To generate the domain of variables, $genD$ calls an LLM using $callLLM(sentence, parameters, k)$, where:
+
+\begin{itemize}
+    \item $sentence$ is the current sentence represented by the variables of the model.
+    \item $parameters$ represents sampling parameters ($top\_k, top\_p$...). For this paper, $top\_k$ is used exclusively for both GenCP and BS: the LLM answers $k$ words ranked by probability, highest to lowest.
+    \item $k$ is the number of words asked to the LLM.
+\end{itemize}
+
+Since the parameters and $k$ are not modified after the definition of the model, \\ $callLLM(sentence, parameters, k)$ will be simply referred to as $callLLM(sentence)$.
+
+
+\subsubsection{Helping Functions}
+
+% 
+
+Helping functions represent implicit constraints, like avoiding infinite loops.
+% 
+In our current implementation, the set of functions $H$ contains the following functions:
+
+\begin{itemize}
+    \item $H_{o}$: it orders the domain of variables depending on the problem.
+    \item $H_{onlyWords}$: it ensures that any word predicted by the LLM is a complete word and not the suffix or prefix of a word and it filters out any symbol or special character.
+    %
+\end{itemize}
+
+\input{figFlo/FGCSPexample}
+\input{figFlo/FGCSP_algo}
+
+\subsubsection{Description of the new approach}
+
+% 
+The main steps of GenCP are depicted in Fig. \ref{fig:fgcsp} and Algorithm \ref{alg:fgcsp}:
+
+\begin{enumerate}
+    \item GenCP begins with an initial state. If the initial state is empty, the generative functions are called (\textbf{2.}), otherwise the helping functions are called (\textbf{3.}).
+    \item The generative functions $genV/genD/genC$ are called ($genD$ calls the LLM).
+    % 
+    \item The helping functions are called to manage implicit constraints, backtracking if necessary (e.g., if the LLM generated an empty domain).
+    \item The current state of the model $\mc{M}$ is saved.
+    \item The propagation is called, if it fails the model backtracks (8.), else it calls the boolean functions (6.).
+    \item The Boolean functions are called to check if a solution has been found. If a solution is found, it is saved (7.) and the model backtracks (8.), otherwise the model calls the generative functions (2.).
+    \item The current sentence formed by the variables is saved as a solution.
+    \item GenCP backtracks to a previously saved state (4.) of the model and changes the choices made during propagation (5.). If no previous state was saved, then backtracking fails (9.).
+    \begin{itemize}
+        \item When backtracking to a previously saved state, the model deletes all variables, their respective domains, and the constraints associated with them, that are not present in the previously saved state.
+    \end{itemize}
+    \item GenCP outputs the solution(s) that were saved or it indicates that no solution was found.
+\end{enumerate}
+
+
+
+\subsubsection{Enforce variability}
+
+Variability between two sentences is the number of words that are not equal at each position, for example:
+
+\begin{itemize}
+    \item ``The little boy is" and ``The little cat is'' have a variability of 1.
+    \item ``My name is John'' and ``John is my name'' have a variability of 4.
+\end{itemize}
+
+To force a greater variability between solutions (greater than $2$), a special backtrack called $backtrackTo$($n$) is used. Let the set of variables $X = \{x_1,\dots,x_n,x_{n+1}\dots,x_m\}$. The function $backtrackTo$($n$) deletes the variables $x_{n+1}$ to $x_m$ and causes a backtrack.\label{bkTO}
+For example,
+%
+     consider the sentence ``I like to swim in the summer.''. With $backtrackTo$(2), ``to swim in the summer.'' is deleted and the value of variable $x2 = ``like"$ is changed. The next solution might be ``I want to break free.''.
+    %
+%
+
+
+
+
+
+
+
+
+
+%
+\subsubsection{Ordering}
+\label{order}
+
+For some tasks, not following the ordering strategies of the LLM (like top-$k$ and top-$p$) can lead to better/faster solutions.
+Two other orderings are considered: PPL valuation and length of a word (depending on the average word length in the given language).
+
+
+\subsection{Modeling Example}
+
+%
+
+%
+Here is a simple example of how the search of GenCP works:
+for this paper the generative functions only generate variables one at a time but it is important to note that these functions can generate multiple variables, domains and constraints at once.
+%
+Let us suppose GenCP has to generate a sentence beginning by ``The'' and containing between 10 and 15 words with exactly 60 characters.
+The following functions are needed:
+\begin{itemize}
+    \item $currentSentence(\mc{M})$: outputs the current sentence the variables form.
+    \item $callLLM(sentence)$: described in \ref{sec:callLLM}. Here $k$ is equal to 10 (each time the LLM is called, it will output 10 words).
+    \item $contains(sentence, word)$: outputs yes if the sentence contains the word and no otherwise.
+    \item $nbChar(sentence)$: outputs the number of characters in the sentence.
+\end{itemize}
+The obtained  model is $\{\mc{M},\mc{F}\}$, where:
+\begin{itemize}
+    \item $\mc{M} = \{X,D,C\}$:
+     \item $X = \{x_1\}$.
+    \item $D = \{d_1 = \{$``The''$\}\}$.
+    \item $C = \emptyset$.
+    \item $\mc{F} = \{G,B,H\}$.
+    \item $G = \{genV, genD, genC\}$ is a set of functions, each function follows these steps:
+    \begin{itemize}
+        \item generate $x_{|X|+1}$ and add it to $X$ with an empty domain $d_{|X|+1}$.
+        \item $d_{|X|+1} = callLLM(currentSentence(\mc{M}))$.
+        \item $c_{remove_{over60char}((currentSentence(\mc{M}),d_{|X|+1})}$. 
+        \item The constraints remove the words that make the current sentence exceed 60 characters from the domain of the current variable.
+    \end{itemize}
+    \item $B = \{endNbWords, endNbCharacters, endLLM\}$ is a set of functions, each function behaves as follows:
+    \begin{itemize}
+        \item $|X| >= 10 \land |X| <= 15$.
+        \item $nbChar(currentSentence(\mc{M})) == 60$.
+        \item $contains(callLLM(currentSentence(\mc{M})), ``.")$.
+    \end{itemize}
+    % 
+    \item $H = \{H_{ho}\}$:
+    \begin{itemize}
+        \item $H_{ho} : order(d_{|X|+1})$.
+        \item To help attain the goal of 60 characters, the domain of the current variable is ordered such that before the 10th word the solver tries the longer words first and at the 10th word the solver tries the shorter words first.
+    \end{itemize}
+\end{itemize}
+
+% 
+
+With the above representation of the problem, GenCP is asked for 4 solutions, $backtrackTo(2)$ is used and the LLM is asked for 10 words maximum per call. The obtained solutions are:
+\begin{enumerate}
+   \item The following is an article by the author of the above book.
+   \item The first time you see the movie version of your book on TV.
+   \item The New York Times has an article on the new book by Tim Wu.
+   \item The new year is here and we are ready to make the next step.
+\end{enumerate}
+
+
+
+\subsection{Illustrated Example}
+
+
+
+\begin{figure*}[!ht]
+    \centering
+    \includegraphics[width=\textwidth]{ima/illust.pdf}
+    
+     \caption{Illustrations of GenCP as a simplified framework with three variables and predictions of 3 values per LLM call, on a simple problem: generate a sentence that does not contain the letter \emph{e}. For each variable, the predefined constraint $c_i$ ``the letter \emph{e} is forbidden'' is generated. A predefined domain with one word is defined for the first variable: \color{darkgreen} A\color{black}. The current sentence formed by the variable ``A'' is not a solution ($callLLM(``A")$ does not answer a period (``.'')), so a new empty variable $x_2$ is generated. GenCP calls the LLM with the sentence ``A'' to predict the domain of $x_2$. The LLM model predicts three values: [~\color{darkgreen}man, house, boy\color{black}~]. $c_2$ is generated, causing the domain of $x_2$ to be filtered accordingly: \color{red} house \color{black} is removed. $x_2$ is then assigned to \color{darkgreen}boy\color{black}, GenCP generates the variable $x_3$ and calls the LLM with the sentence ``A boy'' to predict a new domain. Unfortunately, the domain of $x_3$ is empty, either because the LLM answered an empty domain or because this domain was entirely filtered during propagation. Hence, GenCP backtracks to $x_2$ and the value of $x_2$ is changed to \color{darkgreen}man\color{black}. In the same fashion as before, GenCP generates the variables $x_3$, and gives ``A man'' to the LLM that predicts: [~\color{darkgreen}drinks, and, helps\color{black}~]. $c_3$ is generated, filtering \color{red} helps \color{black} because it contains an \emph{e}. The process continues until the domain of the next predicted variable contains a period (a solution is found) or the solver \emph{fails}. }
+    \label{fig:gensearch}
+\end{figure*}
+
+Fig. \ref{fig:gensearch} illustrates GenCP as a simplified framework with three variables and predictions of 3 values per LLM call, on a simple problem: generate a sentence that does not contain the letter \emph{e}. 

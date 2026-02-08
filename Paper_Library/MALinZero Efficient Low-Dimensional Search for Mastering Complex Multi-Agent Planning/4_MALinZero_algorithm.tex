@@ -1,0 +1,290 @@
+\section{MALinZero for Multi-Agent MCTS}
+
+MALinZero leverages low-dimensional representations of the joint-action returns and solves the resulting contextual linear bandit problem to enable efficient LinUCT-based MCTS in complex multi-agent planning. 
+
+LinUCT is applied in \textit{Selection} described in Section~\ref{bg} to choose the optimal action during MCTS. MALinZero consists of four main modules: the representation model for obtaining the latent per-agent action rewards as an unknown parameter vector $\theta$ from observed samples, the dynamics model for predicting the next latent state and reward, the prediction model for estimating the search policy and action-values, and the communication model for describing the coordination among multi-agents\footnote{Due to space limitation, the specific model architecture can be found in Appendix B.}. Notably, the proposed LinUCT-based search and dynamic node generation in MALinZero would not incur any extra neural networks compared with MAZero, since they depend only on the inner process of each rollout. We analyze the regret of MALinZero for low-dimensional rewards. For action selections, we will show that the problem is a maximization of a sub-modular objective, solvable by an $(1-\tfrac1e)$-approximation algorithm. All proofs are collected in the Appendix.
+
+\subsection{Leveraging Low-Dimensional Representations}
+
+MALinZero models the joint-action returns through a low-dimensional linear combination of the latent per-agent action rewards. More precisely, we consider a contextual linear bandit problem~\cite{linucb} with a finite joint-action set \(\mathcal{A} \subset \mathbb{R}^{nd}\), where we assume that each agent has $d=|\mathcal{A}_i|$ actions without loss of generality. Thus, each joint action $a\in \mathcal{A}$ is represented by an $n$-hot vector selecting one local action for each agent. It is easy to see that the Euclidean norm of any action is bounded by \(\|a\|_2\le L=\sqrt{n}\), \(\forall a \in \mathcal{A}\). At each round \(t\), we chooses an action \(A_t \in \mathcal{A}\), and the environment reveals a reward $X_t=R(s_t,A_t)$. 
+
+In this work, we leverage a low-dimensional representation of the reward, i.e., \(X_t=\langle\theta^*, A_t\rangle + \varepsilon_t \). Here \(\varepsilon_t\) is conditionally \(1-\)subgaussian\footnote{ A random variable \( X \) is 1-subgaussian if it satisfies the moment generating function bound \( \mathbb{E}[e^{\lambda X}] \leq e^{\lambda^2/2} \) for all \( \lambda \in \mathbb{R} \). This implies rapid tail decay \( \mathbb{P}(|X| \geq t) \leq 2e^{-t^2/2} \), analogous to a Gaussian with unit variance. The property is central to deriving sharp concentration bounds in statistical learning theory.} observation noise, and \(\theta^*\in\mathbb{R}^{nd}\) is an unknown parameter vector representing the (latent) per-agent action return values. Thus, for each $n$-hot vector action $A_t\in\mathcal{A}$, we model the low-dimensional reward $X_t$ as a linear sum of $n$ corresponding per-agent action rewards. Our model can be viewed as projecting the reward $R(s_t,A_t)$ into the low-dimensional space representable using \(X_t=\langle\theta^*, A_t\rangle + \varepsilon_t \). It reduces the MCTS from considering $d^n$ joint reward values in each state $s_t$ to learning an unknown parameter vector of size $nd$ only, thus allowing quick estimate of the global reward structure from limited samples and significantly speed-up the tree search in multi-agent MCTS. Applying the regularized least-squares estimator, we can get the empirical estimation of \(\theta^*\) from observed samples $X_1,\ldots,X_t$ as
+ \begin{equation} \label{f-linucb}
+     \hat\theta_t = \arg\min_{\theta\in\mathbb{R}^{nd}} F_t(\theta), \ \  {\rm s.t.} \ 
+     F_t(\theta) = \sum_{s=1}^{t} f(X_s-\langle\theta, A_s\rangle) + \frac{\lambda}{2} \|\theta\|^2
+ \end{equation}
+ where $f$ is some distance measure, $\|\theta\|^2$ a regularization term ensuring the uniqueness of the solution, $\lambda$ an appropriate constant for the regularization term.
+
+\paragraph{Classic LinUCB for Euclidean distance $f$.} When $f$ is the Euclidean distance measure, the solution to the estimation problem in (\ref{f-linucb}) can be obtained by differentiation, i.e., \(\hat{\theta}_t = V_t^{-1}\sum_{s=1}^tA_sX_s\) where \(V_t\) are \(nd\times nd\) matrices given by
+\(V_0=\lambda I \text{ and } V_t=V_0 + \sum_{s=1}^tA_sA_s^\top\). We can then apply the Upper Confidence Bound (UCB) algorithm~\cite{ucb} to seek the optimal action of stochastic linear bandits, which implements the ``optimism in the face of uncertainty" principle. Let \(\operatorname{UCB}_t(a)=\max_{\theta\in\mathcal{C}_t}\langle\theta, a\rangle\) be an upper bound on the mean payoff \(\langle\theta^*, a\rangle\) for action \(a\in\mathbb{R}^{nd}\) where \(\mathcal{C}_t \subseteq \mathbb{R}^{nd}\) is the confidence set based on the action-reward history that contains the unknown \(\theta^*\) with high probability. At each time \(t\), LinUCB \cite{linucb} selects \(A_t = {\arg\max}_{a\in\mathcal{A}} \operatorname{UCB}_t(a)\). The cumulative regret after \(T\) steps is bounded by 
+ \(
+     R_T = \sum_{t=1}^T \left(\langle A^*, \theta^*\rangle - \langle A_t, \theta^*\rangle\right) \le Cnd\sqrt{T}\operatorname{log}(T\sqrt{n})
+ \)
+ where \(A^* = \arg\max_{a\in\mathcal{A}} \langle a,\theta^*\rangle\), and \(C>0\) is a constant.
+
+\paragraph{Mitigating representational limitations with more general $f$.} 
+
+While classic bandit algorithms like UCB1 and LinUCB~\cite{linucb} solve the contextual linear bandit problem with Euclidean distance $f$, it does not necessarily yield the best model in terms of exploring the optimal actions in MCTS. Intuitively, the use of low-dimensional representation of the reward may introduce potential representational limitations, as previously observed in MARL algorithms like Weighted QMIX~\cite{rashid2020weightedqmixexpandingmonotonic}. To explore the optimal actions in MCTS, it is important not to underestimate the better joint actions, while not to overestimate the less attractive ones -- which otherwise may lead to substantial errors in recovering the correct maximal actions. 
+
+To this end, we consider a general family of strongly-convex, $\mu$-smooth distance measure $f$ in the contextual linear bandit problem in (\ref{f-linucb}). For higher observed rewards $X_t$ that are likely optimal, the distance measure $f$ will have a larger acceleration (i.e., second order derivative if differentiable) for underestimating $(X_s-\langle\theta, A_s\rangle)>0$, while having a smaller acceleration for overestimating $(X_s-\langle\theta, A_s\rangle)<0$. On the other hand, for higher observed rewards $X_t$ that are unlikely to be chosen, it is important not to overestimate by having a larger acceleration for $(X_s-\langle\theta, A_s\rangle)<0$. An example of such $f$ is to consider:
+$f(X_s-\langle\theta, A_s\rangle) = w_{+} \cdot (X_s-\langle\theta, A_s\rangle)^2$ if $X_s\ge \langle\theta, A_s\rangle$, and $f(X_s-\langle\theta, A_s\rangle) = w_{-} \cdot (X_s-\langle\theta, A_s\rangle)^2$ otherwise. We can choose $w_{+}>w_{-} $ for better $X_s$ to prevent underestimation and $w_{+}<w_{-} $ for undesirable $X_s$. This ensures that our low-dimensional representation in MALinZero can best support the exploration of the optimal actions in MCTS. We will drive a novel LinUCT with respect to such $f$ and leverage it to balance exploration and exploitation in MCTS.
+
+
+\iffalse
+LinUCB excels at capturing and utilizing the linear relationship between the features and global payoff. However, in complex environments where the reward structure is nonlinear, its performance may degrade. To address this, we propose a modified version of LinUCB that incorporates a convex distance function. This modification enables the model to overestimate values near the optimal solution while underestimating those that are further away.
+We minimize a loss function defined with a \(\mu\)-strongly convex distance measure \(f: \mathbb{R}\to\mathbb{R}\) satisfying \(f''(x) \ge \mu > 0 \), \(\forall x \in \mathbb{R}\): 
+ \begin{equation} \label{f-linucb}
+     F_t(\theta) = \sum_{s=1}^{t} f(X_s-\langle\theta, A_s\rangle) + \frac{\lambda}{2} \|\theta\|^2
+ \end{equation}
+ where \(\frac{\lambda}{2}\|\theta\|^2\) is a regularized term with \(\lambda >0\) to ensure a unique optimal solution. 
+ Note that Equation \ref{f-linucb} differs from the objective of LinUCB by replacing the first term, originally an L2-norm (i.e., $|X_s - \langle\theta, A_s\rangle|^2$), with a more general strongly convex function \(f\). The application of \(f(\cdot)\) enables the algorithm to learn a more deeply relationship between different actions thus improving the accuracy of estimation.
+\fi
+ 
+\iffalse
+
+Consider a linear bandit with a finite action set \(\mathcal{A} \in \mathbb{R}^d\). 
+Let \(L\) be an upper bound on the Euclidean norm of any action in \(\mathcal{A}\), i.e., \(\|a\|_2\le L\), \(\forall a \in \mathcal{A}\). At each round \(t\), the algorithm chooses an action \(A_t \in \mathcal{A}\). The environment reveals a reward \(X_t=\langle\theta_*, A_t\rangle + \varepsilon_t \) where \(\theta_*\in\mathbb{R}^d\) is unknown and \(\varepsilon_t\) is conditionally \(1-\)subgaussian\footnote{ A random variable \( X \) is 1-subgaussian if it satisfies the moment generating function bound \( \mathbb{E}[e^{\lambda X}] \leq e^{\lambda^2/2} \) for all \( \lambda \in \mathbb{R} \). This implies rapid tail decay \( \mathbb{P}(|X| \geq t) \leq 2e^{-t^2/2} \), analogous to a Gaussian with unit variance. The property is central to deriving sharp concentration bounds in statistical learning theory.} Applying the regularized least-squares estimator, we can get the empirical estimation of \(\theta_*\) as
+ \begin{equation}
+     \hat\theta_t = \arg\min_{\theta\in\mathbb{R}^d} \left(\sum^t_{s=1}\left(X_s-\langle \theta, A_s\rangle\right)^2 + \lambda\|\theta\|_2^2\right),
+ \end{equation}
+ and the solution to this obtained by differentiation is \(\hat{\theta_t} = V_t^{-1}\sum_{s=1}^tA_sX_s\) where \(V_t\) are \(d\times d\) matrices given by
+\(V_0=\lambda I \text{ and } V_t=V_0 + \sum_{s=1}^tA_sA_s^\top\). Here we apply the Upper Confidence Bound (UCB) algorithm \cite{ucb} to seek the optimal action of stochastic linear bandits, which implements the ``optimism in the face of uncertainty" principle. Let \(\operatorname{UCB}_t(a)=\max_{\theta\in\mathcal{C}_t}\langle\theta, a\rangle\) be an upper bound on the mean pay-off \(\langle\theta^*, a\rangle\) for any given action \(a\in\mathbb{R}^d\) where \(\mathcal{C}_t \subseteq \mathbb{R}^d\) is the confidence set based on the action-reward history that contains the unknown parameter \(\theta^*\) with high probability. At each time \(t\), LinUCB \cite{linucb} selects \(A_t = {\arg\max}_{a\in\mathcal{A}} \operatorname{UCB}_t(a)\). The cumulative regret after \(n\) round is bounded by 
+ \(
+     R_n = \sum_{t=1}^T \left(\langle A^*, \theta_*\rangle - \langle A_t, \theta_*\rangle\right) \le Cd\sqrt{n}\operatorname{log}(nL)
+ \)
+ where \(A^* = \arg\max_{a\in\mathcal{A}} \langle a,\theta_*\rangle.\) and \(C>0\) is a constant.
+\fi
+
+\subsection{Deriving LinUCT and Analyzing Regret} 
+
+We derive action selection using LinUCT in MALinZero and provide a cumulative regret bound for the resulting contextual linear bandit problem, depending on the properties of strongly-convex, $\mu$-smooth $f$. We prove that LinUCT can achieve an regret of  \(\hat{R}_T=O(nd\cdot \sqrt{\mu T}\cdot\operatorname{ln}(T))\) after \(T\) steps, ensuring the exploration efficiency using LinUCT. Our analysis builds upon~\cite{lattimore2020bandit} and extends it to general convex loss $f$. 
+
+Let \(\{A_t\}^T_{t=1} \subset\mathbb{R}^{nd}\) be a sequence of action vectors with \(\|A_t\|_2 \le \sqrt{n}\), and suppose the observed reward at time \(t\) is \(X_t=\langle\theta^*, A_t\rangle + \eta_t\) where \(\theta^*\in\mathbb{R}^{nd}\) satisfies \(\|\theta^*\|_2 \le S\) for some bound $S$, and each \(\eta_t\) is conditionally \(1\)-subgaussian. Since 
+\(f: \mathbb{R}\to\mathbb{R}\) is strongly-convex and \(\mu\)-smooth, we have \( \varepsilon \le  f''(z)\le \mu, \forall z\in \mathbb{R}\) for some positive $\varepsilon$. The solution to (\ref{f-linucb}) is obtained by differentiation and yields \(\hat{\theta}_t=V_{t}^{-1}\sum_{s=1}^t w_s A_s X_s\) where we use \(w_t=f''(\xi_t)\) with \(\xi_t\in(0, X_t-\langle \theta_{t-1},A_t \rangle)\) and thus have $\varepsilon \le  w_t \le \mu$ for any $t$ and $\xi_t$. Here \(X_s\) is the immediate reward at step \(t\). Further, \(V_t\) are \(nd \times nd\) matrices given by initial \(V_0=\lambda I\) for some constant \(\lambda> 0\) and \(V_t=V_0 +\sum_{s=1}^t w_s A_s X_s\). 
+
+
+Next, we consider an ellipsoid confidence set centered around the optimal estimator $\hat{\theta}_{t-1}$, i.e., $\mathcal{C}_t=\left\{\theta \in \mathbb{R}^{nd}: \|\theta- \hat{\theta}_{t-1}\|_{V_{t-1}} \right\}\le \beta_t$, for an increasing sequence of $\beta_t$ with $\beta_1\ge 1$~\cite{lattimore2020bandit}. Note that as $t$ grows, this ellipse $\mathcal{C}_t$ is shrinking as $V_t$ has increasing eigenvalues and if $\beta_t$ does not grow too fast. We show that the problem of selecting optimal action $A_t\in \mathcal{A}$ by solving $\max_{A_t\in \mathcal{A}, \theta\in \mathcal{C}_t} \langle \theta, a \rangle $ in this contextual linear bandit problem is equivalent to:
+\[
+A_t \;=\;\arg\max_{a}\;\Bigl\langle \hat{\theta}_{t-1},\,a\Bigr\rangle
+\;+\;\beta_{t-1}\,\|a\|_{V_{t-1}^{-1}},
+\]
+which is referred to as our LinUCT rule for action selection. We consider the realized regret defined by 
+$
+ \widehat R_T
+ =\sum_{t=1}^T\!(X_t^* - X_t)
+ =\sum_{t=1}^T\!\bigl(\langle\theta^*,A_t^*\rangle - \langle\theta^*,A_t\rangle\bigr)
+ \;+\;\sum_{t=1}^T(\eta_t^*-\eta_t)
+$. 
+The next theorem gives the regret bound of LinUCT, with corresponding proofs in Appendix A. 
+
+\begin{theorem}\label{thm:f-linucb}[Regret Bound of LinUCT] With probability \(1-\delta\), the regret of LinUCT satisfies
+\begin{equation}
+    \hat{R}_t \le \sqrt{8\mu t \beta_t \operatorname{ln}\left(\frac{\operatorname{det}(V_t)}{\operatorname{det}(\lambda I)}\right)} \le \sqrt{8\mu ndt\beta_t\operatorname{ln}\left(\frac{nd \lambda + \mu nt}{nd\lambda}\right)}.
+\end{equation}
+\end{theorem}
+
+
+\paragraph{Proof sketch}
+Let $S_t=\sum_{s=1}^t w_sA_s\eta_s$ and $V_t=\lambda I+\sum_{s=1}^t w_sA_sA_s^\top$.
+(i) A standard self–normalized concentration (mixture supermartingale) gives, for all $t\le T$ with probability \ $\ge 1-\delta$,
+\begin{equation}
+S_t^\top V_t^{-1}S_t \le 2\mu \ln\!\Bigl(\tfrac{\det(V_t)^{1/2}}{\lambda^{nd/2}\delta}\Bigr)
+\quad\Rightarrow\quad
+\|\hat\theta_t-\theta^*\|_{V_t}\le \beta_t .
+\end{equation}
+(ii) By optimism of LinUCT and the confidence event,
+\begin{equation}
+r_t:=X_t^*-X_t \le \beta_{t-1}\|A_t\|_{V_{t-1}^{-1}}+\Delta_t,\qquad
+\Delta_t:=\eta_t^*-\eta_t .
+\end{equation}
+Since $\eta_t,\eta_t^*$ are $1$-sub-Gaussian, $\sum_{t=1}^T\Delta_t \le 2\sqrt{T\ln(1/\delta)}$ w.p.\ $\ge 1-\delta$.
+
+(iii) Summing and applying Cauchy–Schwarz plus the (weighted) elliptical potential lemma,
+\begin{equation}
+\sum_{t=1}^T \beta_{t-1}\|A_t\|_{V_{t-1}^{-1}}
+\le \sqrt{T}\,\beta_T\sqrt{\,2\ln\!\Bigl(\tfrac{\det(V_T)}{\lambda^{nd}}\Bigr)} ,
+\end{equation}
+which, together with (ii) and the definition of $\beta_T$, yields
+\begin{equation}
+\widehat R_T \le
+\sqrt{\,8\mu\,T\,\beta_T\,\ln\!\Bigl(\tfrac{\det(V_T)}{\lambda^{nd}}\Bigr)} .
+\end{equation}
+
+(iv) Using $w_t\le\mu$ and $\|A_t\|_2\le\sqrt n$,
+$V_T\preceq \lambda I+\mu n T\,I$, hence
+\begin{equation}
+\ln\!\Bigl(\tfrac{\det(V_T)}{\lambda^{nd}}\Bigr)
+\le nd\,\ln\!\Bigl(\tfrac{nd\lambda+\mu n T}{nd\lambda}\Bigr),
+\end{equation}
+giving the displayed bound in the theorem.
+
+Choosing $\beta_t
+=\sqrt{\,2\mu\,\ln\!\Bigl(\frac{\det(V_t)^{1/2}}{\det(\lambda I)^{1/2}\,\delta}\Bigr)}
+\;+\;\sqrt{\lambda}\,S$, we show that the regret has the following order:
+
+\begin{corollary} [The Order of Regret Bound for LinUCT] Under the above conditions, the cumulative regret bound of LinUCT with \(\delta=1/T\) satisfies
+\begin{equation}
+    \hat{R}_T = O\left(nd\cdot \sqrt{\mu T}\cdot\operatorname{ln}(T)\right).
+\end{equation}
+    
+\end{corollary}
+
+The regret bound of LinUCT in Theorem \ref{thm:f-linucb} only depends on $nd$ rather than the exponential size of the joint action space. The general convex loss $f$ incurs an extra multiplicative factor \(\sqrt{\mu}\) compared with the standard results of contextual bandit~\cite{lattimore2020bandit}. 
+
+
+\subsection{Dynamic Node Generation} 
+
+MALinZero allows modeling the joint action space using low-dimensional representation, thus significantly speeding up exploration and exploitation in multi-agent MCTS. Specifically, when the leaf node \(\Upsilon\) in the search path is visited for the first time, \(\kappa =\zeta \chi\) nodes will be sampled as child nodes where \(\zeta\) is the dynamic generation ratio and \(\chi\) is the maximum number of child nodes. In the subsequent \textit{Selection} stage, node \(\Upsilon\) will utilize the cumulative \(\theta\) and \({V}\) (We omit the subscript $t$ in this section for abbreviated notations) to search for the potential optimal action from the entire joint action space and add it as the new child node. If there is no node with a higher value, \textit{Selection} will sample and compare the existing ones. The detailed process can be found in Algorithm~\ref{algorithm}.
+
+For a root or leaf node \(\Upsilon\), \(\kappa =\zeta \chi\) nodes are sampled for initialization similar to MAZero. The next time \(\Upsilon\) is visited, MALinZero selects optimal action using LinUCT with search policy \(P(s,a)\): 
+\begin{equation}
+\label{eq:action}
+    a = {\arg\max}_{a\in\mathcal{A}} \Psi(a) = {\arg\max}_{a\in\mathcal{A}}\;\; a^\top \theta +  c(s)P(s,a) \operatorname{trace}(V)\sqrt{a^\top V^{-1}a}
+\end{equation}
+where \(c(s)\) is a constant, $\Psi(a)$ is the objective function for action selection, and \(P(s,a)\) is the search policy used as a prior information in LinUCT similar to MuZero~\cite{muzero}. If the selected action for which the corresponding node does not exist, this node is added after \textit{Selection}. Once a node has \(\chi\) child nodes, it only selects next action \(a\) from current children. After a root-to-leaf search path is completed, \(\theta\) and \(V\) are updated through the search path from the leaf node as procedure \textit{Back-Propagation} in Algorithm \ref{algorithm}. 
+
+\textbf{Remark.}
+MuZero \cite{muzero} selects nodes/actions in MCTS via (\ref{ucb}) where the term \(\sqrt{ {\sum_b}
+N(s,b)}\) represents the total sampling time.
+
+In MALinZero, we utilize \(\operatorname{trace}(V)\) to achieve the same effect. We use \(\operatorname{trace}(V)\) rather than its square root due to the existence of $\sqrt{a^\top V^{-1}a}$ in LinUCT. It ensures that the scale of exploration term can keep stable with the increasing times of selection. Using the definition of $V$ and the fact that actions $A$ are $n$-hot vectors, it is easy to show that \(\operatorname{trace}({V})\) increases linearly with $N$ and sampling time. For a single-agent problem, (\ref{eq:action}) indeed reduces to (\ref{ucb}), recovering existing result as a special single-agent case.
+
+
+With Dynamic Node Generation (DNG), we can sample and add new child nodes according to LinUCT. In other words, the \(\kappa\) sampled child nodes are used to bootstrap a low-dimensional representation of the joint reward over the entire joint action space, thus enabling fast exploration and exploitation in MALinZero. Let ground set \(\mathcal{A}\) be the set of all \(n\)-hot vectors in \(\mathbb{R}^{nd}\) where each vector \(a\in\mathcal{A}\) satisfies: in each of the \(n\) disjoint \(k\)-dimensional blocks, exactly one entry is 1 with others are 0. Let \(\mathcal{S}\) be the set of selected actions and rewrite \(V(\mathcal{S}) = \lambda I + \sum_{a\in\mathcal{S}} a a^\top\) using \(\mathcal{S}\). We show that the objective function $\Psi(a)$ for action selection is sub-modular.
+
+\begin{theorem}\label{thm:submodular}[Submodularity of \(\Psi\)] \(\Psi\) is a non-negative monotonic submodular function over the ground set \(\mathcal{A}\).
+\end{theorem}
+
+
+Hence, to solve the optimization for action selection in (\ref{eq:action}), we have to maximize a submodular function, which is shown to be \(NP\)-hard~\cite{submodular1, submodular2} by reduction from the classical Max-Coverage problem. Fortunately, there exists an \((1-\frac{1}{e})\)-approximation algorithm~\cite{nemhauser1978analysis} to solve this optimization. Let 
+\(\Psi:2^{\mathcal A}\to\mathbb R_{\ge0}\) 
+be a monotone submodular function.  Fix a budget \(T\in\mathbb N\) and let
+\(\mathcal A=\bigsqcup_{i=1}^n B_i\) be partitioned into \(n\) blocks (so that any feasible set contains at most one element from each \(B_i\); i.e.\ an \(n\)-hot constraint).
+
+
+
+
+\begin{theorem}\label{thm:approximation}
+[{\((1-\tfrac1e)\)-Approximation under Cardinality and \(n\)-Hot Constraints}] There exists an [\((1-\tfrac1e)\)-approximation algorithm for the optimization of action selection.
+
+\medskip
+\noindent
+\textbf{(a) Uniform‑matroid (cardinality) case \(\lvert S\rvert\le T\).}\;
+The standard greedy algorithm
+\[
+A_t \;=\;\arg\max_{a\in\mathcal A\setminus S_{t-1}}
+           \bigl[\Psi(S_{t-1}\cup\{a\}) - \Psi(S_{t-1})\bigr],
+\quad
+S_t = S_{t-1}\cup\{A_t\},
+\]
+for \(t=1,\dots,T\), returns \(S_T\) satisfying
+\(
+\Psi(S_T)\;\ge\;\bigl(1-\tfrac1e\bigr)\,\Psi(S^\star),
+\)
+where \(S^\star\) is an optimal subset of size at most \(T\) \cite{nemhauser1978analysis}.
+
+\medskip
+\noindent
+\textbf{(b) \(n\)-Hot (partition‑matroid) case.}\;
+One may apply the continuous‑greedy algorithm to the multilinear relaxation
+\(\max_{x\in P(\mathcal M),\;\mathbf1^\top x\le T}\mathbb E[\Psi(R(x))]\),
+where \(P(\mathcal M)\) is the matroid polytope of the partition matroid and \(R(x)\) denotes the standard randomised rounding. It produces a feasible set \(\hat S\) with
+\(
+\Psi(\hat S)\;\ge\;\bigl(1-\tfrac1e\bigr)\,\Psi(S^\star)
+\)
+\cite{calinescu2011maximizing}.
+\end{theorem}
+
+
+Thus, under the stronger \(n\)-hot (partition‑matroid) constraint, there exists an efficient algorithm to compute action selection in MALinZero with {\((1-\tfrac1e)\)-approximation.
+
+
+\begin{algorithm}[H]
+\caption{MALinZero}
+\begin{minipage}[t]{0.55\textwidth}
+\label{algorithm}
+
+\begin{algorithmic}[1]
+    \Procedure{Dynamic Node Generation}{}
+        \State \(a \gets \arg\max_{a\in \mathcal{A}} a^\top\theta+c(s)P(s,a) {\operatorname{trace}(V)}\sqrt{a^\top V^{-1} a}\) 
+        \State \Return (s,a)
+    \EndProcedure
+\end{algorithmic}
+
+\begin{algorithmic}[1]
+    \Procedure{Expansion}{}
+    \State \Comment{\(M'\) is the number of nodes generated by sampling.}
+    \For{\(i = 1, \dots, M'\)} 
+        \State \(a_i \gets \text{sample with }\beta \text{ and } P\) as Sampled MuZero\cite{sampled_muzero}
+        \State \(T(s) \gets T(s) \cup (s,a_i)\)
+    \EndFor
+    \EndProcedure
+\end{algorithmic}
+
+
+\begin{algorithmic}[1]
+    \Procedure{Selection}{} 
+    \If{\text{number of child nodes < M}}
+        \State \((s,a) \gets \Call{Dynamic Node Generation}{}\)
+        \State \(T(s) \gets T(s) \cup (s,a)\)
+        % \State Update \(T(s)\)
+    \Else{}
+        \State \(a \gets \arg\max_{a\in T(s)} a^\top \theta + c(s)P(s,a) {\operatorname{trace}(V)}\sqrt{a^\top V^{-1} a}\)
+    \EndIf
+    \State \Return \text{Index of \((s,a)\)}
+    \EndProcedure
+\end{algorithmic}
+\end{minipage}
+\begin{minipage}[t]{0.5\textwidth}
+\begin{algorithmic}[1]
+    \Procedure{Back-Propagation}{}
+        \For{\((s,a)\in\operatorname{path}\)}
+            \State Let \(k,l\) be the depth of the current node \(s\) and the leaf node.
+            
+            \Statex \Comment{The weighting could be replaced with strongly-convex \(\mu\)-smooth function for better performance.}            
+            
+            \If{Observed reward \(X_k\le Q(s, a)\)}
+                \State \(w \gets w_1\)
+            \Else
+                \State \(w \gets w_2\)
+            \EndIf
+            \State Calculate the cumulative discounted reward \(G(s)\gets \sum _{\tau=0}^{l-1-k} \gamma^\tau X_{k+1+\tau} + \gamma^{l-k} v^l \)
+            \State \(Q(s, {a}) \gets \frac{N(s,a)Q(s, {a}) + G(s)}{N(s, {a})+1} \)
+            \State \(N(s, {a}) \gets N(s, {a})+1\)
+            \State \( {V}(s) \gets  {V}(s)+w a^\top  a\)
+            \State \(\theta(s) \gets V(s)^{-1} X_k a\)
+        \EndFor
+    \EndProcedure
+\end{algorithmic}
+\end{minipage}
+
+\end{algorithm}
+
+
+\textbf{Efficient Back-Propagation} The update of \(\theta\) and \(V\) involves large matrix manipulation, of which the time complexity is \(\mathcal{O}(n^2d^2)\) and the space complexity is \(\mathcal{O}(n^2d^2)\). To mitigate the computation complexity, we design an efficient back-propagation (as shown in Algorithm~\ref{algorithm}) to reduce both time and space complexity to \(\mathcal{O}(nd)\) based on the Sherman-Morrison formula~\cite{sherman1950adjustment}. 
+
+We consider the update of $A^T\hat{\theta}_t$ and \(\sqrt{A^TV_t^{-1}A}\) in LinUCT. Using the definition of $V_t$ and $\hat{\theta}_t$, it is easy to show that these can be obtained by storing and recursively updating $\hat{\theta}_t$ and $V_t^{-1}A$: 
+\[
+V_{t+1}^{-1} A = V_{t}^{-1} A - \frac{V_{t}^{-1} AA^T V_{t}^{T} A_i}{1+A^T V_{t}^{T} A} \ {\rm and} \ \hat{\theta}_{t+1} = V_t^{-1}M_t - \frac{V_{t}^{-1} AA^T V_{t}^{-1} M_t}{1+A^T V_{t}^{-1} A},
+\]
+where $A_i$ is the action corresponding to the \(i\)-th child node, \({A}\) is the action of nodes in the back-propagation path, and where \( {M}_t = \sum_{s=1}^t  w_s {A}_s X_s\) is an auxiliary variable. 
+\begin{theorem} [Complexity of the Back-Propagation to update $\hat{\theta}_t$ and $V_t^{-1}A$] \label{thm:efficient Backup}
+The proposed method computes the same LinUCT, but reduces the computation complexity from \(\mathcal{O}(n^2d^2)\) to \(\mathcal{O}(nd)\).
+\end{theorem}
+
+\iffalse
+\begin{theorem} \label{thm:efficient Backup} [Complexity of Back-Propagation for \(\theta\) and \(V\)] Let \( {A} \in \mathbb{R}^nd\) and \(\theta\in\mathbb{R}^nd\) be arbitrary vectors, \( {V} \in \mathbb{R}^{nd\times nd}\) be an invertible matrix. If we want to update \( {V}\) and \(\theta\) as\( {V}_t =  {V}_{0} + \sum_{s=1}^t {A}_s  {A}_s^\top\)
+and \(\theta_t =  {V}_{t}^{-1} \sum_{s=1}^t  {A}_s X_s\)
+where \(X_s\) is the immediate reward at step \(t\) and \( {V}_0 = \lambda  {I}\) and \(\lambda\ge0\).
+Since the goal is to calculate \( {A}^\top \theta\) and \(\sqrt{ {A^\top} {V}^{-1} {A}}\), we notice that it is necessary to store and update \(\theta\) and \( {V}^{-1} {A}\) instead of \( {V^{-1}}\). Noticing this fact, we can obtain the same result without any computation accuracy loss while reducing the complexity from \(\mathcal{O}(N^2K^2)\) to \(\mathcal{O}(NK)\) in the following way:
+\begin{equation}
+     {V}_{t+1}^{-1}  {A} =  {V}_{t}^{-1} {A} - \frac{ {V}_t^{-1} {A} {A}^\top  {V}_t^\top  {A}_i}{1+ {A}^\top  {V}_t^\top  {A}}
+\end{equation}
+where \( {A}_i\) is the action corresponding to the \(i\)-th children node and \( {A}\) is the action of node in the back-propagation path. Meanwhile, we update \(\theta_{t+1}\) as 
+\begin{equation}
+    \theta_{t+1} =  {V}^{-1}_{t+1}  {M}_{t+1} =  {V}^{-1}_{t+1}  {M}_t +  {V}^{-1}_{t+1}  {A}_{t+1} X_{t+1}  =  {V}_{t}^{-1} {M}_t - \frac{ {V}_t^{-1} {A} {A}^\top  {V}_t^{-1}  {M}_t}{1+ {A}^\top  {V}_t^{-1} {A}}
+\end{equation}
+where \( {M}_t = \sum_{s=1}^t  {A}_s X_s\). 
+Noticing that it is easily to cache and calculate \( {V}_0  {A}_i\) and \( {M}_0\) in the expansion stage of nodes, we can complete the back-propagation more efficiently in this way.
+\end{theorem}
+\fi

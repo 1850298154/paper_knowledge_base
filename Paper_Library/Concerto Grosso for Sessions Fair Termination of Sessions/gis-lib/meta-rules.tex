@@ -1,0 +1,114 @@
+\beginbass
+%
+As anticipated, the aim of the Agda library is to allow a user to write meta-rules as ``on paper''. 
+To illustrate this format, let us consider, e.g., the $\allpos$ example from \Cref{sec:gis}:
+\[
+\inferrule{\allpos{\xs}}{\allpos {\x{:}\xs}}
+	~ \x > 0
+\]
+In a meta-rule, we have \emph{meta-variables}, which range over certain sets, in a way possibly restricted by a \emph{side condition}. 
+We call \emph{context} the set of the instantiations of meta-variables which satisfy the side-condition, 
+hence produce a rule of the inference system.  
+In the example, there are two meta-variables, $\x$ and $\xs$, which range over $\N$ and $\FIList{\N}$, 
+respectively, with the restriction that $\x$ should be positive. 
+Hence the context is $\{\ple{x,l}\in\N\times\FIList{\N} \mid x > 0 \}$, 
+see \Cref{ssec:lib_examples} for the Agda version of this meta-rule.
+%
+\begin{figure}[t]
+\begin{lstlisting}[frame=single]  
+record MetaRule {$\ell$c $\ell$p : Level} (U : Set $\ell$u) : Set _ where 
+  field 
+    Ctx : Set $\ell$c
+    Pos : Set $\ell$p 
+    prems : Ctx $\rightarrow$ Pos $\rightarrow$ U
+    conclu : Ctx $\rightarrow$ U 
+
+  RF[_] : $\forall${$\ell$} $\rightarrow$ (U $\rightarrow$ Set $\ell$) $\rightarrow$ (U $\rightarrow$ Set _)
+  RF[_] P u = 
+  	$\Sigma$[ c $\in$ Ctx ] (u $\equiv$ conclu c $\times$ ($\forall$ p $\rightarrow$ P (prems c p)))
+
+  RClosed : $\forall${$\ell$} $\rightarrow$ (U $\rightarrow$ Set $\ell$) $\rightarrow$ Set _
+  RClosed P = $\forall$ c $\rightarrow$ ($\forall$ p $\rightarrow$ P (prems c p)) $\rightarrow$ P (conclu c)
+  
+record IS {$\ell$c $\ell$p $\ell$n : Level} (U : Set $\ell$u) : Set _ where
+  field
+    Names : Set $\ell$n            
+    rules : Names $\rightarrow$ MetaRule {$\ell$c} {$\ell$p} U 
+
+  ISF[_] : $\forall${$\ell$} $\rightarrow$ (U $\rightarrow$ Set $\ell$) $\rightarrow$ (U $\rightarrow$ Set _)
+  ISF[_] P u = $\Sigma$[ rn $\in$ Names ] RF[ rules rn ] P u
+
+  ISClosed : $\forall${$\ell$} $\rightarrow$ (U $\rightarrow$ Set $\ell$) $\rightarrow$ Set _
+  ISClosed P = $\forall$ rn $\rightarrow$ RClosed (rules rn) P  
+\end{lstlisting}
+\caption{MetaRule datatype}
+\label{fig:metarule-dt}
+\end{figure} 
+%
+Correspondingly, the Agda declaration in \Cref{fig:metarule-dt} defines a meta-rule as a record, parametric on the universe \lstinline{U}. 
+The first two components are the context and a set of positions for premises. 
+For each element of the context (instantiation of meta-variables satisfying the side condition), 
+the last two components produce the premises, one for each position, and the conclusion of the 
+rule obtained by this instantiation.
+
+Recall that in Agda the declaration \lstinline{U : Set} introduces the type (set) 
+\lstinline{U}, and \lstinline{P : U $\rightarrow$ Set} the dependent type (predicate on \lstinline{U}) \lstinline{P}.  
+For each element \lstinline{u} of \lstinline{U}, \lstinline{P u} is the type of the proofs that 
+\lstinline{u} satifies \lstinline{P}, hence \lstinline{P u} inhabited means that \lstinline{u} satisfies \lstinline{P}. 
+To avoid paradoxes, not every Agda type is in \lstinline{Set}; there is an infinite sequence \lstinline{Set 0},
+\lstinline{Set 1}, \ldots, \lstinline{Set $\ell$}, \ldots\ such that \lstinline{Set $\ell$ : Set (suc $\ell$)}, 
+where $\ell$ is a \emph{level}, and \lstinline{Set} is an abbreviation for \lstinline{Set 0}.  
+The programmer can write a wildcard for a level which can be inferred; to make the Agda code 
+reported in the paper lighter, we sometimes use a wildcard even for a level which is explicit in the real code. 
+
+\begin{remark}
+	In the Agda code in this section, predicates  \lstinline{P : U $\rightarrow$ Set} encode subsets 
+	of the universe, so we speak of subsets and membership, 
+	rather than of predicates and satisfaction, to closely follow  the previous formulation. 
+	%
+	\eor
+\end{remark}
+
+The function  \lstinline{RF[_]} encodes the inference operator associated with the meta-rule. 
+Given a subset \lstinline{P} of the universe, \lstinline{u} belongs to the resulting subset if we can 
+find an instantiation \lstinline{c} of meta-variables satisfying the side condition, producing \lstinline{u} 
+as conclusion, and, for each position, a premise in \lstinline{P}. 
+Note the use of existential quantification \lstinline{$\Sigma$[ x $\in$ A ] B} where \lstinline{B} depends on \lstinline{x}.  
+%
+The predicate \lstinline{RClosed} encodes the property of being closed with respect to the meta-rule.
+A subset \lstinline{P} of the universe is closed if, for each instantiation \lstinline{c} of the 
+meta-variables satisfying the side-condition,  if all the premises are in \lstinline{P} then the 
+conclusion is in \lstinline{P} as well. 
+Note the use of universal quantification 
+\lstinline{$\forall$  (x : A) $\rightarrow$ B}, where \lstinline{B} depends on \lstinline{x}.
+%
+Finally, an inference system is defined in \Cref{fig:metarule-dt} as a record, parametric on the universe \lstinline{U}, 
+consisting of a set of meta-rule names and a family of meta-rules. 
+The function \lstinline{ISF[_]} and the predicate \lstinline{ISClosed} 
+are defined composing those given for a single meta-rule. 
+%
+\begin{figure}[t]
+\begin{lstlisting}[frame=single]
+record FinMetaRule {$\ell$c n} (U : Set $\ell$u) : Set _ where
+  field
+    Ctx : Set $\ell$c
+    comp : Ctx $\rightarrow$ Vec U n $\times$ U
+
+  from : MetaRule {$\ell$c} {zero} U
+  from .MetaRule.Ctx = Ctx
+  from .MetaRule.Pos = Fin n
+  from .MetaRule.prems c i = get (proj$_1$ (comp c)) i
+  from .MetaRule.conclu c = proj$_2$ (comp c)
+\end{lstlisting}
+\caption{Finitary meta-rule}
+\label{fig:finmetarule-dt}
+\end{figure}
+
+Since in practical cases metarules are very often \emph{finitary}, that is,
+premises are a finite set, the library also offers an interface to write a (
+finitary) meta-rule (see \Cref{fig:finmetarule-dt}),
+by providing, besides the context, %the number of premises \lstinline{n}, and 
+two components which are the \emph{vector} of premises, with fixed length \lstinline{n}, and the conclusion. 
+The injection \lstinline{from} transforms this more concrete format in the generic one for meta-rules, by     
+specifying that the set of positions is \lstinline{Fin n} (the set of indexes from $0$ to $n-1$). 
+

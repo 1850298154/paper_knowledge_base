@@ -1,0 +1,178 @@
+\section{Ownership Policy}
+
+\def\Lp{\ensuremath{\mathcal{L}_p}\xspace}
+\def\Po{\ensuremath{\mathcal{P}_o}\xspace}
+
+In promise-based synchronization, a task does not directly await
+another task; it awaits a promise, thereby \emph{indirectly} waiting
+on whichever task fulfills that promise.
+%
+It is a runtime error to fulfill a promise twice, so there ought to be
+one and only one fulfilling task.
+%
+However, the relationship between a promise and the task which
+\emph{will} fulfill it is not explicit and inhibits the identification
+of deadlocks.
+%
+To make this relationship explicit and meaningful, we say that each
+promise is \emph{owned} by exactly one task at any given time.
+%
+The owner is responsible for fulfilling the promise eventually, or
+else handing ownership off to another task.
+%
+Ownership hand-offs may only occur at the time of spawning a new
+task.
+%
+We augment the \kwasync keyword, used to spawn tasks, with a list of
+promises currently owned by the parent task that should be transferred
+to the new child.
+
+\subsection{Language Extension}
+
+We define an abstract language, showing only its synchronization
+instructions and leaving its sequential control flow and other
+instructions unspecified.
+%
+For simplicity, we have abstracted away the payload values of promises
+and refer to individual promises by globally unique identifiers.
+%
+\begin{definition}
+  The \Lp language consists of task-parallel programs, $P$, whose
+  synchronization instructions have the syntax
+  %
+  \begin{align*}
+    \kwnew p ~|~ \kwset p ~|~ \kwget p
+    ~|~ \kwasync(p_1,\ldots,p_n)\ \{ P \}
+  \end{align*}
+  %
+  where $n$ may be $0$.
+\end{definition}
+%
+The instruction $\kwnew p$ represents the point of allocation for the
+promise $p$, and we assume well-formed programs do not allocate a
+given $p$ twice or operate on $p$ prior to its allocation.
+%
+Each invocation of $\kwget p$ blocks the current task until after
+$\kwset p$ has been invoked for the first (and only) time.
+
+The \kwasync block creates a new task to execute a sub-program $P$;
+the block is annotated with a list of promises, which should be moved
+from the parent task to the new task.
+%
+In many task-parallel languages, \kwasync automatically creates a
+future which can be used to retrieve the new task's return value. We
+can readily reproduce this behavior using promises in the pattern
+$\kwnew p; \kwasync (p, \ldots)~\{ \ldots; \kwset p \}$.
+
+\begin{definition}
+  The \emph{ownership policy}, \Po, maintains state during the
+  execution of an \Lp program in the form of a map
+  $\fldowner : \mathit{Promise} \to \mathit{Task} \cup \{ \Null \}$
+  according to these rules:
+  %
+  \begin{enumerate}
+  \item When task $t$ executes $\kwnew p$, set $\fldowner(p) := t$.
+    %
+    \label{rule:new}
+
+  \item When task $t$ spawns task $t'$ as
+    $\kwasync(p_1,\ldots,p_n)\ \{ P \}$, prior to $t'$ becoming
+    eligible to run, ensure $\fldowner(p_i) = t$ and update
+    $\fldowner(p_i) := t'$ for each $p_i$.
+    %
+    \label{rule:async}
+
+  \item When task $t$ terminates, ensure the set of promises
+    $\fldowner^{-1}(t)$ is empty.
+    %
+    \label{rule:exit}
+
+  \item When task $t$ executes $\kwset p$, ensure that
+    $\fldowner(p) = t$ and set $\fldowner(p) := \Null$.
+    %
+    \label{rule:set}
+  \end{enumerate}
+\end{definition}
+
+These four rules together ensure that there is at least one \kwset for
+each promise, with omitted sets being detected by
+rule~\ref{rule:exit}. Rule~\ref{rule:set} guarantees there is at most
+one \kwset.
+
+Our proposed modification to the program given in \cref{lst:deadlock}
+is to annotate the \kwasync in line~\ref{ln:deadlock:t2} as
+$\kwasync(q)$, indicating that $t_2$ takes on the responsibility to
+set $q$.
+%
+It is now possible to trace the cycle when it occurs: the root task
+awaits $q$, owned by $t_2$, awaiting $p$, owned by the root task. It
+is clear that $t_1$, whose \kwasync is not given any parameters, is
+not involved as it can set neither $p$ nor $q$ (rule~\ref{rule:set}).
+
+The proposed modification to the program given in
+\cref{lst:omittedset} is to write $\kwasync(r,s)$ in
+line~\ref{ln:omittedset:t3} and $\kwasync(s)$ in
+line~\ref{ln:omittedset:t4}. That is, the information already present
+in the comments is incorporated into the code itself.
+%
+The moment $t_4$ terminates, the runtime can observe that $t_4$ still
+holds an outstanding obligation to set $s$. We treat this as an error
+immediately (rule~\ref{rule:exit}), irrespective of whether any task
+is awaiting $s$.
+
+\subsection{Algorithm for Ownership Tracking}
+
+\algOwners
+
+\Cref{alg:owners} implements the \Po policy by providing code to be
+run during \kwnew, \kwasync, and \kwset operations.
+%
+Each promise has an $\fldowner$ field to store the task that is
+currently its owner, and each task has an associated $\fldowned$
+list that maintains the inverse map, $\fldowner^{-1}$.
+%
+The functions $\mathit{currentTask}$ and $\mathit{getCurrentTask}$
+interact with thread-local storage.
+
+In compliance with \Po rule~\ref{rule:new}, the \textsc{New}
+procedure creates a promise owned by the currently running task
+(line~\ref{ln:owners:new:A}) and adds this promise to that task's
+owned list (line~\ref{ln:owners:new:B}).
+
+$\textsc{Async}(P, f)$ schedules $f$ to be called asynchronously as a
+new task and moves the promises listed in $P$ into this task.
+%
+These promises are first confirmed to belong to the parent task
+(line~\ref{ln:owners:async:A}), then moved into the child task
+(lines~\ref{ln:owners:async:A}--\ref{ln:owners:async:C}), in
+accordance with rule~\ref{rule:async}.
+%
+(Line~\ref{ln:owners:async:B} is in preparation for
+\cref{alg:detector}, presented in \cref{sec:detector}.)
+%
+Once the child task terminates, rule~\ref{rule:exit} requires that the
+task not own any remaining promises (line\ref{ln:owners:async:E}).
+%
+The \textsc{Init} procedure shows how to set up a root task to execute
+the main function.
+
+Finally, $\textsc{Set}(p,v)$ achieves rule~\ref{rule:set}, checking
+that the current task owns $p$ and marking $p$ as fulfilled by
+assigning it no owner
+(lines~\ref{ln:owners:set:A}--\ref{ln:owners:set:C}).
+%
+The procedure then invokes the underlying mechanism for actually
+setting the promise value to $v$ (line~\ref{ln:owners:set:D}).
+
+As an example of how \Cref{alg:owners} enforces compliance with \Po,
+refer again to \cref{lst:omittedset}. When promise $s$ is first
+created, it belongs to the root task (\cref{alg:owners}
+\cref{ln:owners:new:B}). If the \kwasync that creates $t_4$ is
+annotated with $s$, then \cref{alg:owners} \cref{ln:owners:async:C}
+changes the owner of $s$ to $t_4$. Since $t_4$ does not set $s$, upon
+termination of $t_4$, an assertion fails in \cref{alg:owners}
+\cref{ln:owners:async:E}.
+%
+The offending task, $t_4$, and the outstanding promise, $s$, are
+directly identifiable and can be reported in the alarm.
+

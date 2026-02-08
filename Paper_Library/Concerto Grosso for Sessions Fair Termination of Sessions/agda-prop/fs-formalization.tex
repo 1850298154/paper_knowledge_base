@@ -1,0 +1,167 @@
+\beginbass
+%
+Now we show the mechanization of the \GIS in \Cref{fig:subt}.
+We still start defining the right universe and then we move to 
+the definition of the (co)rules. At last, we show the key
+lemmas that are needed to prove the correctness of the predicate.
+%
+The universe is clearly made of pairs of session types.
+
+\begin{lstlisting}
+U : Set
+U = SessionType $\times$ SessionType
+\end{lstlisting}
+
+Then we have to define names of the rules and the corules.
+For the sake of clarity, we try to be consistent with the names in \Cref{fig:subt}.
+
+\begin{lstlisting}
+data FSubIS-RN : Set where
+  s-nil s-end : FSubIS-RN
+  s-inp s-out : FSubIS-RN
+
+data FSubCOIS-RN : Set where
+  converge : FSubCOIS-RN
+\end{lstlisting}
+
+where the corules involve only \refrule{fs-converge}.
+We start looking at the definitions of the axioms. 
+In this case we can use the finitary formulation by using \lstinline{FinMetaRule}.
+
+\begin{lstlisting}
+s-nil-r : FinMetaRule U
+s-nil-r .Ctx = SessionType
+s-nil-r .comp T =
+  [] ,
+  ------------------
+  (nil , T)
+
+s-end-r : FinMetaRule U
+s-end-r .Ctx = 
+  $\Sigma$[ (S , T) $\in$ SessionType $\times$ SessionType ] End S $\times$ Defined T
+s-end-r .comp ((S , T) , _) =
+  [] ,
+  ------------------
+  (S , T)
+\end{lstlisting}
+
+Note that the definitions are consistent with \refrule{s-nil} and \refrule{s-end}-
+Indeed \lstinline{s-end-r} requires that the first session type has the form $\End[\Pol]$
+and that the second is different from $\TNil$ by using the predicates \lstinline{End} and
+\lstinline{Defined}, respectively (see \Cref{sec:agda_st} for more details).
+%
+Next, we show the rules for modeling covariance of input and contravariance of output.
+
+\begin{lstlisting}
+s-inp-r : MetaRule U
+s-inp-r .Ctx = 
+  $\Sigma$[ (f , g) $\in$ Continuation $\times$ Continuation ] dom f $\subseteq$ dom g
+s-inp-r .Pos ((f , _) , _) = $\Sigma$[ t $\in$ $\Message$ ] t $\in$ dom f
+s-inp-r .prems ((f , g) , _) (t , _) = f t .force , g t .force
+s-inp-r .conclu ((f , g) , _) = inp f , inp g
+
+s-out-r : MetaRule U
+s-out-r .Ctx = $\Sigma$[ (f , g) $\in$ Continuation $\times$ Continuation ] 
+		  dom g $\subseteq$ dom f $\times$ Witness g
+s-out-r .Pos ((_ , g) , _) = $\Sigma$[ t $\in$ $\Message$ ] t $\in$ dom g
+s-out-r .prems ((f , g) , _) (t , _) = f t .force , g t .force
+s-out-r .conclu ((f , g) , _) = out f , out g
+\end{lstlisting}
+
+We can point out a couple of things. First, both rules have a premise for each
+element in the domain of the first/second \lstinline{Continuation}. Then, 
+co/contra-variance is encoded through the domain inclusion as side condition.
+We recall that \lstinline{Witness g} means that the domain of \lstinline{g} is
+not empty.
+%
+Now we can move to the \refrule{fs-converge} corule.
+
+\begin{lstlisting}
+converge-r : FinMetaRule U
+converge-r .Ctx = 
+  $\Sigma$[ (S , T) $\in$ SessionType $\times$ SessionType ] S $\downarrow$ T
+converge-r .comp ((S , T) , _) =
+  [] ,
+  ------------------
+  (S , T)
+\end{lstlisting}
+
+where \lstinline{S $\downarrow$ T} is the predicate obtained by inductively encoding
+the corule \refrule{fs-converge} alone.
+Although this approach might seem inconsistent with the other mechanizations
+for it does not use the actual corule, it can be proved that it is equivalent in this
+example. We will give more details in \Cref{ssec:agda_fs_conv}.
+
+For the sake of simplicity, we omit its definition.
+%
+As usual, we proceed by defining the inference systems.
+
+\begin{lstlisting}
+FSubIS : IS U
+FSubIS .Names = FSubIS-RN
+FSubIS .rules s-nil = from s-nil-r
+FSubIS .rules s-end = from s-end-r
+FSubIS .rules s-inp = s-inp-r
+FSubIS .rules s-out = s-out-r
+
+FSubCOIS : IS U
+FSubCOIS .Names = FSubCOIS-RN
+FSubCOIS .rules converge = from converge-r
+\end{lstlisting}
+
+At last, we can encode the desired predicate by the generalized interpretation.
+We also consider the inductive interpretation of the whole inference system which
+will be used later.
+
+\begin{lstlisting}
+_$\subt$F_ : SessionType $\rightarrow$ SessionType $\rightarrow$ Set
+S $\subt$F T = FCoInd$\llbracket$ FSubIS , FSubCOIS $\rrbracket$ (S , T)
+
+_$\subt$F$_i$_ : SessionType $\rightarrow$ SessionType $\rightarrow$ Set
+S $\subt$F$_i$ T = Ind$\llbracket$ FSubIS $\cup$ FSubCOIS $\rrbracket$ (S , T)
+\end{lstlisting}
+
+Concerning the specification against which we prove the correctness of \lstinline{_$\subt$F_}
+it is important to highlight that it can be defined both by using \emph{ground} notions
+and by \lstinline{_$\compliance{}{}$_} (fair compliance) defined in \Cref{ssec:agda_fc_form}. In the mechanization we proved that they 
+are equivalent and we used them differently according to our needs. Here,
+show only that using the compliance predicate.
+
+\begin{lstlisting}
+FSSpec : U $\rightarrow$ Set
+FSSpec (S , T) = $\forall${R} $\rightarrow$ R $\compliance{}{}$ S $\rightarrow$ R $\compliance{}{}$ T
+\end{lstlisting}
+
+To see the advantage of relying on such specification based on \lstinline{_$\compliance{}{}$_},
+we just need to think that the conclusion \lstinline{R $\compliance{}{}$ T} is defined using a
+\GIS. Hence, for what concerns the soundness, we can formulate an ad-hoc specification and 
+use the bounded coinduction principle (\Cref{prop:bcp}). We omit some details.
+
+\begin{lstlisting}
+SpecAux : U $\rightarrow$ Set
+SpecAux (R , T) = $\Sigma$[ S $\in$ SessionType ] S $\subt$F T $\times$ R $\compliance{}{}$ S 
+
+spec-aux-sound : SpecAux $\subseteq$ $\lambda$ (R , S) $\rightarrow$ R $\compliance{}{}$ S
+spec-aux-sound = 
+  bounded-coind[ FCompIS , FCompCOIS ] 
+    SpecAux spec-bounded spec-cons
+
+sound : $\forall${S T} $\rightarrow$ S $\subt$F T $\rightarrow$ FSSpec (S , T)
+sound {S} fs fc = spec-aux-sound (S , fs , fc)
+\end{lstlisting}
+
+where \lstinline{spec-bounded} and \lstinline{spec-cons} are boundedness and consistency proofs
+of \lstinline{SpecAux} with respect to the \GIS in \Cref{fig:compliance}.
+%
+For what concerns the completeness, the proof is clearly by bounded coinduction (\Cref{prop:bcp}).
+
+\begin{lstlisting}
+bounded : $\forall${S T} $\rightarrow$ FSSpec (S , T) $\rightarrow$ S $\subt$F$_i$ T
+
+consistent : FSSpec $\subseteq$ ISF[ FSubIS ] FSSpec
+
+complete : $\forall${S T} $\rightarrow$ FSSpec (S , T) $\rightarrow$ S $\subt$F T
+complete = 
+  bounded-coind[ FSubIS , FSubCOIS ] FSSpec bounded consistent
+\end{lstlisting}
+

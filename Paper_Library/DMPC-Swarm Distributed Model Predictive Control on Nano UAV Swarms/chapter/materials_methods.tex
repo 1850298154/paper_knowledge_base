@@ -1,0 +1,645 @@
+%!TEX root = ../scifile.tex
+
+\section{\myswarm{} --- Architecture}
+\noindent
+This section presents \myswarm{}, providing an overview of how it enables communication (\textbf{C1}), distributed computation (\textbf{C2}), and safe control (\textbf{C3}). 
+%We also briefly describe our hardware implementation, with experimental results presented in Section~\ref{sec:experiments}.
+The subsequent Section~\ref{sec:mlrdmpc} details the methodologies of \myswarm{}.
+
+
+\begin{figure*}[h]
+    \centering
+    \includegraphics[width=0.9\textwidth]{Images/MLRDMPCOverview.pdf}
+
+	\caption{\myswarm{} overview.
+    \capt{\textbf{Left:} The physical swarm consisting of of UAVs and CUs connected via a wireless mesh network. \textbf{Right:} Swarm operations are structured in synchronized rounds, alternating between computation and many-to-all communication phases, facilitated by Mixer.}}
+
+    % \caption{\myswarm{} overview. 
+    % \capt{\textbf{Left:} The UAVs and CUs are connected over a wireless mesh network. \textbf{Right:} The whole swarm operation is structured in synchronized rounds, consisting of alternating calculation phases and many-to-all communication phases achieved by a protocol based on synchronous transmissions.
+    % }}
+    \label{fig:approach}
+\end{figure*}
+
+% \subsection{Overview} 
+\label{sec:method:overview}
+
+\subsection{Communication}
+As described in Section~\ref{sec:relatedwork}, DMPC requires synchronized round-based many-to-all communication.
+% Reliable many-to-all communication with bounded latency is crucial for \myswarm{}'s distributed operation. 
+However, the inherent unreliability of wireless networks, combined with the high dynamics of moving UAVs, makes this challenging.
+
+%For this, we leverage a wireless mesh protocol based on synchronous transmissions called Mixer~\citep{Mixer}.
+%Mixer exploits the capture effect~\citep{Leentvaar1976} to accept overlapping transmissions typically avoided by traditional routing protocols and combines this with random linear network coding~\citep{Ho2006}.
+%Through this, it achieves order-optimal scaling with the number of devices and messages. 
+%Synchronous transmission protocols like Mixer have proven effective in control applications~\citep{FeedbackControlGoesWireless, baumann2019fast, PredictiveTriggering, Trobinger2021}.
+
+Over the past decade, wireless mesh protocols based on synchronous transmissions have proven superior to traditional point-to-point routing approaches~\citep{zimmerling20st}.
+The key insight is that packet collisions from transmission that overlap in time, space and frequency, can be successfully decoded due to the capture effect~\citep{Leentvaar1976} and non-destructive interference~\citep{herrmann22rssispy}.
+This has two crucial implications: (\emph{i}) Unlike traditional routing protocols, synchronous transmission methods do not need to track topology changes to avoid packet collisions, making them highly resilient to such changes. (\emph{ii}) Synchronous transmissions enable distributed network nodes to achieve efficient time synchronization with sub-microsecond accuracy~\citep{glossy,chaos}, providing the foundation for real-time communication with formally proven end-to-end deadline guarantees~\citep{zimmerling17realtime}. 
+As a result, protocols based on synchronous transmissions have enabled a range of powerful wireless control applications~\citep{FeedbackControlGoesWireless, baumann2019fast, PredictiveTriggering, Trobinger2021}.
+
+%By transmitting and receiving messages over synchronized time slots, Mixer efficiently floods information throughout the network, establishing the many-to-all communication essential for DMPC. 
+%This flooding mechanism eliminates the need to track continuous network topology changes caused by moving UAVs making it an efficient solution for UAV swarm communication.
+%Furthermore, Mixer's high reliability minimizes message loss, allowing control to treat losses as exceptional events.
+
+In \myswarm{}, we build on this prior work by leveraging a synchronous transmissions based protocol called Mixer~\citep{Mixer}. 
+Mixer provides many-to-all communication across dynamic wireless mesh networks, essential for DMPC.
+It does this also efficiently: Mixer achieves order-optimal scaling with the number of messages by integrating synchronous transmissions with random linear network coding~\citep{Ho2006}.
+The network coding approach also provides additional reliability in real networks with fast-moving nodes like UAVs. %, boosting Mixer's communication reliability above 99.999\,\% 
+This high robustness and reliability allows us to treat message losses as exceptional events when designing the control system in \myswarm{}.
+
+In \myswarm{}, Mixer synchronizes the devices into discrete-time rounds indexed by~$k$ and with a fixed duration~$T$ (see Figure~\ref{fig:approach}).
+Each round comprises a computation and a communication phase, which last~$T_\mathrm{calc}$ and~$T_\mathrm{com}$, respectively. 
+Devices begin computation simultaneously at~$t = kT$ and begin to communicate at $t = kT + T_\mathrm{calc}$. During communication, devices concurrently send messages in dedicated, synchronized time slots.
+Mixer efficiently broadcasts these messages, all devices can receive the complete set after $T_\mathrm{com}$. This mechanism provides the timely, reliable data exchange essential for MLR-DMPC.
+
+\subsection{Distributed Computation}
+
+Nano-UAV swarms face a fundamental conflict between limited onboard compute resources and the high computational demands of DMPC. 
+To address this, we leverage the swarm's $M$ CUs for heavy computations (cf.\ Section~\ref{sec:introduction:problemsetting}). %following prior work \citep{Graefe2022} 
+% Because $M>1$, control computations will be distributed, thus DMPC-Swam enjoys the benefits of distributed implementation such as scalability.
+% Due to weight constraints limiting UAVs' onboard computational power, we leverage the swarm's CUs (cf.\ Section~\ref{sec:introduction:problemsetting}).
+% % This network includes digital devices from swarm users or ground-based robots with greater computational capabilities, called CUs. 
+% Building on previous DMPC work~\citep{Graefe2022}, we offload demanding computations to these CUs.
+
+Although each CU can compute a trajectory for one UAV at once via DMPC, maintaining a one-to-one ratio of CUs to UAVs ($M = N$) is inefficient---it is costly, overloads the compute network, and demands high communication bandwidth. 
+Therefore, \myswarm{} employs significantly fewer CUs ($M < N$). 
+In each round~$k$, the CUs compute new trajectories for $M$ of the $N$ UAVs, while the rest follow their previously planned paths. 
+A distributed, priority-based event trigger determines which UAVs need new trajectories and schedules computations on the CUs (see Section~\ref{sec:mlrdmpc:algorithm:eventtrigger}).
+
+
+
+\subsection{Overview of MLR-DMPC}
+\label{sec:method:mldrmpc}
+
+\myswarm{} leverages Mixer's round-based structure of alternating computation and communication phases for MLR-DMPC (see Figure~\ref{fig:approach}). 
+A key innovation of MLR-DMPC over existing DMPCs is its ability to handle message loss. 
+We provide a brief overview here; details are in Section~\ref{sec:mlrdmpc}.
+
+To ensure effective DMPC, the CUs must be informed of all UAV actions, which Mixer's many-to-all communication facilitates.
+The CUs monitor received UAV activities using information trackers.
+
+At the start of each computation phase, each CU checks whether its information trackers are up-to-date. 
+If they are, the CU solves a QP for its assigned UAV and broadcasts the solution during the next communication phase. 
+If crucial information is missing---indicating a critical message loss that prevents safe trajectory calculation---the CU does not proceed. 
+Instead, the CU identifies the missing information and requests it in the subsequent communication phase.
+Although such instances are rare due to Mixer's reliability, they must be addressed. 
+
+Consequently, UAVs receive only recursively feasible trajectories that ensure their safety—even if they do not receive an update due to message loss or not being selected by the trigger. 
+The UAVs track these trajectories using high-frequency, low-level controllers common in DMPC~\citep{Park2022, Park2023, Chen2023, Chen2022, Graefe2022}. 
+% For this purpose, \myswarm{} employs a standard controller~\citep{mellinger2011minimum}.
+
+% At the start of each computation phase, each CU checks if it has information to compute a safe trajectory. 
+% If crucial information is missing, a \textbf{critical message loss} has occurred. 
+% Although such cases are rare due to Mixer's reliability, addressing them is essential for guarantees.
+% If no critical message loss has occurred, the CU solves a QP for its assigned UAV and broadcasts the solution during the next communication phase. 
+% If a critical message loss has occurred, the CU identifies missing information, and requests it during the next communication phase. 
+% % The next MLR-DMPC round begins after communication.
+
+% Meanwhile, each UAV runs a high-frequency, low-level controller to track the trajectories provided by the CUs as commonly used in DMPC~\citep{Park2022, Park2023, Chen2023, Chen2022, Graefe2022}. 
+% \myswarm{} employs a standard controller~\citep{mellinger2011minimum} for this purpose.
+
+
+\section{Distributed Model Predictive Control with Message Loss Recovery}
+\label{sec:mlrdmpc}
+
+This section details MLR-DMPC. 
+After describing the UAV model forming the base for MLR-DMPC, we provide an in-depth explanation of MLR-DMPC and prove collision avoidance.
+
+\subsection{UAV Model}
+
+All $N$ UAVs have nonlinear dynamics
+\begin{align}
+    \label{eq:uavdynamics}
+    \forall i \in \mathcal{A}:\quad&\dot{x}_i(t) = f_i(x_i(t), u_i(t)) + v_i(t),\nonumber\\ &x_i(0) = x_{i,0},
+\end{align}
+where $x_i \in \mathcal{X} \subseteq \mathbb{R}^n$ is the state vector, $u_i \in \mathcal{U} \subseteq \mathbb{R}^m$ is the control input, $f_i: \mathcal{X}\times\mathcal{U}\to\mathcal{X}$, and $v_i \in \mathcal{V} \subseteq \mathbb{R}^n$ represents disturbances.
+The position of UAV $i$ at time $t$ is given by $p_i(t) = g_{\mathrm{p}, i}(x_i(t))$, where $g_{\mathrm{p}, i}: \mathcal{X} \rightarrow \mathcal{P} \subseteq \mathbb{R}^3$ maps the state to the position.
+Typically, $x_i$ includes the position, making $g_{\mathrm{p}, i}$ straightforward (e.g., $p_i(t) = [I, 0] x_i(t)$).
+For detailed quadcopter dynamics, see~\citep{mahony2012multirotor, antal2023modelling, panerati2021learning}.
+Each UAV must navigate from its initial position $p_{i, \mathrm{init}} = g_{\mathrm{p}, i}(x_{i,0})$ to its target $p_{i, \mathrm{target}}$ while avoiding collisions (Equation~\ref{eq:truecollisionavoidance}).
+% Collision avoidance is defined by ensuring the vector difference between any two UAV positions lies outside an ellipsoid:
+% \begin{align} 
+%     \label{eq:truecollisionavoidance} 
+%     \forall t\geq 0,&;~\forall i,j\in\mathcal{A},~i\neq j:\\ 
+%     &\left\| \Theta^{-1}[p_j(t)-p_i(t)] \right\|_2 \geq d_\mathrm{min},\nonumber 
+% \end{align}
+% where $\Theta$ is a scaling matrix for downwash effects, and $d_\mathrm{min}$ is the minimum allowable distance~\citep{Luis2019, Luis2020, Chen2022, Chen2023, Graefe2022}.
+
+% Due to the complexity of $f_i$, we simplify the dynamics for real-time optimization, as common in (D)MPC~\citep{augugliaro2012generation, Luis2019, Luis2020, Chen2022, Chen2023, Graefe2022}.
+\reviewerall{
+Instead of using the complex UAV dynamics $f_i$, we define a simpler nominal system for each UAV $i \in \mathcal{A}$, as common in (D)MPC~\citep{augugliaro2012generation, Luis2019, Luis2020, Chen2022, Chen2023, Graefe2022}
+\begin{equation}
+    \label{eq:nominalsystem}
+    \dot{\hat{x}}_i = \hat{f}_i(\hat{x}_i, \hat{u}_i),\quad \hat{x}_i(0) = \hat{x}_{i,0},
+\end{equation}
+where $\hat{x}_i \in \hat{\mathcal{X}}$ is the nominal state with $\hat{x}_{i,0}$ its initial value, $\hat{u}_i\in\hat{\mathcal{U}}$ and $\hat{f}_i:\hat{\mathcal{X}}\times\hat{\mathcal{U}}\to\hat{\mathcal{X}}$.
+We define the function $\hat{g}_{\mathrm{p}, i}:\hat{\mathcal{X}}\to\mathcal{P}$ that maps the nominal state to the nominal position $\hat{p}_i(t) = \hat{g}_{\mathrm{p}, i}(\hat{x}_i(t))$.
+
+We further design a controller $c_i: \mathcal{X} \times \hat{\mathcal{X}} \times \hat{\mathcal{U}} \rightarrow \mathcal{U}$ that controls the UAV
+\begin{equation}
+    \dot{x}_i = f_i\big(x_i,c_i(x_i, \hat{x}_i, \hat{u}_i)\big) + v_i,
+\end{equation} 
+steering it towards the nominal state.
+In the following, we will not explicitly specify $\hat{f}_i$ and $c_i$, instead, we will make the following assumption similar to incremental asymptotic stability~\citep{kohler2018novel}.
+
+\begin{assumption}
+\label{as:tracking}
+% For each UAV $i \in \mathcal{A}$, define the nominal system
+% \begin{equation}
+%     \label{eq:nominalsystem}
+%     \dot{\hat{x}}_i = \hat{f}_i(\hat{x}_i, \hat{u}_i),\quad \hat{x}_i(0) = \hat{x}_{i,0},
+% \end{equation}
+% where $\hat{x}_i \in \hat{\mathcal{X}}$ is the nominal state with $\hat{x}_{i,0}$ its initial value, $\hat{u}_i\in\hat{\mathcal{U}}$ and $\hat{f}_i:\hat{\mathcal{X}}\times\hat{\mathcal{U}}\to\hat{\mathcal{X}}$.
+% We define the function $\hat{g}_{\mathrm{p}, i}:\hat{\mathcal{X}}\to\mathcal{P}$ that maps the nominal state to the nominal position $\hat{p}_i(t) = \hat{g}_{\mathrm{p}, i}(\hat{x}_i(t))$.
+
+We assume that for arbitrary inputs $\hat{u}_i \in \hat{\mathcal{U}} \subseteq \mathbb{R}^{\hat{m}}$, there exists a constant $\Delta d_\mathrm{min}\in\mathbb{R}_{\geq 0}$ such that if $||\hat{p}_i(0)-p_i(0)||=||\hat{g}_{\mathrm{p}, i}(\hat{x}_i(0))-g_{\mathrm{p}, i}(x_i(0))||\leq \Delta d_\mathrm{min}$,
+then for all $t\in\mathbb{R}_{\geq 0}$:
+\begin{equation}
+    \left\| p_i(t) - \hat{p}_i(t) \right\|_2 \leq \Delta d_\mathrm{min}.
+\end{equation}
+\end{assumption}
+}
+
+% Under this assumption, the CU can generate reference trajectories using $\hat{f}_i$ and the UAVs can apply the controller $c_i$ to ensure they follow them closely.
+
+We can satisfy this assumption by selecting $\hat{f}_i$ as a fourth-order integrator in combination with an appropriate controller leveraging the differential flatness of quadcopters~\citep{mellinger2011minimum}. 
+However, empirical studies show that second- or third-order integrators suffice for generating smooth, trackable trajectories while reducing QP complexity~\citep{augugliaro2012generation, Luis2019, Luis2020, Chen2022, Chen2023, Graefe2022}. 
+Therefore, \myswarm{} uses a third-order integrator for $\hat{f}_i$, with input $\hat{u}_i$ representing the jerk~\citep{Graefe2022}, balancing simplicity and trajectory smoothness. 
+These trajectories are followed by a standard controller~\citep{mellinger2011minimum} acting as $c_i$.
+\reviewerall{As our theoretical analysis does not depend on a specific formulation of $\hat{f}_i$, we will continue with an arbitrary $\hat{f}_i$ without giving a specific formula.}
+
+During each round~$k$, a UAV has a predicted reference trajectory $\hat{x}_i(\tau|k)$ and input $\hat{u}_i(\tau|k)$ of the nominal system~\eqref{eq:nominalsystem} computed by a CU, where $\tau$ denotes the time within the prediction horizon. 
+With these predictions, the UAV generates the references
+\begin{align}
+    \hat{x}_i(t) &:= \hat{x}_i(\tau|k), \\
+    \hat{u}_i(t) &:= \hat{u}_i(\tau|k),
+\end{align}
+and follows them using its low-level controller $c_i$ at time $t = \tau + kT$:
+\begin{equation}
+    u_i(t) = c_i\big[x_i(t),\hat{x}_i(\tau|k),\hat{u}_i(\tau|k)\big].
+\end{equation}
+When a UAV receives a new trajectory $\hat{u}\uli{i,w}$ from a CU $w$ during the communication phase at round $k$, it updates its reference trajectory at the beginning of round $k+1$. Otherwise, it reuses its old trajectory, either because no CU computed a new trajectory for it or because the UAV missed it due to message loss:
+\begin{align} 
+	\label{eq:nottriggered} 
+	\hat{u}\uli{i}&(\tau|k+1) \\ 
+	&= \begin{cases} \hat{u}\uli{i,w}(\tau+T|k) & \parbox[c]{.4\linewidth}{if received new trajectory from a CU $w$,}\\ 
+		\hat{u}\uli{i}(\tau+T|k) & \text{otherwise.}\nonumber \end{cases} 
+\end{align}
+
+
+\subsection{MLR-DMPC Algorithm}
+\label{sec:mlrdmpc:algorithm}
+
+\definecolor{communicationcolor}{HTML}{fdd48f}
+\definecolor{information-trackercolor}{HTML}{d2c0cd}
+\definecolor{dmpccolor}{HTML}{bfbfbf}
+\definecolor{mlrcolor}{HTML}{8ebae5}
+
+\setlength{\fboxrule}{0pt}
+\setlength{\fboxsep}{3pt}
+
+\newcommand{\myindent}{\hspace*{2em}}
+
+\newcommand{\algcolorboxpar}[2]{\vspace*{-\fboxsep}\hspace*{-\fboxsep}\colorbox{#1}{\parbox{\dimexpr\linewidth-2\fboxsep}{#2}}}
+
+\newcommand{\algcolorbox}[2]{%
+  {\hskip-\ALG@thistlm\vspace*{-\fboxsep}\hspace*{-\fboxsep}\colorbox{#1}{\parbox{\dimexpr\linewidth-2\fboxsep}{{\hskip\ALG@thistlm\relax {\tiny\strut} #2}}}}%
+}
+
+\newcommand{\myif}[1]{\textbf{if} #1 \textbf{then}}
+\newcommand{\myelif}[1]{\textbf{elif} #1 \textbf{then}}
+\newcommand{\myendif}{\textbf{endif}}
+\newcommand{\mywhile}[1]{\textbf{while} #1 \textbf{do}}
+\newcommand{\myendwhile}[0]{\textbf{endwhile}}
+\newcommand{\varendash}[1][5pt]{%
+  \makebox[#1]{\leaders\hbox{--}\hfill\kern0pt}%
+}
+
+
+\begin{algorithm*}[h]
+	\caption{MLR-DMPC running on CU $w$.}\label{alg:mlrdmpc}
+	\fontsize{9pt}{9pt}\selectfont
+	\begin{algorithmic}[1]
+		\State\algcolorbox{white}{$k\gets 0$  \Comment{Current round}}
+		\State\algcolorbox{white}{$\forall i\in \mathcal{A}$~$\mathcal{D}\uli{iw}(k) \gets \{\}$~~~$\mathcal{D}_w(k)\gets\{\mathcal{D}\uli{iw}(k)|\forall i\in \mathcal{A}\}$ \Comment{Init information-trackers as empty.}}
+		\State\algcolorbox{white}{$\forall i\in \mathcal{A}$ setDeprecated($\mathcal{D}\uli{iw}(k)$)}
+		
+		\State\algcolorbox{white}{state $\gets$ REQUEST\_TRAJECTORY \Comment{Because information-trackers are empty.}}
+		
+		\State\algcolorbox{white}{UAV\_messages, cu\_messages $\gets \emptyset$}
+		
+		\State\algcolorbox{white}{\mywhile{true}}
+			%%%%%%%%%%%%%%%%%%%% information-tracker %%%%%%%%%%%%%%%%%%%%%
+			\State \algcolorbox{information-trackercolor}{\myindent\varendash[0.3\linewidth]\textit{Trajectory-Tracker Update} \varendash[0.3\linewidth]}
+			\State  \algcolorbox{information-trackercolor}{\myindent$\mathcal{D}_w(k)\gets$updateInformationTrackers(UAV\_messages, cu\_messages, $\mathcal{D}_w(k-1)$) \label{line:updateinformation-tracker} \Comment{Algorithm~\ref{alg:processmessages}}}  \label{line:computationphase:begin}
+			\State \algcolorbox{information-trackercolor}{\myindent\myif{allInformationTrackersUpToDate()} state $\gets$ RUN\_DMPC}
+			\State \algcolorbox{information-trackercolor}{\myindent\myelif{state $==$ RUN\_DMPC} state $\gets$ WAIT}\label{lst:line:activatemlr}
+			\State \algcolorbox{information-trackercolor}{\myindent\myendif{}}
+
+			%%%%%%%%%%%%%%%%%%%% DMPC %%%%%%%%%%%%%%%%%%%%%
+			\State \algcolorbox{dmpccolor}{\myindent\varendash[0.3\linewidth]\textit{DMPC} \varendash[0.475\linewidth]}
+			\State \algcolorbox{dmpccolor}{\myindent\myif{state $==$ RUN\_DMPC}}
+				\State \algcolorbox{dmpccolor}{\myindent\myindent prios$\gets$ prioConsensus(cu\_messages) \label{line:prio}\Comment{Event-trigger}}
+				\State \algcolorbox{dmpccolor}{\myindent\myindent selected\_UAV $\gets$ selectUAV(prios) \label{line:et}}
+				\State \algcolorbox{dmpccolor}{\myindent\myindent tx\_message $\gets$ EmptyMessage}
+				\State \algcolorbox{dmpccolor}{\myindent\myindent \myif{$|\mathcal{D}_{\mathrm{selected\_UAV},w}(k)|==1$}} \label{lst:line:onlyoneentrance}
+					\State \algcolorbox{dmpccolor}{\myindent\myindent\myindent $\hat{x}_{i,w}(\tau|k),\hat{u}_{i,w}(\tau|k)\gets$ solveOptimization(selected\_UAV,$\mathcal{D}_w(k)$) \label{line:optimization}}
+					\State \algcolorbox{dmpccolor}{\myindent\myindent\myindent tx\_message $\gets$ TrajectoryMessage($\hat{x}_{i,w}(\tau|k),\hat{u}_{i,w}(\tau|k)$)} 
+				\State \algcolorbox{dmpccolor}{\myindent\myindent\myendif}
+
+			%%%%%%%%%%%%%%%%%%%% MLR %%%%%%%%%%%%%%%%%%%%%
+			\State \algcolorbox{mlrcolor}{\myindent\varendash[0.3\linewidth]\textit{MLR} \varendash[0.49\linewidth]}
+			\State \algcolorbox{mlrcolor}{\myindent\myelif{state $==$ WAIT}   \label{line:mlrbegin}					\Comment{\parbox[t]{.5\linewidth}{Immediately after entering MLR, we do not exactly know which trajectories are unknown.}}} %Hence, we wait one timestep, to compare the information-trackers with the metadata.}}	
+				\State \algcolorbox{mlrcolor}{\myindent\myindent tx\_message $\gets$ EmptyMessage}
+				\State \algcolorbox{mlrcolor}{\myindent\myindent state $\gets$ REQUEST\_TRAJECTORY}
+			\State\algcolorbox{mlrcolor}{\myindent\myelif{state $==$ REQUEST\_TRAJECTORY} \label{line:reqtraj}}
+				\State \algcolorbox{mlrcolor}{\myindent\myindent requested\_UAV $\gets$ selectUAVWithDeprecatedInformationTracker($\mathcal{D}_w(k)$)}
+				\State \algcolorbox{mlrcolor}{\myindent\myindent tx\_message $\gets$ TrajectoryRequestMessage(requested\_UAV)}
+				\State \algcolorbox{mlrcolor}{\myindent\myindent state $\gets$ WAIT\_FOR\_UPDATE}
+			\State\algcolorbox{mlrcolor}{\myindent\myelif{state $==$ WAIT\_FOR\_UPDATE}}
+				\State \algcolorbox{mlrcolor}{\myindent\myindent tx\_message $\gets \emptyset$
+                    \Comment{\parbox[t]{.5\linewidth}{Do not send anything, because requested UAV uses communication resources.}} \label{line:sendnothing}}
+				\State \algcolorbox{mlrcolor}{\myindent\myindent state $\gets$ REQUEST\_TRAJECTORY}
+			\State \algcolorbox{mlrcolor}{\myindent\myendif{}		 \label{line:mlrend}}	\label{line:computationphase:end}
+
+			%%%%%%%%%%%%%%%%%%%% Communication %%%%%%%%%%%%%%%%%%%%%
+			\State \algcolorbox{communicationcolor}{\myindent\varendash[0.3\linewidth]\textit{Communication Phase} \varendash[0.3\linewidth]} \label{line:communicationphase:begin}
+			\State \algcolorbox{communicationcolor}{\myindent tx\_message $\gets$ \{tx\_message, calcPrio($D_w(k)$)\} \textbf{if} tx\_message $!=$ $\emptyset$ \label{line:calcprio}}
+			\State \algcolorbox{communicationcolor}{\myindent UAV\_messages, cu\_messages = wirelessBusRound(tx\_message) \label{line:mixerround}}
+			\State  \algcolorbox{communicationcolor}{\myindent$k\gets k+1$} \label{line:communicationphase:end}
+		\State \algcolorbox{white}{\myendwhile}
+	\end{algorithmic}
+\end{algorithm*}
+
+
+
+
+\begin{algorithm*}[t]
+	\caption{Algorithm that updates the trajectory information-trackers of the MLR-DMPC.}\label{alg:processmessages}
+	\fontsize{9pt}{9pt}\selectfont
+	\begin{algorithmic}[1]
+		\Procedure{updateInformationTrackers}{UAV\_messages, cu\_messages, $\mathcal{D}_w(k-1)$}
+		\State $\forall \mathcal{D}\uli{iw}(k-1)\in \mathcal{D}_w(k-1):$ ~ $\mathcal{\tilde{D}}\uli{iw}(k) \gets \mathcal{D}\uli{iw}(k-1)$ \label{lst:line:metadatacompbegin}
+		\For{($i$, message) $\in$ enumerate(UAV\_messages)} \Comment{\parbox[t]{.3\linewidth}{Which trajectories received in the last round}}
+		\For{trajectory $\in\mathcal{\tilde{D}}\uli{iw}(k)$}
+		\If{trajectory.metadata $==$ message.metadata}
+		\State $\mathcal{\tilde{D}}\uli{iw}(k) \gets \{\text{trajectory}\}$ \label{lst:line:update}
+		\State setInformationTrackerUpToDate($i$)
+		\State \textbf{break}
+		\EndIf
+		\EndFor
+		\EndFor \label{lst:line:metadatacompend}
+		\If{$\exists i\in\mathcal{A}$ s.t. $|\mathcal{\tilde{D}}\uli{iw}(k)| > 1$}
+		\State setAllInformationTrackersDeprecated() \label{lst:line:deprecatedone}
+		\EndIf
+		\State \label{lst:line:updateinformationtrackerbegin}
+		\State $\mathcal{D}\uli{iw}(k) \gets \mathcal{\tilde{D}}\uli{iw}(k)$
+		\If{\textbf{not} length(cu\_messages) == $M$}
+		\State setAllInformationTrackersDeprecated() \label{lst:line:deprecatedtwo}
+		\EndIf
+		\For{(message, $i$) $\in$ enumerate(cu\_messages)}
+		\If{type(message) \textbf{is} TrajectoryMessage}
+		\State $\mathcal{D}\uli{iw}(k) \gets \mathcal{D}\uli{iw}(k) \cup$\{message\} \label{lst:line:setnewtraj}
+		\EndIf
+		\EndFor \label{lst:line:updateinformationtrackerend}
+		\State \Return $\{\mathcal{D}\uli{iw}(k)|\forall i\in\mathcal{A}\}$
+		\EndProcedure
+	\end{algorithmic}
+\end{algorithm*}
+
+% \myswarm{} computes trajectories using a DMPC~\citep{Luis2019,Luis2020,Park2022,Park2023,Chen2022,Chen2023,van2017distributed,Graefe2022}. 
+% The fundamental idea is to generate reference trajectories by solving optimization problems at each round on multiple devices (e.g., on the UAVs~\citep{Luis2019,Luis2020,Park2022,Park2023,Chen2022,Chen2023,van2017distributed}, or on  CUs~\citep{Graefe2022}) and sharing the results among them.
+% However, existing approaches are not robust against message loss.
+% By contrast, \myswarm{} uses MLR-DMPC, a novel approach combining an MLR-module with constraints in the DMPC to handle message loss.
+
+Using MLR-DMPC, the CUs concurrently calculate the trajectories $\hat{u}\uli{i,w}$ for the UAVs. 
+Building upon the brief overview presented in Section~\ref{sec:method:mldrmpc}, we now present its details step by step going through Algorithm~\ref{alg:mlrdmpc}.
+
+Each CU alternates between computation (Lines~\ref{line:computationphase:begin}--\ref{line:computationphase:end}) and communication phases (Lines~\ref{line:communicationphase:begin}--\ref{line:communicationphase:end}), with a state machine scheduling operations during computation.
+
+A key component of the computation phase is the information tracker $\mathcal{D}\uli{iw}(k)$, which CU $w$ uses to store trajectory candidates for UAV $i \in \mathcal{A}$ at time $k$, considering one trajectory as currently followed by the UAV.
+\reviewerthree{We mark trajectories saved in these trackers with a tilde symbol, e.g., $\tilde{x}$. 
+For simplicity and brevity, we abuse the ``element of $\mathcal{D}$'' notation for states, inputs, and positions ambiguously, i.e., we note $\tilde{u}\in \mathcal{D}\uli{iw}(k), \tilde{x}\in \mathcal{D}\uli{iw}(k), \tilde{p} \in \mathcal{D}\uli{iw}(k)$, although $\tilde{u}$, $ \tilde{x}$ and $\tilde{p}$ are of different types and dimensions.}
+Due to the delay $T$ between rounds, each trajectory in $\mathcal{D}\uli{iw}(k)$ begins at $k - 1$, e.g., $\tilde{u}_i(\cdot\,|\,k - 1) \in \mathcal{D}\uli{iw}(k)$.
+
+At the start of each computation phase, the CU updates its information trackers (Line~\ref{line:updateinformation-tracker}) using messages from the previous communication phase (Line~\ref{line:mixerround}). 
+If it detects critical message loss, it marks the affected trackers as deprecated, indicating they may not contain the UAV's actual trajectory (details in Section~\ref{sec:mlrdmpc:algorithm:informationtracker}).
+
+If all information trackers are up-to-date, the CU executes a DMPC step: selecting a UAV $i$ using the event trigger (Lines~\ref{line:prio} and~\ref{line:et}; Section~\ref{sec:mlrdmpc:algorithm:eventtrigger}) and solving an optimization problem (Line~\ref{line:optimization}) to compute the new reference trajectory $\hat{x}\uli{i,w}(\tau\,|\,k)$ and $\hat{u}\uli{i,w}(\tau\,|\,k)$.
+The optimization problem uses the information trackers to formulate anti-collision constraints (details in Section~\ref{sec:mlrdmpc:algorithm:opt}).
+
+If any information tracker is deprecated, the CU initiates MLR (Lines~\ref{line:mlrbegin}--\ref{line:mlrend}) by requesting a missing trajectory from a UAV (Line~\ref{line:reqtraj}). 
+In the next round, the UAV transmits its current reference trajectory, using the communication resources typically reserved for the CU because its own are occupied with state information and target position. Accordingly, the CU refrains from transmitting during this round to free communication resources for the UAV (Line~\ref{line:sendnothing}).
+
+At the end of each step, during the communication phase, the CU broadcasts a message containing the MLR-DMPC results and the computed UAV priorities for the next round's event trigger to all other CUs and UAVs (Line~\ref{line:mixerround}), unless it has donated its communication resources to a UAV.
+
+
+\subsubsection{Information-Tracker Updates}
+\label{sec:mlrdmpc:algorithm:informationtracker}
+
+Algorithm~\ref{alg:processmessages} details how each CU updates its information trackers. 
+It first extracts the UAVs' current reference trajectories from the received messages. 
+Each UAV's message includes unique metadata, specifically, the calculation time and the responsible CU, about its current reference trajectory. 
+The CU compares this metadata with that in its information trackers; if they match, it retains the trajectory as the one the UAV is following (Line~\ref{lst:line:update}).
+
+If no new trajectory was planned for a UAV in the previous round, the stored trajectory is the current one. 
+However, if a CU did plan a new trajectory, the UAV may be following either the new trajectory (if it received it) or the old one (if it missed the message). 
+The CU therefore retains both trajectories in the information tracker (Line~\ref{lst:line:setnewtraj}).
+
+With this information, the CU checks for critical message loss. 
+If it received fewer CU messages than the total number of CUs, it might lack the actual trajectory of an unknown UAV, so it marks all information trackers as deprecated (Line~\ref{lst:line:deprecatedtwo}). 
+If the CU did not receive a required message from a UAV with necessary metadata to determine which trajectory the UAV followed, it marks that UAV's information tracker as deprecated (Line~\ref{lst:line:deprecatedone}).
+
+
+\subsubsection{Event-Trigger}
+\label{sec:mlrdmpc:algorithm:eventtrigger}
+
+The event-trigger aims to assign $M$ of the $N$ UAVs to the CUs in a distributed manner, avoiding a single point of failure, using priorities similar to~\cite{PredictiveTriggering, Graefe2022}.
+
+At each round $k-1$, each CU $w$ calculates a priority $J\uli{i,w}(k-1)$ for every UAV $i$ (see Algorithm~\ref{alg:mlrdmpc}, Line~\ref{line:calcprio}).
+Appendix~\ref{app:et} outlines three triggers with their priority calculation: round-robin (RR) selecting UAVs periodically; distance-based (DB) selecting UAVs farthest from their targets; and a hybrid trigger (HT) combining RR and DB, selecting UAVs based on both their distance to targets and time since last assigned to a CU.
+
+Message loss (e.g., missed target positions) can cause discrepancies among CUs, leading them to compute different priorities for the same UAVs. To address this, CUs employ a consensus algorithm. During communication, they share their computed priorities.
+CUs unify them by taking the maximum across all CUs:
+\begin{equation}
+\label{eq:priosmax}
+J\uli{i}(k) = \max_{w} J\uli{i,w}(k-1).
+\end{equation}
+They sort the UAVs based on these unified priorities and store the top $M$ UAVs in the set $\mathcal{A}_{\mathrm{ET}}(k)$. 
+Since all active CUs receive the same priority information, they compute the same set $\mathcal{A}_{\mathrm{ET}}(k)$.
+
+Each CU $w$ selects the UAV at position $((k + w) \bmod M)$ in $\mathcal{A}_{\mathrm{ET}}(k)$\footnote{The modulo operation ensures each priority rank is selected, even when a CU misses multiple messages.}. 
+The set of UAVs for which new trajectories are computed is denoted by $\tilde{\mathcal{A}}_{\mathrm{ET}}(k) \subseteq \mathcal{A}_{\mathrm{ET}}(k)$, since some CUs may be in MLR mode and not compute a new trajectory.
+
+
+\subsubsection{Trajectory Calculation}
+\label{sec:mlrdmpc:algorithm:opt}
+
+\reviewerthree{The trajectory computed by CU $w$ for UAV $i$ has a piecewise-constant input with sampling time $T\ul{s}$ and horizon $h\ul{s}$.
+The constant input from time $T\ul{s}\kappa$ till $T\ul{s}(\kappa+1)$ for $\kappa\in\{0,...,h\ul{s}-1\}$ is denoted as $u\uli{i,w, \kappa|k}$.
+Formally, the trajectory of the system is
+\begin{equation}
+    \hat{u}\uli{i,w}(\tau+T|k) = \sum_{\kappa=0}^{h\ul{s}-1}\Gamma\ul{T\ul{s}}(\tau-\kappa T\ul{s})u\uli{i,w, \kappa|k},
+\end{equation}
+where $\Gamma\ul{T\ul{s}}(t) = 1$ if $0 \leq t \leq T\ul{s}$ and $\Gamma\ul{T\ul{s}}(t) = 0$ otherwise~\citep{Graefe2022}. 
+Hence, $\Gamma\ul{T\ul{s}}(\tau-\kappa T\ul{s})u\uli{i,w, \kappa|k}=u\uli{i,w, \kappa|k}$, between $T\ul{s}\kappa$ till $T\ul{s}(\kappa+1)$, and it is zero otherwise.
+We require $\tfrac{T}{T\ul{s}} = \tfrac{h\ul{s}}{H}$, where $H \in \mathbb{N}$ is the prediction horizon, so the prediction extends to time $kT + HT + T$. 
+An offset of $T$ accounts for the latency of one round.
+}
+
+\reviewerthree{
+The CU aims to determine this input trajectory by minimizing the quadratic distance between the state trajectory and its target, scaled by positive definite matrices $Q\uli{i}$ and $R\uli{i}$. 
+This trajectory is constrained by the nominal UAV model $\hat{f}_i$ (Assumption~\ref{as:tracking}). 
+The initial state $\tilde{x}\uli{i}(2T|k-1)$ is the sole entry in $\mathcal{D}_{i,w}(k)$ (cf.\ Algorithm~\ref{alg:mlrdmpc}, Line~\ref{lst:line:onlyoneentrance}). 
+Both the input and state are confined to $\hat{\mathcal{U}}$ and $\hat{\mathcal{X}}$, respectively, thereby restricting the movement area of the UAV.
+Through an equality constraint, the CU ensures that the UAV halts at the end of the computed trajectory, thereby guaranteeing recursive feasibility of the optimization problem~\citep{Graefe2022,Park2022,Chen2022,Chen2023}. Lastly, to ensure collision-free trajectories, the CU imposes time-varying BVC constraints described below.
+
+In summary, the CU solves:
+
+% The CU obtains this trajectory by solving:
+\begin{subequations}
+	\label{eq:opt}
+	\begin{align}
+		\label{eq:objectfunc}
+		\min_{\hat{u}\uli{i,w, \cdot|k} }\sum_{\kappa=0}^{h\ul{o}}\big[&||\hat{x}\uli{i,w}(\kappa T\ul{o}+T|k)-\hat{x}\uli{i, \mathrm{target}}||_{Q\uli{i}}^2\nonumber\\
+		& + ||\hat{u}\uli{i,w}(\kappa T\ul{o}+T|k)||_{R\uli{i}}^2\big]
+	\end{align}
+	\begin{align}
+		\label{eq:dynconst}
+		\text{s.t.~} & \dot{\hat{x}}\uli{i,w}(t|k) = \hat{f}\uli{i}(\hat{x}\uli{i,w}(t|k), \hat{u}\uli{i,w}(t|k))\\
+		&\hat{x}\uli{i,w}(T|k)=\tilde{x}\uli{i}(2T|k-1)\nonumber
+	\end{align}
+	\begin{equation}
+		\label{eq:inputconst}
+		% u\uli{i, \mathrm{min}} \leq \hat{u}\uli{i,k, \ell|k} \leq u\uli{i, \mathrm{max}}, \forall\ell\in\left\{0,...,h\ul{s}-1\right\}
+            \hat{u}\uli{i,w, \ell|k} \in \hat{\mathcal{U}} ~\forall\ell\in\left\{0,...,h\ul{s}-1\right\}
+	\end{equation}
+	\begin{equation}
+		\label{eq:stateconst}
+		\hat{x}\uli{i,w}(\kappa T\ul{b} + T|k)\in\hat{\mathcal{X}}~
+		\forall\kappa\in \{0,...,h\ul{b}\}
+	\end{equation}
+	\begin{equation}
+		\label{eq:feascond}
+		0 = \hat{f}\uli{i}(\hat{x}\uli{i,w}(HT+T|k), 0)
+	\end{equation}
+
+	\begin{align}
+		\forall  j&\in\mathcal{A}\backslash\{i\}:\label{eq:anticollisionconst}\\
+		&A\uli{i, j, \mathrm{c}}\begin{bmatrix}
+			\hat{p}\uli{i,w}(T|k)\\
+			\hat{p}\uli{i,w}(T+T\ul{c}|k)\\
+			\vdots\\
+			\hat{p}\uli{i,w}(T+h\ul{c}T\ul{c}|k)
+		\end{bmatrix} \leq b\uli{i, j, \mathrm{c}}(\mathcal{D}_{j,w}(k))\nonumber
+	\end{align}
+\end{subequations}
+\noindent
+where $\hat{x}\uli{i, \mathrm{target}}$ satisfies $p\uli{i, \mathrm{target}} = \hat{g}\uli{\mathrm{p}, i}(\hat{x}\uli{i, \mathrm{target}})$. 
+}
+% The objective function and constraints have different sampling times $T\ul{o}$, $T\ul{b}$, and $T\ul{c}$ with $\tfrac{T}{T\ul{o}} = \tfrac{h\ul{o}}{H}$, $\tfrac{T}{T\ul{b}} = \tfrac{h\ul{b}}{H}$, and $\tfrac{T}{T\ul{c}} = \tfrac{h\ul{c}}{H} \in \mathbb{N}$ to allow for an independent adjustment of their resolution~\citep{Graefe2022}.
+
+% The CU aims to determine a trajectory that minimizes the quadratic distance between the trajectory and its target, scaled by $Q\uli{i}$ and $R\uli{i}$. The trajectory is constrained by the nominal UAV model $\hat{f}_i$ (Assumption~\ref{as:tracking}). 
+% The initial state is the sole entry in $\mathcal{D}_{i,w}(k)$, $\tilde{x}\uli{i}(2T|k-1)$ (cf.\ Algorithm~\ref{alg:mlrdmpc}, Line~\ref{lst:line:onlyoneentrance}). 
+% The input and state are limited to $\hat{\mathcal{U}}$ and $\hat{\mathcal{X}}$, respectively, restricting the UAV's movement area. Equation~(\ref{eq:feascond}) ensures the UAV stops at the end of the computed trajectory, guaranteeing recursive feasibility of the optimization problem~\citep{Graefe2022,Park2022,Chen2022,Chen2023}.
+
+Constraint (\ref{eq:anticollisionconst}) prevents collisions between the UAVs.
+The matrices $A\uli{i, j, \mathrm{c}}$ and $b\uli{i, j, \mathrm{c}}$ are constructed using time-variant BVC~\citep{Graefe2022,van2017distributed,Chen2022,Chen2023}. 
+However, we relax the constraints in case a UAV is not recomputed.
+The collision avoidance constraints are computed between the UAV $i$ and every other UAV $j\in\mathcal{A}\backslash\{i\}$.
+The CU uses the reference positions $\hat{p}\uli{i}(\cdot|k-1)$ that UAV $i$ is currently following (known because $\mathcal{D}_{i,w}(k)$ contains only one element, cf. Alg.~\ref{alg:mlrdmpc} Line~\ref{lst:line:onlyoneentrance}) and all trajectories $\tilde{p}\uli{j}(\cdot|k-1)\in\mathcal{D}_j(k)$ in the information-tracker for the other UAV $j$.
+Thus, the CU constrains the position of UAV $i$ based on all trajectories which it guesses UAV $j$ might fly.
+First, we define the difference vector 
+\begin{align}
+	&n\uli{ij}(hT\ul{c}+2T|k-1)\\
+	&= \Theta^{-1}[\tilde{p}\uli{j}(hT\ul{c}+2T|k-1)-\hat{p}\uli{i}(hT\ul{c}+2T|k-1)],\nonumber
+\end{align}
+which is the normal vector of a plane spanned between the UAVs.
+UAV $i$ is constrained to stay on its side of the plane
+\begin{align}
+	\label{eq:tvb}
+	&n\uli{\mathrm{0}, ij}(hT\ul{c}+2T|k-1)^T\Theta^{-1}\\
+	&\opindent\times[\tilde{p}\uli{j}(hT\ul{c}+2T|k-1)-\hat{p}\uli{i,w}(hT\ul{c}+T|k)]\nonumber \\
+	&\geq \begin{cases}
+		\parbox[c]{.55\linewidth}{$\frac{1}{2}(\hat{d}\ul{min}$\\ \hphantom{A}+ $||n\uli{ij}(hT\ul{c}+2T|k-1)||\ul{2})$} & \parbox[c]{.28\linewidth}{if $j\in\mathcal{A}\ul{ET}(k)$}\\
+		\hat{d}\ul{min} & \text{else}
+	\end{cases} \nonumber
+\end{align}
+with $n\uli{\mathrm{0}, ij}=n\uli{ij} / ||n\uli{ij}||\ul{2}$ and $\hat{d}\ul{min}$ as the minimum distance between UAVs' reference positions with some safety gap to $d\ul{min}$ (cf. Section~\ref{sec:mdethod:collisionavoidance}).
+If UAV $j\in\mathcal{A}\ul{ET}(k)$, we span the plane midway between it and UAV $i$. Else, relaxing the constraints, we move this plane close to $j$, because $j$ remains on its old trajectory.
+
+In this work, we assume a UAV flying space devoid of static obstacles, such as buildings. However, incorporating such obstacles into MLR-DMPC is straightforward using established methods from other DMPCs~\citep{Park2022,Park2023,Chen2023}.
+
+
+\subsection{Theoretical Analysis}
+Our theoretical analysis of \myswarm{} is based on the system model derived under Assumption~\ref{as:tracking}. We first analyze the information trackers $\mathcal{D}$, then demonstrate that the reference trajectories $\hat{p}$ are collision-free, and finally prove the same for the actual positions $p$.
+
+\subsubsection{Content of the Information Trackers}
+
+We present two properties of the information trackers~$\mathcal{D}\uli{iw}(k)$, which follow directly from the construction of Algorithm~\ref{alg:processmessages} and are proven in Appendix~\ref{app:proofs}.
+\begin{lemma}
+    \label{col:information-tracker}
+    If the information-tracker  $\mathcal{D}\ul{iw}(k)$ is not deprecated, then it contains
+    the true trajectory $\hat{p}\uli{i}$, the UAV $i$ is following. 
+\end{lemma}
+
+\begin{lemma}
+    \label{col:information-trackerequal}
+    If after executing Algorithm~\ref{alg:processmessages} the two information-trackers $\mathcal{D}\ul{iw}(k)$ and $\mathcal{D}\ul{iv}(k)$ are not deprecated for different $w, v$, then $\mathcal{D}\ul{iw}(k) = \mathcal{D}\ul{iv}(k)$.
+\end{lemma}
+
+The CUs hence perform the DMPC step with the same information, which is crucial for guaranteeing collision avoidance.
+We thus write $\mathcal{D}\ul{iw}(k) = \mathcal{D}\ul{iv}(k) = \mathcal{D}\ul{i}(k)$ when a CU is not deprecated.
+In the following, we treat $\mathcal{D}\ul{i}(k)$ as the global knowledge shared by all CUs executing the DMPC. 
+\reviewerone{This simplifies the notation for subsequent derivations.}
+
+When all CUs are in the MLR state, we consider $\mathcal{D}\ul{i}(k)$ as the information tracker of a virtual CU that does not compute new trajectories but listens to all messages without message loss. 
+Since no new trajectories are recomputed in this case, the information tracker remains unchanged.
+
+\begin{figure*}[h]
+    \centering
+    \includegraphics[width=0.9\textwidth]{Images/HardwareImplementationV2.pdf}
+
+	\caption{Hardware Implementation of \myswarm{}.
+    \capt{Sixteen Crazyflie~2.1 quadcopters operate in a space of $3.4\SI{}{\meter}\times3.4\SI{}{\meter}\times2.6\SI{}{\meter}$. Three laptops serving as CUs compute trajectories using MLR-DMPC. The quadcopters and CUs communicate over a wireless mesh network with at least two hops using the Mixer protocol.
+	}}
+    \label{fig:hardwareimplementation}
+\end{figure*}
+
+\subsubsection{Collision Avoidance of MLR-DMPC}
+\label{sec:mdethod:collisionavoidance}
+The reference trajectories under constraints (\ref{eq:anticollisionconst}) are collision free as Appendix~\ref{app:proofs} proves.
+\begin{corollary}
+\label{cor:anitcol}
+	If $i,j\in\mathcal{\tilde{A}}\ul{ET}(k)$ and constraint~(\ref{eq:anticollisionconst}) is fulfilled for both $i$ and $j$ on CUs $w$ and $v$, then for all $h\in\{1, 2,\cdots, h_\mathrm{c}\}$ %for all $\tilde{p}\uli{j}\in\mathcal{D}\ul{j}(k)$
+	\begin{equation}
+		||\Theta^{-1}[\hat{p}\uli{j,v}(hT\ul{c}+T|k)-\hat{p}\uli{i,w}(hT\ul{c}+T|k)]||\ul{2} \geq \hat{d}\ul{min}.
+	\end{equation}
+\end{corollary}
+
+\begin{lemma}
+	\label{lem:anticolone}
+	If $i\in\mathcal{\tilde{A}}\ul{ET}(k)$, $j\notin\mathcal{\tilde{A}}\ul{ET}(k)$ and constraint~(\ref{eq:anticollisionconst}) is fulfilled, then for all $\tilde{p}\uli{j}\in\mathcal{D}\ul{j}(k+1)$ and for all $h\in\{1, 2,\cdots, h_\mathrm{c}\}$
+	\begin{equation}
+		||\Theta^{-1}[\tilde{p}\uli{j}(hT\ul{c}+T|k)-\hat{p}\uli{i,w}(hT\ul{c}+T|k)]||\ul{2} \geq \hat{d}\ul{min}.
+	\end{equation}
+\end{lemma}
+
+\begin{lemma}
+	\label{lem:anticoltwo}
+	If for all $i\notin\mathcal{\tilde{A}}\ul{ET}(k)$, $j\notin\mathcal{\tilde{A}}\ul{ET}(k)$, for all $\tilde{p}\uli{j}\in\mathcal{D}\ul{j}(k)$ and $\tilde{p}\uli{i}\in\mathcal{D}\ul{j}(k)$ and for all $h\in\{1, 2,\cdots, h_\mathrm{c}\}$
+	\begin{align}
+		||\Theta^{-1}[\tilde{p}\uli{j}(hT\ul{c}+T|k-1)&-\tilde{p}\uli{i}(hT\ul{c}+T|k-1)]||\ul{2}\nonumber \\
+		&\geq \hat{d}\ul{min},
+	\end{align}
+	then for all $\tilde{p}\uli{j}\in\mathcal{D}\ul{j}(k+1)$ and $\tilde{p}\uli{i}\in\mathcal{D}\ul{i}(k+1)$ and for all $h\in\{1, 2,\cdots, h_\mathrm{c}\}$
+	\begin{equation}
+		||\Theta^{-1}[\tilde{p}\uli{j}(hT\ul{c}|k)-\tilde{p}\uli{i}(hT\ul{c}|k)]||\ul{2} \geq \hat{d}\ul{min}.
+	\end{equation}
+\end{lemma}
+
+We now can prove collision avoidance of all reference trajectories at discrete timepoints.
+
+\begin{theorem}
+	\label{th:feas}
+	If for all pairwise different $i, j\in\mathcal{A}$, $\forall \tilde{p}\uli{i}\in\mathcal{D}\uli{i}(k)$, $\forall \tilde{p}\uli{j}\in\mathcal{D}\uli{j}(k)$ and $\forall h\in\{0, 1,\cdots, h_\mathrm{c}-1\}$
+	\begin{align}
+		\label{eq:recfeascond}
+		||\Theta^{-1}[\tilde{p}\uli{j}(hT\ul{c}+2T|k-1)&-\tilde{p}\uli{i}(hT\ul{c}+2T|k-1)]||\ul{2}\nonumber\\ 
+		&\geq \hat{d}\ul{min},
+	\end{align}
+	and all $\tilde{x}\uli{i}\in\mathcal{D}\uli{i}(k)$ satisfy constraints~(\ref{eq:dynconst})--(\ref{eq:feascond}), then the optimization problems (\ref{eq:opt}) are feasible for arbitrary message loss.
+	Additionally, for all pairwise different $i, j\in\mathcal{A}(k-1)$, $\forall \tilde{p}\uli{i}\in\mathcal{D}\uli{i}(k+1)$, $\forall \tilde{p}\uli{j}\in\mathcal{D}\uli{j}(k+1)$ and for all $h\in\{1, 2,\cdots, h_\mathrm{c}\}$
+	\begin{equation}
+		\label{eq:colfree}
+		||\Theta^{-1}[\tilde{p}\uli{j}(hT\ul{c}+T|k)-\tilde{p}\uli{i}(hT\ul{c}+T|k)]||\ul{2} \geq \hat{d}\ul{min}
+	\end{equation}
+    and all $\tilde{p}\uli{i}$ also fulfill constraints~(\ref{eq:dynconst})--(\ref{eq:stateconst}).
+\end{theorem}
+\begin{proof}
+	We split the UAVs into two sets. 
+	The first set contains all UAVs that were not recomputed, and the second the UAVs that were recomputed. 
+	For the first set, we know that the shifted trajectories $\tilde{x}\uli{i}(t+T|k)=\tilde{x}\uli{i}(t+2T|k-1)$ fulfill the constraints~(\ref{eq:dynconst})--(\ref{eq:stateconst}) for all $t<(H-1)T$, as $T$ is a multiple of the sampling times $T\ul{s}$ and $T\ul{b}$~\citep{Graefe2022}. 
+	For $t\geq(H-1)T$, it is $\tilde{x}\uli{i}(t+T|k)=\tilde{x}\uli{i}((H-1)T+T|k)=\tilde{x}\uli{i}((H-1)T+2T|k-1)$ and thus also~(\ref{eq:dynconst})--(\ref{eq:stateconst}) and~(\ref{eq:feascond}) are fulfilled. 
+	
+	For the UAVs that are recomputed, with the same argumentation, we can show that the shifted trajectory $\bar{x}\uli{i}(t+T|k)=\tilde{x}\uli{i}(t+2T|k-1)$ fulfills constraints~(\ref{eq:dynconst})--(\ref{eq:stateconst}).
+    Also it holds that for all $j\in\mathcal{A}\backslash\{i\}$ and all $\tilde{p}_j\in\mathcal{D}_j(k)$
+
+    \begin{align}
+		n&\uli{\mathrm{0}, ij}(hT\ul{c}+2T|k-1)^T\Theta^{-1}\nonumber\\&\opindent\times[\tilde{p}\uli{j}(hT\ul{c}+2T|k-1)-\bar{p}\uli{i}(hT\ul{c}+T|k)]\nonumber\\
+		&=n\uli{\mathrm{0}, ij}(hT\ul{c}+2T|k-1)^T\Theta^{-1}\nonumber\\&\opindent\times[\tilde{p}\uli{j}(hT\ul{c}+2T|k-1)-\tilde{p}\uli{i}(hT\ul{c}+2T|k-1)]\nonumber\\
+		&=||\Theta^{-1}[\tilde{p}\uli{j}(hT\ul{c}+2T|k-1)\nonumber\\
+		&\opindent-\bar{p}\uli{i}(hT\ul{c}+2T|k-1)]||\ul{2}\nonumber\\
+		&\geq\frac{1}{2}(\hat{d}\ul{min}  + ||n\uli{ij}(hT\ul{c}+2T|k-1)||\ul{2}) \nonumber\\
+		&\geq \hat{d}\ul{min}.
+    \end{align}
+    Hence, $\bar{x}$ also fulfills constraint~(\ref{eq:anticollisionconst}) and is a candidate solution optimization problem~(\ref{eq:opt}).
+    The optimization problem is thus feasible.
+    
+    Algorithm~\ref{alg:processmessages} then incorporates the solutions the CUs computed into the information-trackers of every CU after a communication step. 
+    First, it deletes some trajectories in the information-trackers (Lines~\ref{lst:line:metadatacompbegin}--\ref{lst:line:metadatacompend}). 
+    Because the remaining trajectories were already in the former information-tracker for CUs not in the MLR-state (no deprecated information-tracker), they fulfill the constraints~(\ref{eq:dynconst})--(\ref{eq:feascond}) as argued above. 
+    In Lines~\ref{lst:line:updateinformationtrackerbegin}--\ref{lst:line:updateinformationtrackerend}, the algorithm adds new trajectories to the information-tracker, resulting in the information-trackers $\mathcal{D}_i(k+1), \forall~i\in\mathcal{A}$ stored on the CUs with non-deprecated information-trackers.
+    These also fulfill constraints~(\ref{eq:dynconst})--(\ref{eq:anticollisionconst}) as they are solutions to the corresponding optimization problem.
+
+    Corollary~\ref{cor:anitcol}, Lemma~\ref{lem:anticolone} and~\ref{lem:anticoltwo} then lead to equation (\ref{eq:colfree}).
+\end{proof}
+
+From this, we can derive that the UAVs also fly on collision-free trajectories.
+
+\begin{theorem}
+	\label{th:collisionfreeness}
+	If the reference trajectories of all UAVs fulfill~(\ref{eq:dynconst})--(\ref{eq:feascond}) at $k=0$ and Equation (\ref{eq:recfeascond}), then for all $k$, arbitrary message loss, all pairwise different $i, j\in\mathcal{A}$ and and for all $h\in\{0, 1,\cdots, h_\mathrm{c}-1\}$
+	\begin{equation}
+		||\Theta^{-1}[\hat{p}\uli{j}(hT\ul{c}+kT)-\hat{p}\uli{i}(hT\ul{c}+kT)]||_2 \geq \hat{d}_\mathrm{min}.
+	\end{equation}
+\end{theorem}
+\begin{proof}
+First, we apply induction to Theorem~\ref{th:feas}, which is possible as the non-deprecated information-trackers are all equal to $\mathcal{D}_{i}$ due to Lemma~\ref{col:information-trackerequal}, and $T$ is a multiple of $T_\mathrm{c}$~\citep{Graefe2022}.
+Thus, for pairwise different $i, j\in\mathcal{A}$, the information-tracker $\mathcal{D}_{i}$ contains trajectories, which are collision-free to all other trajectories in the information-tracker $\mathcal{D}_{j}$. 
+Because of Lemma~\ref{col:information-tracker}, each UAV follows one trajectory in the information-tracker, and its reference positions are collision-free.
+\end{proof}
+
+Based on Assumption~\ref{as:tracking}, we now derive guarantees for the actual UAV positions at continuous times $t$.
+
+\begin{theorem}
+\label{th:colfreerealworld}
+    Let
+        \begin{align}
+        \label{eq:contopt}
+            \Delta d_\mathrm{min,cont}&=\hat{d}_\mathrm{min}\\&-\min_{\substack{\hat{x}_{0, i},\hat{x}_{0, j}\in\hat{\mathcal{X}}\\ \tau\in[0,T_\mathrm{c}]\\\hat{u}_i(t), \hat{u}_j(t)\in\hat{\mathcal{U}}}}||\Theta^{-1}(\hat{p}_i(\tau)-\hat{p}_j(\tau))||_2\nonumber\\
+        \text{s.t.~~} \dot{x}_i&=\hat{f}_i(\hat{x}_i(t), \hat{u}_i(t)), \hat{x}_i(0)=\hat{x}_{0,i}\nonumber\\
+        \dot{x}_j&=\hat{f}_i(\hat{x}_j(t), \hat{u}_j(t)), \hat{x}_j(0)=\hat{x}_{0,j}\nonumber\\
+        \hat{p}_i(t) &= g_i(\hat{x}_i(t))\nonumber\\
+        \hat{p}_j(t) &= g_i(\hat{x}_j(t))\nonumber\\
+        ||\Theta^{-1}(\hat{p}_i(0)&-\hat{p}_j(0))||_2 \geq \hat {d}_\mathrm{min}\nonumber\\
+        ||\Theta^{-1}(\hat{p}_i(T_\mathrm{c})&-\hat{p}_j(T_\mathrm{c}))||_2 \geq \hat {d}_\mathrm{min}.\nonumber\\
+        \end{align}
+    If
+    \begin{equation}
+        \hat{d}_\mathrm{min} \geq d_\mathrm{min} + \Delta d_\mathrm{min} + \hat{d}_\mathrm{min,cont},
+    \end{equation}
+    then Equation (\ref{eq:truecollisionavoidance}) holds, i.e., the UAVs are collision free.
+\end{theorem}
+
+\begin{proof}
+    Follows directly from Assumption (\ref{eq:truecollisionavoidance}), construction of $\Delta d_\mathrm{min,cont}$ and triangle inequality.
+\end{proof}
+
+For collision avoidance guarantees, $\Delta d_\mathrm{min}$ and $\Delta d_\mathrm{min,cont}$ must be known. 
+Solving optimization problem~(\ref{eq:contopt}) directly yields $\Delta d_\mathrm{min,cont}$, while $\Delta d_\mathrm{min}$ must be determined through experiments or engineering intuition.
+
+\begin{remark}
+Under strong external disturbances like gusts, Assumption~\ref{as:tracking} may not hold. 
+If a UAV's state deviates significantly from the reference, we reinitialize its current state and assign a high priority $J\uli{i}$ to ensure replanning~\citep{Luis2020}. 
+However, under these conditions, the guarantees of MLR-DMPC do not hold, as such disturbances may lead the UAV onto a collision course.
+\end{remark}
+
+\reviewerone{
+\begin{remark}
+Theorem~\ref{th:colfreerealworld} requires collision-free initial trajectories. 
+In practice, UAVs typically start their flight by hovering while maintaining a safe distance from one another. 
+Therefore, the initial trajectories can often be initialized as this constant hovering state.
+\end{remark}
+}

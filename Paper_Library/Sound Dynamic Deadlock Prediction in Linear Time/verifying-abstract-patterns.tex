@@ -1,0 +1,163 @@
+%!TEX root = main.tex
+
+\subsection{Verifying Abstract Deadlock Patterns}
+\seclabel{verify-abstract-patterns}
+
+\myparagraph{Abstract acquires and abstract deadlock patterns}{
+Given a thread $t$, a lock $\lk$ and a set of locks 
+$L\subseteq \locks{\tr}\neq \emptyset$ with $\lk\not \in L$,
+we define the \emph{abstract acquire} $\eta =\tuple{t, \lk, L, F}$, 
+where $F=\sequence{e_1,\dots, e_n}$ is the sequence of all events
+$e_i\in \events{\tr}$ (in trace-order) such that for each $i$, we have 
+(i)~$\ThreadOf{e_i}=t$,
+(ii)~$\OpOf{e_i} = \acq(\lk)$, and
+(iii)~$\lheld{\tr}(e_i) = L$.
+In words, the abstract acquire $\eta$ contains the sequence of all acquire events 
+%of the same \emph{signature}.
+%\hunkar{
+of a specific thread, that access a specific lock and hold the same set of locks when executed, ordered as per thread order.
+%}
+An \emph{abstract deadlock pattern} of size $k$ in a trace $\tr$ is a sequence
+$
+\abst{D} = \eta_0,\dots,\eta_{k-1}
+$
+of abstract acquires $\eta_i=\tuple{t_i, \lk_i, L_i, F_i}$ such that
+$t_0, \ldots, t_{k-1}$ are distinct threads, 
+$\lk_0,  \ldots, \lk_{k-1}$ are distinct locks,
+and $L_0, L_1, \ldots, L_{k-1} \subseteq \locks{\tr}$ are
+such that $\lk_i \not\in L_i$, $\lk_i \in L_{(i+1)\% k}$ for every $i$,
+and $L_i \cap L_j= \emptyset$ for every $i\neq j$.
+Thus, an abstract deadlock pattern $\abst{D}$ succinctly encodes all 
+concrete deadlock patterns $F_0\times F_1\times \dots \times F_{k-1}$,
+called \emph{instantiations} of $\abst{D}$.
+We also write $D\in \abst{D}$ to denote that 
+$D\in F_0\times F_1\times \dots \times F_{k-1}$.
+We say that $\abst{D}$ contains a sync-preserving deadlock if there 
+exists some instantiation $D\in \abst{D}$ that is a sync-preserving deadlock.
+See \figref{syncp_example} for an example.
+}
+Our next result is stated below, followed by its proof idea.
+\begin{restatable}{lemma}{abstractlineartime}
+\lemlabel{abstract-pattern-linear-time}
+Consider a trace $\tr$ with $\NumEvents$ events and $\NumThreads$ threads, 
+and an abstract deadlock pattern $\abst{D}$ of $\tr$.
+We can determine if $\abst{D}$ contains a sync-preserving deadlock in $O(\NumThreads\cdot \NumEvents)$ time.
+\end{restatable}
+
+%The algorithm for checking if a given abstract pattern
+%$\abst{D}$ contains a sync-preserving deadlock is presented in 
+%\algoref{abstract-pattern}.
+%The algorithm relies on exploiting monotonicity properties
+%enjoyed by sync-preserving deadlocks that allow us to
+%avoid a naive enumeration of all $O(\NumEvents^k)$ instantiations
+%of $\abst{D}$.
+%A detailed description of the algorithm is presented in
+%\appref{verify-abstract-patterns}.
+
+%\hcomment{moved the text from the appendix -- start}
+
+
+An abstract deadlock pattern of length $k \geq 2$ can have $\NumEvents^k$ instantiations,
+giving a naive enumerate-and-check algorithm running 
+in time $O(\NumThreads\cdot\NumEvents^{k+1})$, which is prohibitively large.
+Instead, we exploit 
+(i)~the monotonicity properties of 
+the sync-preserving closure (\propref{spclosure-monotone}) and
+(ii)~instantiations of an abstract pattern (\corref{pattern-monotone}) 
+that allow for an \emph{incremental}
+algorithm that iteratively checks successive instantiations
+of a given abstract deadlock pattern, while spending total $O(\NumEvents\cdot \NumThreads)$ time.
+% , i.e., the running time is linear in $\NumEvents$, which is the dominating parameter.
+The first observation allows us to re-use a prior
+computation when checking later deadlock patterns.
+
+% We first observe that the sync-preserving closure is monotonic
+% with respect to the thread-order, and thus, when computing closure
+% of later events, one can avoid re-computation.
+\begin{restatable}{proposition}{spclosureMonotone}
+	\proplabel{spclosure-monotone}
+	For a trace $\tr$ and sets $S, S' \subseteq \events{\tr}$.
+	If for every event $e \in S$, there is an event $e' \in S'$
+	such that $e \tho{\tr} e'$, then
+	$\SPClosure{\tr}(S) \subseteq \SPClosure{\tr}(S')$.
+\end{restatable}
+
+%\begin{proof}
+%Follows from the definition of $\SPClosure{\tr}(S)$.
+%\end{proof}
+
+%\hunkar{
+Consider $\tr_3$ in~\cref{fig:syncp_example} and let $S=\prev{\tr_3}{(\set{e_{29}, e_{16}})}$, and $S'=\prev{\tr_3}{(\set{e_{29}, e_{19}})}$.
+The sets $S, S'$ satisfy the conditions of~\cref{prop:spclosure-monotone}, hence $\SPClosure{\tr_3}(S) \subseteq \SPClosure{\tr_3}(S')$, as computed in~\cref{ex:syncp-ex}.
+%}
+Next, we extend \propref{spclosure-monotone} to avoid redundant
+computations when a sync-preserving deadlock is not found and later deadlock patterns must be checked.
+Given two deadlock patterns
+$D_1 = e_0, \ldots, e_{k-1}$ and $D_2 = f_0, \ldots, f_{k-1}$
+of the same length $k$, 
+we say $D_1 \prec D_2$ if
+they are instantiations of a common abstract pattern $\abst{D}$
+(i.e., $D_1, D_2 \in \abst{D}$) and 
+for every $i<k$, $e_i \tho{\tr} f_i$.
+\begin{restatable}{corollary}{pattern-monotone}
+	\corlabel{pattern-monotone}
+	Let $\tr$ be a trace and let $D_1 = e_0, \ldots, e_{k-1}$ and 
+	$D_2 = f_0, \ldots f_{k-1}$ be deadlock
+	patterns of size $k$ in $\tr$ such that $D_1 \prec D_2$.
+	Let $S_1 = \set{e_0, \ldots, e_{k-1}}$ and $S_2 = \set{f_0, \ldots, f_{k-1}}$.
+	If $\SPClosure{\tr}(\prev{\tr}(S_1))\cap S_2 \neq \emptyset$,
+	then $\SPClosure{\tr}(\prev{\tr}(S_2))\cap S_2 \neq \emptyset$.
+\end{restatable}
+
+
+We now describe how \cref{prop:spclosure-monotone} and \cref{cor:pattern-monotone} are used in our algorithms, 
+and illustrate them later in  \cref{ex:ex4}. % in \cref{sec:enumerate-patterns} provides an example.
+% \hunkar{
+% , we illustrate the application of  \propref{spclosure-monotone} and \corref{pattern-monotone}.
+% }
+% \hunkar{Provide an intuition here too?}
+\algoref{abstract-pattern} checks if an abstract deadlock 
+pattern contains a sync-preserving deadlock.
+The algorithm iterates over the sequences $F_0, \ldots, F_{k-1}$ of 
+acquires (one for each abstract acquire) in trace order.
+For this, it maintains
+indices $i_0, \ldots, i_{k-1}$ that point to entries in $F_0, \ldots, F_{k-1}$.
+%At each step, it determines whether the current
+%deadlock pattern $D = e_0, \ldots, e_{k-1}$
+%by computing the sync-preserving closure
+%of the predecessors of the deadlock pattern, and checks
+%if it is disjoint from the deadlock.
+%If so, it terminates.
+%\hunkar{
+At each step, it determines whether the current deadlock pattern $D = e_0, \ldots, e_{k-1}$
+constitutes a sync-preserving deadlock by computing the sync-preserving closure
+of the thread-local predecessors of the events of the deadlock pattern.
+%The algorithm reports a deadlock if the sync-preserving closure is disjoint from the timestamps of the events $e_0, \ldots, e_{k-1}$.
+The algorithm reports a deadlock if the sync-preserving closure does not contain any of $e_0, \ldots, e_{k-1}$.
+%}
+Otherwise, it looks for the next eligible deadlock pattern,
+which it determines based on \corref{pattern-monotone}.
+In particular, it advances the pointer $i_j$
+all the way until an entry which is outside of the
+closure computed so far.
+Observe that the timestamp $T$ of the closure
+computed in an iteration is being used in later iterations;
+this is a consequence of \propref{spclosure-monotone}.
+%\hunkar{
+Furthermore, in the call to the \algoref{compute-closure} at \lineref{call-comp-closure}, we ensure that the list of acquires $\AcqLst_{t, \lk}$,
+used in the function \fixpoint
+is reused across iterations, and not
+re-assigned to the original list of all acquire events.
+%}
+The correctness of this optimization follows from~\propref{spclosure-monotone}.
+Let us now calculate the running time of \algoref{abstract-pattern}.
+Each of the $\AcqLst_{t, \lk}$ in \fixpoint is traversed
+at most once. 
+Next, each element of the sequences $F_0, \ldots, F_{k-1}$
+is also traversed at most once.
+For each of these acquires, the algorithm spends $O(\NumThreads)$
+time for vector clock updates.
+The total time required is thus $O(\NumEvents \cdot \NumThreads)$.
+This concludes the proof of \lemref{abstract-pattern-linear-time}.
+
+%\hcomment{moved the text from the appendix -- end}

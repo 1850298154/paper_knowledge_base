@@ -1,0 +1,140 @@
+\section{Proofs from Section~\ref{sec:border_1}}
+\label{app:border_1}%
+
+We first describe a network flow formulation of $\SeqAllocSpace$, which is used to prove \autoref{lem:degen} and
+\autoref{lem:aug}.
+
+\begin{figure}
+\center
+\includegraphics[width=.95\textwidth]{fig_seq_alloc}
+\caption{The flow network corresponding to the SSA algorithm~\ref{def:ssa}. In this instance, there are three agents with type
+spaces $\TypeSpace_1 = \{a,b\}$, $\TypeSpace_2=\{c,d\}$, and $\TypeSpace_3=\{e,g\}$. All nodes in the same row correspond to the
+same type. The diagonal edges have dynamic capacity constraints while all other edges have no capacity constraints. The flow
+going from $\Node{\Type_{i'}}{i}$ to $\Node{\Type_{i}}{i}$ corresponds to the ex-ante probability of $\Type_{i}$ taking the token
+away from $\Type_{i'}$. The flow going from $\Node{\Type_{i'}}{i}$ to $\Node{\Type_{i'}}{i+1}$ corresponds to the ex-ante
+probability of $\Type_{i'}$ still holding the token after agent $i$ is visited. \label{fig:seq_alloc}}
+\end{figure}
+
+\paragraph{A network flow formulation of $\SeqAllocSpace$.}
+We construct a network in which every feasible flow corresponds to some $(\SeqAllocs, \SeqTranses) \in \SeqAllocSpace$. The
+network (see \autoref{fig:seq_alloc}) has a source node $\Src$, a sink node $\Snk$, and $n-i+1$ nodes for every $\Type_i \in
+\UnionTypeSpace$ labeled as $\Node{\Type_i}{i},\cdots,\Node{\Type_i}{n}$ where each node $\Node{\Type_{i'}}{i}$ corresponds to
+the type $\Type_{i'}$ at the time SSA algorithm is visiting agent $i$. For each $\Type_{i'} \in \UnionTypeSpace$ and for each $i
+\in \Range{i'}{n-1}$ there is an edge $(\Node{\Type_{i'}}{i}, \Node{\Type_{i'}}{i+1})$ with infinite capacity whose flow is equal
+to $\SeqAlloc(\Type_{i'}, i)$; we refer to these edges as \emph{``horizontal edges''}. For every $\Type_{i'}$ and every
+$\Type_{i}$ where $i' < i$ there is an edge $(\Node{\Type_{i'}}{i}, \Node{\Type_{i}}{i})$ whose flow is equal to
+$\SeqTrans(\Type_{i'}, \Type_{i})$ and whose capacity is equal to the total amount of flow that enters $\Node{\Type_{i'}}{i}$
+multiplied by $\DistProb_{i}(\Type_{i})$, i.e., it has a dynamic capacity which is equal to $\SeqAlloc(\Type_{i'}, i-1)
+\DistProb_{i}(\Type_{i})$; we refer to these edges as \emph{``diagonal edges''}. There is an edge $(\Src, \Type_0)$ through which
+the source node pushes exactly one unit of flow. Finally, for every $\Type_i \in \UnionTypeSpace$, there is an edge
+$(\Node{\Type_i}{n}, \Snk)$ with unlimited capacity whose flow is equal to $\SeqAlloc(\Type_i, n)$. To simplify the proofs we
+sometimes use $\Node{\Type_0}{0}$ as an alias for the source node $\Src$ and $\Node{\Type_i}{n+1}$ as aliases for the sink node
+$\Snk$. The network always has a feasible flow because all the flow can be routed along the path $\Src, \Node{\Type_0}{1},\ldots,
+\Node{\Type_0}{n}, \Snk$.
+
+We define the \emph{residual capacity} between two types $\Type_{i'}, \Type_{i} \in \UnionTypeSpace$ with respect to a given
+$(\SeqAllocs, \SeqTranses) \in \SeqAllocSpace$ as follows.
+\begin{align*}
+    \RCap_{\SeqAllocs, \SeqTranses}(\Type_{i'}, \Type_{i})=
+        \begin{cases}
+            \SeqAlloc(\Type_{i'}, i-1)\DistProb_{i}(\Type_{i})-\SeqTrans(\Type_{i'}, \Type_{i}) & i > i' \\
+            \SeqTrans(\Type_{i}, \Type_{i'})                                                    & i < i' \\
+            0                                                                                   & \text{otherwise}
+        \end{cases} \tag{$\RCap$} \label{eq:rcap}
+\end{align*}
+
+Due to dynamic capacity constraints, it is not possible to augment a flow along a path with positive residual capacity by simply
+changing the amount of the flow along the edges of the path, because reducing the total flow entering a node also decreases the
+capacity of the diagonal edges leaving that node, which could potentially violate their capacity constraints. Therefore, we
+introduce an operator $\Reroute(\Type_{i'}, \Type_{i}, \rho)$ (algorithm~\ref{alg:reroute} and \autoref{fig:reroute}) which
+modifies an existing $(\SeqAllocs, \SeqTrans) \in \SeqAllocSpace$, while maintaining its feasibility, to transfer a
+$\rho$-fraction of $\SeqAllocs(\Type_i, n)$ to $\SeqAllocs(\Type_{i'}, n)$ by changing the flow along the cycle
+\begin{align*}
+\Snk,\Node{\Type_{i'}}{n},\Node{\Type_{i'}}{n-1},\ldots,\Node{\Type_{i'}}{\max(i',i)},\Node{\Type_{i}}{\max(i',i)},\ldots,\Node{\Type_{i}}{n-1},\Node{\Type_{i}}{n},
+\Snk
+\end{align*}
+and adjusting the flow of the the diagonal edges which leave this cycle. More precisely, $\Reroute(\Type_{i'}, \Type_{i}, \rho)$
+takes out a $\rho$-fraction of the flow going through the subtree rooted at $\Node{\Type_{i'}}{\max(i',i)}$~\footnote{This
+subtree consists of the path $\Node{\Type_{i'}}{\max(i',i)},\ldots, \Node{\Type_{i'}}{n}, \Snk$ and all the diagonal edges
+leaving this path.} and reassigns it to the subtree rooted at $\Node{\Type_{i}}{\max(i',i)}$ (see \autoref{fig:reroute}).
+
+\begin{algorithm}[h]
+\textbf{Input:} An existing $(\SeqAllocs, \SeqTranses) \in \SeqAllocSpace$ given implicitly, a source type $\Type_{i'}
+\in \UnionTypeSpace$, a destination type $\Type_{i} \in \UnionTypeSpace$ where $i' \neq i$, and a fraction $\rho \in [0,1]$.\\
+\textbf{Output:} Modify $(\SeqAllocs, \SeqTranses)$  to transfer a $\rho$-fraction of $\SeqAllocs(\Type_{i'}, n)$ to
+$\SeqAllocs(\Type_{i}, n)$ while ensuring that the modified assignment is still in $\SeqAllocSpace$.
+\begin{algorithmic}[1]
+    \IF{$i' < i$}
+        \STATE Increase $\SeqTrans(\Type_{i'}, \Type_{i})$ by $\rho\cdot \SeqAlloc(\Type_{i'},i)$.
+    \ELSE
+        \STATE Decrease $\SeqTrans(\Type_{i},\Type_{i'})$ by $\rho\cdot \SeqAlloc(\Type_{i'},i')$.
+    \ENDIF
+    \FOR{$i''=\max(i',i)$ to $n$}
+        \STATE Increase $\SeqAlloc(\Type_{i},i'')$ by $\rho\cdot\SeqAlloc(\Type_{i'},i'')$.
+        \STATE Decrease $\SeqAlloc(\Type_{i'}, i'')$ by $\rho\cdot\SeqAlloc(\Type_{i'},i'')$.
+    \ENDFOR
+    \FOR{$\Type_{i''} \in \TypeSpace_{\Range{\max(i',i)+1}{n}}$}
+        \STATE Increase $\SeqTrans(\Type_{i}, \Type_{i''})$ by $\rho\cdot\SeqTrans(\Type_{i'}, \Type_{i''})$.
+        \STATE Decrease $\SeqTrans(\Type_{i'}, \Type_{i''})$ by $\rho\cdot\SeqTrans(\Type_{i'}, \Type_{i''})$.
+    \ENDFOR
+\end{algorithmic}
+\caption{$\Reroute(\Type_{i'},\Type_{i}, \rho)$.\label{alg:reroute}}%
+\end{algorithm}
+
+\begin{figure}[h]
+\center
+\includegraphics[width=.95\textwidth]{fig_seq_alloc_reroute}
+\caption{Changes made by applying $\Reroute(\Type_0, b, \rho)$. A $\rho$-fraction of the red subtree rooted at $\Type_0$ is take
+out and reassigned to the green subtree rooted at $b$. The exact amount of change is indicated for each green and each red edge.
+The flow along all other edges stay intact. The operator has the effect of reassigning $\rho$-fraction of ex-ante probability of
+allocation for type $\Type_0$ to type $b$. \label{fig:reroute}}
+\end{figure}
+
+\begin{proof}[Proof of Lemma~\ref{lem:degen}]
+For any given $(\SeqAllocs, \SeqTrans) \in \SeqAllocSpace$ we show that it is always possible to modify $\SeqAllocs$ and
+$\SeqTrans$ to obtain a non-degenerate feasible assignment with the same induced interim allocation probabilities (i.e., the same
+$\SeqAllocs(\cdot, n)$). Let $d$ denote the number of degenerate types with respect to $(\SeqAllocs, \SeqTrans)$, i.e., define
+\begin{align*}
+    d = \#\left\{ \Type_i \in \TypeSpace_{\Range{1}{n}} \middle| \SeqAllocs(\Type_i,n)=0, \SeqAlloc(\Type_i, i) > 0\right\}
+\end{align*}
+The proof is by induction on $d$. The base case is $d=0$ which is trivial. We prove the claim for $d > 0$ by modifying
+$\SeqAllocs$ and $\SeqTrans$, reducing the number of degenerate types to $d-1$, and then applying the induction hypothesis. Let
+$\Type_{i}$ be a degenerate type. For each $\Type_{i'} \in \TypeSpace_{\Range{0}{i-1}}$, we apply the operator $\Reroute(\Type_i,
+\Type_{i'}, \frac{\SeqTrans(\Type_{i'}, \Type_i)}{\SeqAlloc(\Type_i, i)})$ unless $\SeqAlloc(\Type_i, i)$ has already reached
+$0$. Applying this operator to each type $\Type_{i'}$ eliminates the flow from $\Node{\Type_{i'}}{i}$ to $\Node{\Type_i}{i}$, so
+eventually $\SeqAlloc(\Type_i, i)$ reaches $0$ and $\Type_i$ is no longer degenerate and also no new degenerate type is
+introduced, so the number of degenerate types is reduced to $d-1$. It is also easy to see that $\SeqAlloc(\Type_{i'},n)$ is not
+modified because $\SeqAlloc(\Type_{i},n) = 0$. That completes the proof.
+\end{proof}
+
+
+\begin{proof}[Proof of Lemma~\ref{lem:aug}]
+To prove the lemma it is enough to show that for any augmentable type $\Type_{i'}$ and any non-augmentable type $\Type_{i}$,
+$\RCap_{\SeqAllocs, \SeqTranses}(\Type_{i'}, \Type_{i}) =0$ which is equivalent to the statement of the lemma (the equivalence
+follows from the definition of $\RCap$ and equation~\eqref{eq:seq_pi}). The proof is by contradiction. Suppose $\Type_{i'}$ is
+augmentable and $\RCap_{\SeqAllocs, \SeqTranses}(\Type_{i'}, \Type_{i}) = \delta$ for some positive $\delta$; we show that
+$\Type_{i}$ is also augmentable. Since $\Type_{i'}$ is augmentable, there exists a $(\SeqAllocs',\SeqTranses') \in
+\SeqAllocSpace$ such that $\SeqAlloc'(\TypeVar,n)=\SeqAlloc(\TypeVar,n)$ for all $\TypeVar \in \TypeSpace_\Agents \setminus
+\{\Type_0, \Type_{i'}\}$ and $\SeqAlloc'(\Type_{i'},n)-\SeqAlloc(\Type_{i'},n)=\epsilon > 0$. Define
+\begin{align*}
+    (\SeqAllocs'', \SeqTranses'') &= (1-\alpha)\cdot(\SeqAllocs, \SeqTranses)+\alpha\cdot(\SeqAllocs', \SeqTranses')
+\end{align*}
+where $\alpha \in [0,1]$ is a parameter that we specify later. Note that in $(\SeqAllocs'', \SeqTranses'')$, $\Type_{i'}$ is
+augmented by $\alpha\epsilon$, and $\RCap_{\SeqAllocs'', \SeqTranses''}(\Type_{i'}, \Type_{i}) \ge (1-\alpha)\delta$, and
+$(\SeqAllocs'', \SeqTranses'') \in \SeqAllocSpace$ because it is a convex combination of $(\SeqAllocs, \SeqTranses)$ and
+$(\SeqAllocs', \SeqTranses')$. Consider applying $\Reroute(\Type_{i'}, \Type_{i}, \rho)$ to $(\SeqAllocs'', \SeqTranses'')$ for
+some parameter $\rho \in [0,1]$. The idea is to choose $\alpha$ and $\rho$ such that the exact amount, by which $\Type_{i'}$ was
+augmented, gets reassigned to $\Type_{i}$, by applying $\Reroute(\Type_{i'}, \Type_{i}, \rho)$; so that eventually $\Type_{i}$ is
+augmented while every other type (except $\Type_0$) has the same allocation probabilities as they originally had in $(\SeqAllocs,
+\SeqTranses)$. It is easy to verify that by setting
+\begin{align*}
+    \alpha&=\frac{\SeqAlloc(\Type_{i'},n)\delta}{2} & \rho&= \frac{\epsilon\delta}{2+\epsilon\delta}
+\end{align*}
+we get a feasible assignment in which the allocation probability of $\Type_{i}$ is augmented by $\alpha\epsilon$ while every
+other type (except $\Type_0$) has the same allocation probabilities as in $(\SeqAllocs, \SeqTranses)$. We still need to show that
+$\alpha
+> 0$. The proof is again by contradiction. Suppose $\alpha = 0$, so it must be $\SeqAllocs(\Type_{i'},n)=0$, which would imply that
+$\Type_{i'}$ is a degenerate type because $\SeqAlloc(\Type_{i'}, i') > 0$ (because $\RCap_{\SeqAllocs,\SeqTranses}(\Type_{i'},
+\Type_{i})> 0$), however $(\SeqAllocs, \SeqTranses)$ is a non-degenerate assignment by the hypothesis of the lemma, which is a
+contradiction. That completes the proof.
+\end{proof}

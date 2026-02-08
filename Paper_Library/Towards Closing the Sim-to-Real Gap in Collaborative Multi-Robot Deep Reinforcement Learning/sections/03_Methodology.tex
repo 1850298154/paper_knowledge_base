@@ -1,0 +1,80 @@
+
+\section{Methodology}
+\label{sec:methodology}
+
+In this section, we define our problem of distributed reinforcement learning with a subset of perturbed agents, as well as the simulation environment and modifications applied to it.%. From the parallel mode chosen, we then introduce the simulation environment as well as the perturbations we design.
+
+\subsection{Multi-agent RL}
+
+% Reinforcement learning algorithms are based on learning from experience, and therefore need large amounts of data to be able to convergence towards a robust behavior. This translates in exposing the agents to sufficient exploration to improve their generalization capacity and achieve a working policy. Compared to single-agent learning, multi-agent learning has thus emerged as a promising solution to parallelize and speed up the learning process by optimizing computational resources through multiple agents or workers on GPU/CPU processes.
+%relying on multiple due that it employs the powerful computation ability to parallelize multiple agents or workers on GPU/CPU processes, which speeds up the learning process. 
+
+In multi-agent reinforcement learning, approaches can be roughly divided into two parallel modes, asynchronous and synchronous. A3C (Asynchronous Advantage Actor-Critic)\cite{mnih2016asynchronous} is one of the most widely adopted methods for multi-agent reinforcement learning, representing the asynchronous paradigm. A3C consists of multiple independent agents with their own networks. These agents interact with different copies of the environment in parallel and update a global network periodically and asynchronously.%, but the updates do not happen simultaneously. 
+After each update, the agents reset their own weights to those of the global network and then resume their independent exploration.% until they update themselves again. 
+Because some of the agents will be exploring the environment with an older version of the network weights, A3C results in relatively suboptimal use of computational resources as well as more noisy updates. An alternative is A2C (Advantage Actor-Critic), which utilizes synchronous parallel mode. In this case, there are only two networks in the system. One is used by all agents equally to interact with the environment in parallel, and outputs a batch of experiences. With this data, the second network is trained and updates the former network. 
+
+
+% Supervised learning has got great success in research and real-world applications. It allows users to easily implement the cost function, perform gradient descent on it, and get confident results with few hyperparameter adjustments. However, the path to achieving such success in reinforcement learning is not so obvious. As the reinforcement learning algorithm owns many active parts that make researchers hard to debug and needs a lot of tweaking work to get an acceptable result.
+
+In this paper, we utilize a synchronous multi-agent reinforcement learning algorithm: proximal policy optimization (PPO). PPO and has been adopted as the default method of OpenAI owing to its excellent performance. The PPO algorithm takes advantage of the A2C ideas in terms of having multiple workers, and gradient policy ideas from TRPO (Trust Region Policy Optimization) to improve the actor performance by utilizing a trust region. PPO seeks to find a balance between the ease of implementation, sample complexity, and ease of adjustment, trying to update at each step to minimize the cost function while assuring that the new policies are not far from last policies. The scheme follows these steps:
+\begin{enumerate}[wide, labelwidth=!, labelindent=0pt]
+    \item Set the initial policy parameters $\theta^{0}$.
+    \item In each iteration, use $\theta^{k}$ to interact with the environment, collect experience data (a tuple of state and action $\{s_{t},a_{t}\}$), and compute their advantage $A^{\theta^{k}}(s_{t},a_{t})$~\cite{mnih2016asynchronous}.
+    \item Find the optimal $\theta$ by optimizing $J_{PPO}(\theta)$:
+    \begin{equation}
+    J_{PPO}^{\theta^{k}}(\theta)=J^{\theta^{k}}(\theta)-\beta\\KL\left(\theta,\theta^{k}\right)
+    \end{equation}   
+    where $\beta$ is a hyperparameter and will be adapted according to the value of $KL$. $J^{\theta^{k}}(\theta)$ is calculated by:
+    \begin{equation}
+    J^{\theta^{k}}(\theta)\approx \sum_{(s_{t},a_{t})}\dfrac{p_{\theta}(a_{t}\vert s_{t})}{p_{\theta^{k}}(a_{t}\vert s_{t})}A^{\theta^{k}}\left(s_{t},a_{t}\right)
+    \end{equation}  
+    where $p_{\theta^{k}}\left(a_{t}\vert s_{t}\right)$ is the probability of $(s_{t},a_{t})$ under $\theta^{k}$.
+
+\end{enumerate}
+
+% \begin{equation}
+%     reward_{raw} = -10\cdot distance  
+% \end{equation}      
+
+% Owning to the PPO's excellent performance, the OpenAI has adopted it as the default reinforcement learning algorithm.
+
+
+% \red{With supervised learning, we can easily implement the cost function, run gradient descent on it, and be very confident that we’ll get excellent results with relatively little hyperparameter tuning. The route to success in reinforcement learning isn’t as obvious — the algorithms have many moving parts that are hard to debug, and they require substantial effort in tuning in order to get good results. PPO strikes a balance between ease of implementation, sample complexity, and ease of tuning, trying to compute an update at each step that minimizes the cost function while ensuring the deviation from the previous policy is relatively small.}
+
+% \red{The Proximal Policy Optimization algorithm combines ideas from A2C (having multiple workers) and TRPO (it uses a trust region to improve the actor). The main idea is that after an update, the new policy should be not too far from the old policy. For that, PPO uses clipping to avoid too large update. PPO has become the default reinforcement learning algorithm at OpenAI because of its ease of use and good performance.}
+
+\subsection{Simulation Environment}
+
+Our simulation environment is built based on top one of the Bullet physics simulators, specifically the PyBullet Kuka arm for grasping~\cite{coumans2016pybullet}. In order to simplify the training of our RL algorithm, we modify the original grasping task into a reaching task, which allows us to focus on observing the effect of adversarial agents in training distributed reinforcement learning algorithms, rather on optimizing the training itself. 
+
+The simulation environment is shown in Figure~\ref{fig:kuka_arm_env}. The robotic arm in this environment attempts to reach the object in the bin. It takes the Cartesian coordinates of the gripper and the relative position of the object as input instead of the on-shoulder camera observation. This input can be seen as a list with nine elements:
+\begin{equation}
+    Input=[x_{g},y_{g},z_{g},yaw_{g},pit_{g},rol_{g},x_{og},y_{og},rol_{og}]
+\end{equation}  
+where $x_{g},y_{g},z_{g}$ denote the Cartesian coordinates of the center of the gripper, and $yaw_{g},pit_{g},rol_{g}$ refers to its three Euler angles, while $x_{og},y_{og},rol_{og}$ indicate the relative $x$, $y$ position and the roll angle of the object in the gripper space.
+
+% $[x_{g},y_{g},z_{g},yaw_{g},pitch_{g},roll_{g},x_{og},y_{og},roll_{og}]$. 
+
+Our RL algorithm receives the input and then gives a Cartesian displacement:
+\begin{equation}
+    Output=[dx, dy, dz, d\phi]
+\end{equation}
+in which $\phi$ is the rotation angle of the wrist around the $z$-axis. An inverse kinematics method is then employed to calculate the real motor control values of the joints. Note that all the units used for the position are in meters, and the angles are in radians. This environment with our training code is now open-source on Github\footnote{https://github.com/TIERS/NoisyKukaReacher}.
+% $[dx, dy, dz, d\phi]$, 
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.36\textwidth]{fig/kuka4}
+    \caption{Kuka arm reaching environment based on Bullet simulator.}
+    \label{fig:kuka_arm_env}
+\end{figure}
+
+\subsection{Collaborative Learning under Real-World Perturbations}
+
+In real robots, some of the most characteristic sources of perturbations within a homogeneous multi-robot team come from the calibration of the robots in terms of sensing and actuation. In this paper, we thus study how these two types of input (sensing) and output (actuation) perturbations affect a collaborative learning process:
+
+\emph{Input perturbations}: we consider both fixed and variable errors in the input to the network regarding the position of the object to be reached. This emulates the error that might result from identifying the position of the object from a camera or another sensor on the robot arm. The fixed noise represents, for instance, installation or calibration errors on the position of the camera, which might have an offset in position or orientation. Variable errors, on the other hand, try to emulate the sensing errors that come, for example, from the vibration of the arm or local odometry errors describing its orientation and position.
+
+\emph{Output perturbations}: we simulate both fixed and variable perturbations in the actuation of the robotic arm, emulating calibration errors (e.g., a constant offset in one direction), or changes in accuracy or repeatability across different robots. 
+
+Through multiple simulations, we study how these types of perturbations affect the collaborative learning effort when they are not common across the entire set of agents. 

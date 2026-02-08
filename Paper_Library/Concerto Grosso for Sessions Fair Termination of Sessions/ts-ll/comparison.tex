@@ -1,0 +1,529 @@
+\beginalto
+%
+This last section concludes \Cref{pt:type_systems} so we dedicate it to a comparison
+between the two approaches to fair termination that we presented, that is,
+the session based one (see \Cref{ch:ft_bin,ch:ft_multi}) and that about linear logic
+(in the present chapter).
+%
+The most important result is that the two approaches \emph{cannot} be actually compared
+since there exist examples that are accepted in the former and rejected in the other and viceversa.
+Here we provide two examples of this fact (see \Cref{ex:fwd_comp,ex:slot_comp}).
+%
+Then, such result leaves an open problem, that is establishing the meaning of fair subtyping
+in the linear logic scenario. Indeed, the type system in \Cref{ssec:ts_ll} does not
+use subtyping. 
+What makes this research line interesting is how \emph{infinite} behaviors are dealt with 
+in the two approaches; the former relies on fair subtyping and the second on validity conditions.
+%
+To conclude, in \Cref{ex:delegation_ll} we encode \Cref{ex:invariant_ch} in the linear logic
+context and we see how it is rejected by the type system in \Cref{ssec:ts_ll}.
+
+\begin{example}[Forwarder]
+	\label{ex:fwd_comp}
+	Here we recall the forwarder that we proved to be well typed in \piLIN in \Cref{ex:forwarder}.
+	We model the same process using binary sessions and we try to prove that it is well typed
+	using the type system in \Cref{ch:ft_bin}.
+	\newcommand{\lok}{\Tag[ok]}
+	\[
+	\Forwarder(x,y) = \x\iact
+		\set{\lok.\y\oact\lok.\Call{\Forwarder}{\x,\y},
+				 \lstop.\y\oact\lstop.\Wait{x}{\Close\y}
+		} 
+	\]
+	where $\x$ and $\y$ are used according to $S_x$ and $S_y$ defined below
+	\[
+	\begin{array}{lr}
+	S_x = \In\set{\lok.S_x,\lstop.\End[\In]}
+	& \qquad
+	S_y = \Out\set{\lok.S_y,\lstop.\End[\Out]}	
+	\end{array}
+	\]
+	It is clear that, if we try to provide a typing derivation for $\Forwarder$, then
+	we have to apply rule \refrule{tb-tag} that we report here for the sake of clarity.
+	\[
+	\inferrule
+          {\forall i\in I: \wtp[n]{\Ctx, x : S_i}{P_i}}
+          {
+            \textstyle
+            \wtp[n]{\Ctx, x : \Pol\set{\l_i : S_i}_{i \in I}}
+            {x\Pol\set{\l_i : P_i}_{i \in I}}
+          } 
+	\]
+	In order to apply such rule the branches must be typed in some
+	contexts that differ only with respect to $\x$. 
+	Hence, we cannot apply \refrule{tb-tag} by taking into account $S_x$ and $S_y$
+	because the behavior of $\y$ changes as well.
+	We can try to solve the problem by placing casts in the right positions
+	\[
+	\Forwarder(x,y) = \x\iact
+		\set{\lok.\Cast\y\y\oact\lok.\Call{\Forwarder}{\x,\y},
+				 \lstop.\Cast\y\y\oact\lstop.\Wait{x}{\Close\y}
+		} 
+	\]
+	Indeed $\y$ is used according to $\Out\lok.S_y$ and $\Out\lstop.\End[\Out]$
+	in the left and right branches, respectively. Moreover,
+	the two applications of fair subtyping are correct and we can easily derive
+	$S_y \subt[1] \Out\lok.S_y$ and $S_y \subt[1] \Out\lstop.\End[\Out]$.
+	Note that the weights are $1$ because the types differ only on the topmost
+	output, which means that the contravariant rule \refrule{fsb-tag-out-2} for
+	output must be applied.
+	%
+	Now we can try to provide a typing derivation (we omit the rule names).
+	\[
+	\begin{prooftree}
+		\[
+			\[
+				\[
+					\vdots
+					\justifies
+					\wtp[n]{\x : S_x , \y : S_y}{\Call{\Forwarder}{\x,\y}}
+				\]
+				\justifies
+				\wtp[n]{\x : S_x , \y : S_y}{\y\oact\lok.\Call{\Forwarder}{\x,\y}}
+			\]
+			\justifies
+			\wtp[n+1]{\x : S_x , \y : \Out\lok.S_y}{\Cast\y\y\oact\lok.\Call{\Forwarder}{\x,\y}}
+		\]
+		\[
+			\[
+				\[
+					\[
+						\justifies
+						\wtp[n]{\y : \End[\Out]}{\Close\y}
+					\]
+					\justifies
+					\wtp[n]{\x : \End[\In] : \y : \End[\Out]}{\Wait{\x}{\Close\y}}
+				\]
+				\justifies
+				\wtp[n]{\x : \End[\In], \y : \Out\lstop.\End[\Out]}{\oact\lstop\dots}
+			\]
+			\justifies
+			\wtp[n+1]{\x : \End[\In], \y : S_y}{\Cast\y\dots}
+			%\using\refrule[tb-cast]
+		\]
+		\justifies
+		\wtp[n+1]{\x : S_x, \y : S_y}{\Call{\Forwarder}{\x,\y}}
+		%\using\refrule[tb-tag]
+	\end{prooftree}
+	\]
+	where the right branch ends with an application of \refrule{tb-end} which assigns rank $n$.
+	Indeed, \refrule{tb-tag} requires that the rank is an upper bound to the rank of the
+	branches so we assign it in order to match that of the left one.
+	Note that it is not possible to assign a finite rank to the process
+	because it requires $n = n+1$, hence the process if \emph{cast unbounded} (\Cref{ssec:boundedness}).
+	%
+	\eoe
+\end{example}
+
+\begin{example}[A Hopeful Player]
+	\label{ex:slot_comp}
+	\newcommand{\SlotMachineF}{SlotF}
+	\newcommand{\SlotMachineU}{SlotU}
+	\newcommand{\MachineF}{MF}
+	\newcommand{\MachineU}{MU}
+	The slot machine was a recurring example in \Cref{pt:type_systems} (see \Cref{ex:non-det,ex:slot_machine}).
+	In \Cref{ex:slot_fair_sub} we described the behaviors of a fair and an unfair machine.
+	The second one simply never lets the player win. Let $S$, $T$ be
+	the types from \Cref{ex:slot_fair_sub} such that
+	\[
+	\begin{array}{rcl}
+		S & = & \In\tplay.(\Out\twin.S + \Out\tlose.S) + \In\tquit.\End[\Out]
+		\\
+		T & = & \In\tplay.\Out\tlose.T + \In\tquit.\End[\Out]
+	\end{array}
+	\]  
+	Now we can model the two implementations of the machines. For the sake of simplicity,
+	we adapt the one in \Cref{ex:non-det} to the binary case. We dub $\SlotMachineF$ the fair
+	machine and $\SlotMachineU$ the unfair one.
+	\[
+	\begin{array}{rcl}
+		\SlotMachineF(x) & \peq &
+			\x\iact\set{
+				\tplay.\x\oact\set{
+					\twin.\pinvk\SlotMachineF{x},
+					\tlose.\pinvk\SlotMachineF{x}
+				},
+				\tquit.\pclose{x}
+			}
+		\\
+		\SlotMachineU(x) & \peq &
+			\x\iact\set{
+				\tplay.\x\oact\tlose.\pinvk\SlotMachineU{x},
+				\tquit.\pclose{x}
+			}
+	\end{array}
+	\]
+	It is easy to see that $\wtp[0]{\x : S}{\pinvk\SlotMachineF{x}}$ and
+	that $\x : S \not\vdash \pinvk\SlotMachineU{x}$ since the $\twin$ branch is missing.
+	We can try to rewrite $\SlotMachineU$ in order to be well-typed with $\x : S$.
+	First, we can place a cast in the $\tlose$ branch.
+	\[
+		\SlotMachineU(x) \peq
+			\x\iact\set{
+				\tplay.\pcast\x\x\oact\tlose.\pinvk\SlotMachineU{x},
+				\tquit.\pclose{x}
+			}
+	\]
+	where the cast is correct since we can derive 
+	$(\Out\twin.S + \Out\tlose.S) \subt[1] \Out\tlose.S$. The $1$ weight
+	is due to the fact that the two types differ only for the topmost output, which requires
+	an application of \refrule{fsb-tag-out-2}.
+	Let us try to derive a typing judgment.
+	\[
+	\begin{prooftree}
+		\[
+			\[
+				\[
+					\vdots
+					\justifies
+					\wtp[n]{\x : S}{\pinvk\SlotMachineU{x}}
+				\]
+				\justifies
+				\wtp[n]{\x : \Out\tlose.S}{\x\oact\tlose.\pinvk\SlotMachineU{x}}
+			\]
+			\justifies
+			\wtp[n+1]{\x : \Out\twin.S + \Out\tlose.S}{\pcast\x\x\oact\tlose.\pinvk\SlotMachineU{x}}
+		\]
+		\[
+			\justifies
+			\wtp[n+1]{x : \End[\Out]}{\pclose\x}
+		\]
+		\justifies
+		\wtp[n+1]{\x : S}\pinvk\SlotMachineU{x}
+	\end{prooftree}
+	\]
+	Hence, we cannot find a finite rank; the process is \emph{cast unbounded} (see \Cref{ssec:boundedness}).
+	%
+	Alternatively we can try to place a cast before the first invocation of the process since it is clear
+	that $\SlotMachineU$ uses $\x$ according to $T$. Such cast would be invalid
+	since in \Cref{ex:slot_fair_sub} we proved that $S \not\subt T$.
+	Hence, the only typing judgment that we can derive is $\wtp[0]{\x : T}{\pinvk\SlotMachineU{x}}$.
+	
+	Now we can apply the same reasoning from the \piLIN point of view.
+	Let us model the fair (\Cref{ex:slot_machine}) and the unfair machines.
+	We dub $\MachineF$ the fair machine and $\MachineU$ the unfair one.
+	\[
+	\begin{array}{rcl}
+		\MachineF(x,y) & \peq & \Corec\x.
+            \\ & &
+            \Case\x{
+                \PiChoice{
+                    \Select\WinTag\x.\Call\MachineF{x,y}
+                }{
+                    \Select\LoseTag\x.\Call\MachineF{x,y}
+                }
+            }{
+                \PiWait\x.\PiClose\y
+            }
+		\\
+		\MachineU(x,y) & \peq & \Corec\x.
+            \Case\x{
+                \Select\LoseTag\x.\Call\MachineU{x,y}
+            }{
+                \PiWait\x.\PiClose\y
+            }
+	\end{array}
+	\]
+	In \Cref{ex:slot_machine} we proved that 
+	$\qtp{x : \FormulaG_b, y : \One}{\Call\MachineF{x,y}}$ and that $\MachineF$ is well-typed
+	where $\FormulaG \eqdef \tnu\X.(X \plinchoice X) \plinbranch \Bot$.
+	At the same time we can prove that $\qtp{x : \FormulaG_b, y : \One}{\Call\MachineU{x,y}}$
+	\[
+    \begin{prooftree}
+        \[
+            \[
+                \[
+                    \mathstrut\smash\vdots
+                    \justifies
+                    \qtp{
+                        x : \FormulaG_{bilr},
+                        y : \One
+                    }{
+                        \Call\MachineU{x,y}
+                    }
+                \]
+                \justifies
+                \qtp{
+                    x : \FormulaG'_{bil},
+                    y : \One        
+                }{
+                    \Select\LoseTag\x.\Call\MachineU{x,y}
+                }
+                \using\refrule[select]\SelectRule
+            \]
+            \[
+                \[
+                    \justifies
+                    \qtp{
+                        y : \One
+                    }{
+                        \PiClose\y
+                    }
+                    \using\refrule[close]{\PiCloseRule}
+                \]
+                \justifies
+                \qtp{
+                    x : \Bot,
+                    y : \One
+                }{
+                    \PiWait\x.\PiClose\y    
+                }
+                \using\refrule[wait]{\PiWaitRule}
+            \]
+            \justifies
+            \qtp{
+                x : (\FormulaG' \plinbranch \Bot)_{bi},
+                y : \One
+            }{
+                \Case\x{
+                    \Select\LoseTag\x.\Call\MachineU{x,y}
+                }{
+                    \PiWait\x.\PiClose\y
+                }            
+            }
+            \using\refrule[case]{\CaseRule}
+        \]
+        \justifies
+        \qtp{
+            x : \FormulaG_b,
+            y : \One
+        }{
+            \Call\MachineU{x,y}
+        }
+        \using\refrule[corec]{\CorecRule}
+    \end{prooftree}
+		\]
+		Moreover the process is well-typed since no choices are met.
+		This example points out that we can type two different processes with the same type
+		while in the session scenario we the correspondence between types and processes is
+		tighter.
+		
+		Now we can focus on the player side and we can try to model a hopeful player
+		that plays until it receives $\WinTag$. In that case, it stops playing.
+		We first write it in the binary session scenario and then we encode it
+		in \piLIN.
+		\newcommand{\Play}{Player}
+		\[
+		\Play(\x) \peq \x\oact\tplay.\x\iact\set{\twin.\pclose\x,\tlose.\pinvk\Play\x}
+		\]
+		where $\x$ is used according to $T_p = \Out\tplay.\In\set{\twin.\End[\Out], \tlose.T_p}$.
+		It can be derived that $\wtp[0]{\x : T_p}{\pinvk\Play\x}$.
+		Note that the system consisting of $\MachineF$ and $\Play$ is fairly terminating.
+		Indeed $S \compatible T_p$.
+		
+		Now we model the same process in \piLIN. In particular,
+		we slightly modify the player in \Cref{ex:slot_machine}.
+		\renewcommand{\Player}{P}
+		\[
+		\Player(x) =
+        \Rec\x.
+            \Select\PlayTag\x.
+            \Case\x{
+                \Call\Player\x
+            }{
+                \Rec\x.\Select\QuitTag\x.\PiClose\x
+            }
+		\]
+		Let us look at the typing derivation with $\FormulaF \eqdef \tmu\X.(X \plinbranch X) \plinchoice \One$.
+		\[
+    \begin{prooftree}
+        \[
+                \[
+                    \[
+                        \mathstrut\smash\vdots
+                        \justifies
+                        \qtp{
+                            x : \FormulaF_{aill}
+                        }{
+                            \Call\Player\x
+                        }
+                    \]
+                    \qquad
+                    \[
+                        \[
+                            \[
+                                \justifies
+                                \qtp{
+                                    x : \One
+                                }{
+                                    \PiClose\x
+                                }
+                                \using\refrule[close]{\PiCloseRule}
+                            \]
+                            \justifies
+                            \qtp{
+                                x : \Formula'_{ailri}
+                            }{
+                                \Select\QuitTag\x.\PiClose\x
+                            }
+                            \using\refrule[select]{\SelectRule}
+                        \]
+                        \justifies
+                        \qtp{
+                            x : \FormulaF_{ailr}
+                        }{
+                            \Rec\x.\Select\QuitTag\x.\PiClose\x
+                        }
+                        \using\refrule[rec]{\RecRule}
+                    \]
+                    \justifies
+                    \qtp{
+                        x : (\FormulaF \plinbranch \FormulaF)_{ail}
+                    }{
+                        \Case\x{
+                            \Call\Player\x
+                        }{
+                            \Rec\x\Select.\QuitTag\x.\PiClose\x
+                        }    
+                    }
+                    \using\refrule[case]{\CaseRule}
+                \]
+                \justifies
+                \qtp{
+                    x : \Formula'_{ai}
+                }{
+                    \Select\PlayTag\x.
+                    \Case\x{
+                        \Call\Player\x
+                    }{
+                        \Rec\x.\Select\QuitTag\x.\PiClose\x
+                    }
+                }
+                \using\refrule[select]{\SelectRule}
+        \]
+        \justifies
+        \qtp{
+            x : \Formula_a
+        }{
+            \Call\Player\x
+        }
+        \using\refrule[rec]{\RecRule}
+    \end{prooftree}
+		\]
+		Note that now $\rankof{\Call\Player\x} = 0$ since there are no choices.
+		Hence, the infinite branch is fair because it traverses no choices.
+		We can conclude that the $\Call\Player\x$ is not well typed because
+		because the infinite, fair branch is not valid.
+		We recall that the player in \Cref{ex:slot_machine} was well typed because
+		the infinite branch was unfair as it contained infinitely many finitely ranked choices.
+		%
+		\eoe
+\end{example}
+
+\Cref{ex:fwd_comp,ex:slot_comp} show that the type systems in \Cref{ch:ft_bin,ch:ft_multi} cannot be compared
+to that in \Cref{ch:ft_ll}. \Cref{ex:fwd_comp} illustrates a process that can be only typed in \piLIN
+while \Cref{ex:slot_comp} show a process that can be typed only in the session based calculi.
+%
+Moreover \Cref{ex:slot_comp} shows a peculiar difference between the type systems. 
+In \Cref{ch:ft_bin,ch:ft_multi} the tight correspondence between types and processes allows us
+to use a \emph{fair} type to prove that a \emph{fair} process is well-typed. 
+Such correspondence does not hold in \piLIN as we proved that both the fair and the unfair
+slot machines can be typed with the same formula.
+%
+We conclude this section showing how to encode delegation in \piLIN and trying
+to encode \Cref{ex:invariant_ch} to see whether it is accepted or rejected in \piLIN.
+
+\newcommand{\enc}[1]{\lfloor #1 \rfloor}
+
+\begin{definition}[Delegation in \piLIN]
+	\label{def:delegation_ll}
+	We show delegation how can be encoded in \piLIN. 
+	\cite{LindleyM15} provide an encoding from GV (a session typed functional language) to \CP
+	(a process calculus based on classical linear logic). 
+	Hence, they encode (binary) session types
+	to the types of CP, that is, linear logic formulas. Concerning delegation, the encoding
+	is provided as
+	\[
+	\begin{array}{rclrcl}
+		\enc{\Out\T.\S} & = & \co{\enc\T} \tfork \enc\S
+		& \qquad
+		\enc{\In\T.\S} & = & \enc\T \tjoin \enc\S
+	\end{array}
+	\]
+	(see \cite[Fig.9]{LindleyM15}).
+	Following the encoding of types we extend the encoding to 
+	the processes in \Cref{sec:ts_bin_proc}.
+	\[
+	\begin{array}{rclrcl}
+		\enc{\POutput\x{(\y)}.P} & = & \Fork\x\z{\Link\y\z}{\enc{P}}
+		& \qquad
+		\enc{\PInput\x{(\y)}} & = & \Join\x\y{\enc{P}}
+	\end{array}
+	\]
+\end{definition}
+
+\begin{example}[Delegation]
+	\label{ex:delegation_ll}
+	In this example we encode \Cref{ex:invariant_ch} in \piLIN and we see if we obtain a well-typed process or not.
+	To encode delegation we refer to \Cref{def:delegation_ll}.
+	Let us first recall the process and the main types.
+	\[
+    	\begin{array}{@{}r@{~}l@{}}
+    	& \NewPar\y{\NewPar\x{\Call A {x,y}}{\Call B x}}{\Call B y}
+    	\\
+    	\Definition{A}{x,y}{& \POutput\x\lmore.\POutput\x\y.\Call B x}
+    	\\
+    	\Definition{B}{x}{&
+        \PRecv\x{
+        	\lmore : \PInput\x{(y)}.\Call A {y,x},
+        	\lstop : \Wait\x\Done
+        }
+    	}	
+    	\end{array}
+    \]
+   	where $\x$ and $\y$ are used according to $S_A$ and $T_A$ in $A(x,y)$ and
+   	$\x$ is used according to $S_B$ in $B(x)$.
+   	\[
+	 	\begin{array}{rcl}
+	 		S_A & = & \Out\lmore.\Out\T_A.S_B
+    	\\
+    	S_B & = & \In\lmore.\In\S_A.T_A \branch \In\lstop.\End[\In]
+    	\\
+    	T_A & = & \Out\lmore.\Out\T_A.S_B \choice \Out\lstop.\End[\Out]
+		\end{array}
+		\]
+		Now we can look at the encoding of processes.
+		\[
+		\begin{array}{rcl}
+			\enc{A(x,y)} & = & \Rec\x.\Select\lmore\x.\Fork\x\z{\Link\y\z}{\enc{B(\x)}}
+			\\
+			\enc{B(x)} & = & \Corec\x.\Case\x{\Join\x\y\enc{A(y,x)}}{\PiWait\x}
+		\end{array}
+		\]
+		The encoding of types is more involved. Since we do not have subtyping in
+		\piLIN, we can encode $S_b$ and $T_A$. Moreover, if we replace $\In{S_A}.T_A$
+		with $\In{T_A}.T_A$ in $S_B$, we obtain that $\co{S_B} = T_A$.
+		Let $\enc{T_A} = \Formula_A$ and $\enc{S_B} = \Formula_B$.
+		\[
+		\begin{array}{rlr}
+			\Formula_A = & \tmu\Y.(\dual{\Formula_A} \tfork \Formula_B) \plinchoice \One 
+				\\ & \hfill \text{by definition of $\enc{T_A}$}
+				\\ 			 = & \tmu\Y.(\dual{\Formula_A} \tfork ((\Y \tjoin \Y) \plinbranch \Bot)) \plinchoice \One
+				\\ & \hfill \text{by replacing $\Formula_B$}
+				\\			 = & \tmu\Y.((\tnu\X.(\Y \tjoin ((\X \tfork \X) \plinchoice \One)) \plinbranch \Bot) 
+															\tfork ((\Y \tjoin \Y) \plinbranch \Bot)) \plinchoice \One \qquad
+				\\ & \hfill \text{by replacing $\dual{\Formula_A}$}
+				\\
+			\Formula_B = & \tnu\X.(\Formula_A \tjoin \Formula_A) \plinbranch \Bot
+				\\ & \hfill \text{by definition of $\enc{S_B}$}
+				\\
+				         = & \tnu\X.(\Formula_A \tjoin ((\X \tfork \X) \plinchoice \One)) \plinbranch \Bot
+				\\ & \hfill \text{by replacing $\Formula_A$}
+				\\
+				         = & \tnu\X.((\tmu\Y.(\X \tfork ((\Y \tjoin \Y) \plinbranch \Bot)) \plinchoice \One) 
+				                      \tjoin ((\X \tfork \X) \plinchoice \One)) \plinbranch \Bot
+				\\ & \hfill \text{by replacing $\Formula_A$}      
+		\end{array}
+		\]
+		%Now we can try to provide the typing derivation for the judgment.
+		%$\qtp{\x : \Formula_A, \y : \Formula_B}{\enc{A(x,y)}}$.
+		%We denote $\FormulaG_A = \tmu\X(\Formula_B \tfork ((\X \tjoin \X) \plinbranch \Bot)) \plinchoice \One$.
+		From these definition it can be noted that it the encoding is not straightforward since we do not
+		know how/when actually unfold the formulas. Indeed we are not able to find the right
+		types to prove that the process is quasi-typed.
+		
+		Furthermore, assuming that we could find such types, it would turn out that $B$ is well-typed
+		while $A$ is not as its infinite thread in not a $\nu$ one.
+		%
+		\eoe
+\end{example}

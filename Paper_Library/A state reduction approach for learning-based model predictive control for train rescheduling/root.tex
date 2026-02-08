@@ -1,0 +1,798 @@
+%===============================================================================
+% ifacconf.tex 2022-02-11 jpuente  
+% 2022-11-11 jpuente change length of abstract
+% Template for IFAC meeting papers
+% Copyright (c) 2022 International Federation of Automatic Control
+%===============================================================================
+\documentclass{ifacconf}
+
+\usepackage{graphicx}      % include this line if your document contains figures
+\usepackage{natbib}        % required for bibliography
+
+%mypackages
+\newcommand{\T}{\mathrm{T}}
+\newcommand{\epsc}{\epsilon_\mathrm{c}}
+\newcommand{\epsd}{\epsilon_\mathrm{d}}
+\newcommand{\epsdk}{\epsilon_{\mathrm{d},k}}
+% \usepackage{amsmath}
+\usepackage{amsmath}
+% \usepackage{amsthm}
+\usepackage{amssymb}
+\usepackage{bm}
+\usepackage{makecell}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{multirow}
+\usepackage{color}
+\usepackage{pgfplots}
+\pgfplotsset{compat=newest}
+\usepackage{url}
+
+%===============================================================================
+\begin{document}
+\begin{frontmatter}
+
+\title{A state reduction approach for learning-based model predictive control for train rescheduling} 
+% Title, preferably not more than 10 words.
+
+\author[First]{C.F.O da Silva \thanksref{equalcontribution}} 
+\author[First]{X. Liu \thanksref{equalcontribution}} 
+\author[First]{A. Dabiri}
+\author[First]{B. De Schutter}
+
+\thanks[equalcontribution]{These authors contributed equally to this work.}
+
+\address[First]{Delft University of Technology, The Netherlands (e-mail: \{c.f.oliveiradasilva, x.liu-20, a.dabiri, b.deschutter\}@tudelft.nl).}
+
+\begin{abstract}                
+% Abstract of 50--100 words
+This paper proposes a state reduction method for learning-based model predictive control (MPC) for train rescheduling in urban rail transit systems.
+The state reduction integrates into a control framework where the discrete decision variables are determined by a learning-based classifier and the continuous decision variables are computed by MPC.
+Herein, the state representation is designed separately for each component of the control framework. While a reduced state is employed for learning, a full state is used in MPC.
+Simulations on a large-scale train network highlight the effectiveness of the state reduction mechanism in improving the performance and reducing the memory usage.
+\end{abstract}
+
+\begin{keyword}
+learning for control, urban rail transit systems, model predictive control,  hybrid systems, mixed-integer programming
+\end{keyword}
+
+\end{frontmatter}
+%===============================================================================
+
+% If possible, download the latest version from (no login required): 
+% \url{https:\\www.overleaf.com\read\tghtffqnxmrc#a35c9d}
+
+\section{Introduction}
+% \footnote{This is the default for the provided class file.}
+% \emph{italics}
+Urban rail transit systems play an important role in modern metropolitan mobility due to their high efficiency, capacity, and environmental sustainability. With the growing demand for public transportation and the rapid expansion of urban rail transit networks, ensuring the safety, punctuality, and adaptability of train operations has become increasingly important. Real-time train scheduling improves passenger satisfaction by reducing waiting and transfer times, and helps minimize operational costs under infrastructure and resource restrictions. % Consequently, efficient scheduling strategies are essential for the competitiveness of regional and national transportation systems.
+Therefore, effective real-time train rescheduling approaches are essential to maintain service quality, particularly during disruptions, peak-hour congestion, and unexpected events. %\citep{bevsinovic2021matheuristic,liu2024real}
+
+% In this context, the ability to generate and update timetables in real time while accounting for passenger demands, operational constraints, and rolling stock circulation is crucial to ensure service quality \citep{yin2023integrated}. 
+Formulating train scheduling problems typically leads to a mixed-integer programming problem with operational constraints.
+% , and many studies have been conducted
+Model predictive control (MPC) has emerged as an effective framework for real-time train scheduling, due to its ability to incorporate control and state constraints explicitly. \cite{de2002model} applied MPC to train scheduling by formulating a framework that dynamically adjusts transfer connections to minimize overall train delays.  \cite{caimi2012model} proposed an MPC framework for coordinating transfers and train allocations of timetable optimization in complex station environments. \cite{liu2023modeling} developed a simplified passenger flow model by approximating time-varying passenger demands as piecewise constant over fixed intervals, and then a mixed-integer linear programming (MILP)-based MPC approach is introduced for real-time train rescheduling. MPC has also been introduced for real-time train scheduling during various scenarios, including disturbances \citep{wang2020event}, disruptions \citep{cavone2020mpc}, and uncertain passenger flows \citep{liu2024real}.
+However, MPC encounters computational challenges in solving large-scale mixed-integer programming problems when applied to real-time train scheduling.
+
+To address the growing complexity and uncertainty in urban rail operations, learning-based approaches %—particularly those using machine learning techniques—
+have gained increasing attention in the research of train scheduling problems. %To minimize priority-weighted delays, \cite{khadilkar2019scalable} employed reinforcement learning to optimize track allocations and timetables on bidirectional railway lines. 
+\cite{gattermann2023using} introduced a random forest classifier to replace complex penalty structures in crew scheduling by predicting planners’ preferences, achieving higher acceptance rates with minimal cost increase. 
+\cite{ying2022adaptive} applied proximal policy optimization to train scheduling with flexible train composition, using neural networks for policy learning and a masking scheme to enforce constraint satisfaction. \cite{kuppusamy2020deep} addressed energy-efficient timetable rescheduling by training a long short-term memory (LSTM) network to select optimal train operation modes under varying conditions. \cite{wang2022shortening} designed a deep neural network to optimize train dwell times in metro systems by balancing the waiting time on the platforms and the travel time onboard. By leveraging gated recurrent units and graph attention networks, it captures spatio-temporal passenger flow patterns and inter-train interactions. However, learning-based approaches typically have constraint satisfaction issues, which limit their applicability, as safety remains a crucial requirement in railway operations.
+
+Recent studies on mixed-integer programming problems have explored the integration of learning-based and optimization-based approaches, which aim to combine the computational efficiency of learning methods with the constraint satisfaction capabilities of optimization-based approaches.
+In \cite{cauligi22_PRISM} and \cite{masti2020}, the discrete and continuous decision variables of the mixed-integer programming problem are determined separately by a supervised learning classifier and by the solution of an optimization problem, respectively. In a similar setting, \cite{dasilva2024integrating} applied reinforcement to determine the discrete decision variables and optimization to compute the continuous decision variables.
+% that decouple the decision on the discrete and continuous decision variables are presented. In these works, a supervised learning classifier is utilized to determine the discrete variables, while optimization is employed to determine the continuous variables.
+% \textcolor{red}{add literature on integrating learning and optimization. e.g., Related work: Learning-based methods. PRISM. Microgrid\_RL. Masti/Pippia.} 
+Integrated approaches have also been explored in train scheduling problems. \cite{zhang2024integrated} combined reinforcement learning with constrained optimization for train rescheduling, where integer variables were determined using a double deep Q-network, after which the MILP problem was transformed into a linear programming problem for efficient solution. However, the proposed learning-based approach has scaling issues and is limited to small-scale cases. 
+Our recent work \citep{liu2025learningbasedmodelpredictivecontrol} integrated machine learning into MPC to better capture passenger flow patterns and improve rescheduling responsiveness. To enhance computational efficiency, presolve techniques were developed to reduce the integer solution space, and an LSTM network was trained to predict integer variables. Nonetheless, the use of learning introduced a modest degradation in closed-loop performance.
+% \textcolor{red}{introduce the remaining issues in our journal paper, one sentence}.
+
+Based on previous work in \cite{liu2025learningbasedmodelpredictivecontrol}, the current paper introduces a state reduction approach for learning-based MPC for train rescheduling.
+Specifically, a multi-resolution state design is integrated into the control framework, where a low-resolution state space is utilized for learning, while the full state space is employed in MPC.
+For the same case study as in \cite{liu2025learningbasedmodelpredictivecontrol}, we demonstrate that the proposed method improves closed-loop performance and reduces computational resource usage. 
+% As a result, we demonstrate in a case study that the definition of state used for learning can be different that the one used for the MPC controller. 
+% Moreover, for large scale systems, reducing the state dimension has a dramatic effect on lowering the required computational resources for training, validation, and testing.
+
+The remainder of this paper is structured as follows. Section~\ref{problem} introduces the train scheduling model and the corresponding problem description. Section~\ref{method} introduces the proposed state reduction methodology and its integration with the learning-based MPC approach. Section~\ref{case_study} presents a case study to illustrate the effectiveness of the developed approach. Section~\ref{conclusion} concludes the paper and outlines future research directions.
+
+\section{Problem description}\label{problem}
+% \section{Train rescheduling modeling}
+% \section{Mathematical Background}
+% \section{System Modeling}
+
+% This section aims at briefly describing the train rescheduling problem. For compactness, the entire modeling is not shown here.
+We apply the passenger flow model developed in \cite{liu2025learningbasedmodelpredictivecontrol} for the train rescheduling problem, where trains depart at regular intervals, time-varying passenger flows are approximated as piecewise constant functions over fixed time windows, and the composition of trains is flexibly adjusted to meet real-time passenger demand.  A concise overview of the model and its associated optimization problem is provided below. For comprehensive descriptions and theoretical foundations, readers are referred to \cite{liu2025learningbasedmodelpredictivecontrol}.
+
+We consider the problem of minimizing passenger delays and operational costs within the operational constraints. In urban rail transit systems, a train service starts at the origin station, stops at each station along the route, and then either returns to the depot or links with another service at the depot.  The total passenger delay relative to platform $p$ and train service $k_p$ is defined as
+\begin{align}\label{eq:cost_passenger_nonlinear}
+J_p^\mathrm{pass}(k_p) = &n_{p}(k_p)\left( {d_{p}(k_p) - d^\mathrm{pre}_{p}(k_p)} \right)+ \nonumber\\
+&+ n^\mathrm{after}_{p}(k_p)\left( { d^\mathrm{pre}_{p}(k_p+1) -  d_{p}(k_p)} \right)
+\end{align}
+where $d^\mathrm{pre}_p(k_p)$ represents the predetermined departure time of train service $k_p$ at platform $p$ in the original timetable, and $d_p(k_p)$ is the actual departure time of train service $k_p$ at platform $p$, $n_p(k_p)$ and $n_p^\mathrm{after}(k_p)$ are the number of passengers at platform $p$ at time $d^\mathrm{pre}_p(k_p)$ and immediately after $d_p(k_p)$, respectively. %The first term on the right-hand side represents the delay for passengers departing from platform $p$ with train service $k_p$. The second term is the expected delay for the passengers that did not board train service $k_p$ and have to wait for the next train service $k_p+1$. 
+The operational costs are described by
+\begin{equation}\label{lmpc-cost}
+{J_p^\mathrm{cost}}(k_p) = \ell_{p}(k_p){E_p^\mathrm{energy}} + \eta_{k_p,p}{E_p^\mathrm{add}},
+\end{equation}
+where $\ell_{p}(k_p)$ is the train composition (i.e., the number of train units) of train service $k_p$ when it departs from platform $p$, $E_p^\mathrm{energy}$ is the average energy consumption for the train service from platform $p$ to the next platform, $\eta_{k_p,p}$ is a binary variable describing whether the train composition of the train service is changed, and $E_p^\mathrm{add}$ is the cost for changing the train composition. The cost \eqref{eq:cost_passenger_nonlinear} is nonlinear, but it can be approximated by a linear expression by using upper and lower bounds for the variable $d_p(k_p) \in [d^\mathrm{pre}_{p}(k_p), d^\mathrm{pre}_{p}(k_p+1)\big)$ as follows:
+\begin{align}\label{eq:cost_passenger_linear}
+J_p^\mathrm{pass}(k_p) \approx & \ w_3 n_{p}(k_p)\left( {d^\mathrm{pre}_{p}(k_p+1) - d^\mathrm{pre}_{p}(k_p)} \right)+ \nonumber\\
+&+ n^\mathrm{after}_{p}(k_p)\left( { d^\mathrm{pre}_{p}(k_p+1) -  d^\mathrm{pre}_{p}(k_p)} \right),
+\end{align}
+where $w_3$ is a weighing factor used to reduce the approximation error. 
+
+The passenger flow model and the corresponding optimization problem are given as:
+\begin{subequations}\label{problem_original}
+\small
+\begin{align}
+&\mathop {\min }   J({\kappa_0})\! :=\! \sum\limits_{p \in \mathcal{P}}\! \sum\limits_{\ k_p \!\in \!\mathcal{N}_p(\!\kappa_0)} \!\left( \!{w_1 J_p^\mathrm{pass}(k_p) + w_2 J_p^\mathrm{cost}(k_p)} \right),\\
+&\mathrm{subject}\quad\mathrm{to:} \nonumber\\
+ & d^\mathrm{pre}_{p}(k_p) \le d_{p}(k_p) < d^\mathrm{pre}_{p}(k_p+1),\\
+  &d_{p}(k_p) = a_{p}(k_p) + \tau_{p}(k_p),\\
+  &a_{p}(k_p+1) = d_{p}(k_p) + h_{p}(k_p),\\
+  &h_{p}(k_p) \ge h^\mathrm{min}_{p},\\
+%   &a_{\mathrm{s}^\mathrm{pla}\left( p \right)}(k_p) = d_{p}(k_p) + r_{p}(k_p),\\
+%  &r_{p}^\mathrm{min} \le r_{p}(k_p) \le r_{p}^\mathrm{max},\\
+%   &a_{\mathrm{s}^\mathrm{pla}\left( p \right)}(k_{\mathrm{s}^\mathrm{pla}\left( p \right)})= d_{p}(k_{p}) + r_{p}^\mathrm{turn}(k_{p}),\\
+%  &r_{p}^\mathrm{turn,\min} \le r_{p}^\mathrm{turn}(k_{p}) \le r_{p}^\mathrm{turn,\max},\\
+ %  &\ell_{p}(k_p) = \ell_{\mathrm{p}^\mathrm{pla}\left( p \right)}(k_{p}) + \sigma_p y_{p}(k_p), \\
+ % & {\xi_{k_p,k_{p'},p,p'}} = \left\{ {\begin{array}{*{20}{l}}
+ % {1,\quad {\rm{if}}\quad {d_{p}(k_{p})} \ge d_{p'}(k_{p'}) + t_{p'}^\mathrm{roll};}\\
+ % {0,\quad {\rm{otherwise}},}
+ % \end{array}} \right.\\
+ %  & \sum_{k_p \in {\mathcal{I}}_{p}} \! {y_{p}(k_{p})} \!+\! \sum_{p' \!\in\! \mathrm{dep}(z)\backslash\{p\}} \sum_{k_{p'} \in {\mathcal{I}}_{p'}} \xi_{k_p,k_{p'},p,p'} {y_{p'}(k_{p'}\!)} \!\le\! N_z^{\mathrm{train}},\\
+& n_{p}(k_p+1) = n_{p}(k_p) + \rho_{p}(k_p\!+\!1)\left(d^\mathrm{pre}_{p}(k_p\!+\!1) - d^\mathrm{pre}_{p}(k_p) \right) \nonumber\\
+& \qquad \qquad  \qquad + n^\mathrm{trans}_{p}(k_p) - n^\mathrm{depart}_{p}(k_p),  \\
+& n^\mathrm{depart}_{p}(k_p) \le C_{p}(k_p),\\
+& C_{p}(k_p) = \ell_{p}(k_p) C_\mathrm{max},\\
+& \ell_{\min}\le \ell_{p}(k_{p}) \le \ell_{\max},\\
+& n^\mathrm{depart}_{p}(k_p) \le n^\mathrm{before}_{p}(k_p) ,\\
+& n^\mathrm{before}_{p}(k_p) = n_{p}(k_p) + \rho_{p}(k_p+1) \left(d_{p}(k_p) - d^\mathrm{pre}_{p}(k_p) \right) \nonumber\\
+& \qquad \qquad  \qquad + n^\mathrm{trans}_{p}(k_p),\\
+& n^\mathrm{arrive}_{p}(k_p) =  n^\mathrm{depart}_{\mathrm{p}^\mathrm{pla}\left( p \right)}(k_p),\\
+% & n^\mathrm{trans}_{p}(k_p) =  \sum_{q\in \mathrm{pla}(p)}{\sum_{k_q\in\mathcal{I}_q}{ \chi_{k_q,q,k_p,p} \beta_{q,p} n^\mathrm{arrive}_{q}(k_q)}},\\
+% & {\chi_{k_q,q,k_{p},p}} = 
+% \begin{cases}
+%     1, & \mathrm{if} \ {d_{p}^\mathrm{pre}(k_{p}\!-\!1)}\! < \!d_{q}^\mathrm{pre}(k_{q})\! +\! t_{q}^\mathrm{trans} \!\le \!{d_{p}^\mathrm{pre}(k_{p})};\\
+%     0, & \mathrm{otherwise},
+% \end{cases}\\
+& n^\mathrm{after}_{p}(k_p) = n^\mathrm{before}_{p}(k_p) - n^\mathrm{depart}_{p}(k_p).
+\end{align}
+\end{subequations}
+where $a_p(k_p)$, $\tau_p(k_p)$, $h_p(k_p)$ represent the decision variables for the arrival time, dwell time, and headway of train service $k_p$ at platform $p$, respectively; $\rho_p(k_p+1)$ is the passenger flow for train service $k_p+1$ at platform $p$, $n^\mathrm{depart}_{p}(k_p)$ is the number of passengers that boarded train service $k_p$, and $n^\mathrm{trans}_{p}(k_p)$ is the number of passengers that transfer to platform $p$ since the departure of train service $k_p$; $C_{p}(k_p)$ demotes the total capacity of train service $k_p$, and $C_\mathrm{max}$ is the capacity of each train unit. The integer decision variables are the order of the trains at the terminal station of a line, and the number of train compositions $\ell_{p}(k_{p})$ when train service $k_{p}$ departs from the terminal station. 
+
+% In urban railway systems, a train line is a route whose trains have the same origin, destination, and intermediate stations. Moreover, we consider bidirectional train lines where each station has a platform on each direction. These concepts are illustrated in Fig. \ref{fig:lmpc-line}. A train service is a train departure from the origin of a train line that visits each intermediate station, reaches the destination of the train line, turns around and returns to the origin. Each train service has an adjustable number of train units that can be changed at the depots of the train line. 
+
+% \begin{figure}[htbp]
+% \begin{center}
+% \includegraphics[width=8.5cm]{LinePlatform.pdf}    % The printed column width is 8.4 cm.
+% \caption{Layout of a bidirectional urban rail transit line. Reproduced from \cite{liu2025learningbasedmodelpredictivecontrol}.}
+% \label{fig:lmpc-line}
+% \end{center}
+% \end{figure}
+
+% We assume that the railway system operates according to a predetermined timetable, which consists of the departure and arrival times for each platform of a train line. Furthermore, the departure times of such a timetable have fixed frequency.
+% % e.g., a train departure every $4$ minutes. 
+% On the passenger side, 
+% % frequent train departures in fixed intervals
+% train departures with high and fixed frequency facilitate planning and prevent long waiting times. Let $d^\mathrm{pre}_p(k_p)$ denote the departure time of train service $k_p$ at platform $p$ for the predetermined timetable. In this work, we allow the departure time to be changed as long as the average departure frequency remains the same, i.e.,
+% \begin{equation*}
+%     d^\mathrm{pre}_p(k_p) \leq d_p(k_p) <d^\mathrm{pre}_p(k_p+1),
+% \end{equation*}
+% where $d_p(k_p)$ represents the decision variable for the departure time of train $k_p$ at platform $p$. Hence, the departure time can adjusted within the window relative to two successive departures of the predetermined timetable. The arrival time $a_p(k_p)$ of train service $k_p$ at platform $p$ has to satisfy operational constraints relative to the minimum headway time and the minimum and maximum running times from platform $p$ to its successor platform.
+
+% The passenger flow on each platform is assumed to be piecewise constant between two consecutive departures of the predetermined timetable, see Fig. \ref{fig:passenger_flow}. Then the number of passengers for train service $k_p +1$ at platform $p$ can be represented as 
+% \begin{align}\label{lmpc-n}
+% n_{p}(k_p+1) = n_{p}(k_p) + &\rho_{p}(k_p+1)\left(d^\mathrm{pre}_{p}(k_p+1) - d^\mathrm{pre}_{p}(k_p) \right) \nonumber \\ 
+% &+ n^\mathrm{trans}_{p}(k_p) - n^\mathrm{depart}_{p}(k_p),  
+% \end{align}
+% where $\rho_p(k_p+1)$ is the passenger flow for train service $k_p+1$ at platform $p$, $n^\mathrm{trans}_{p}(k_p)$ is the number of passengers that transfer to platform $p$ since the departure of train service $k_p$, and $n^\mathrm{depart}_{p}(k_p)$ is the number of passengers that boarded train service $k_p$. It is assumed that the each passenger boards the train service if there is enough capacity, i.e.,
+% \begin{equation}
+%     n_p^\mathrm{depart}(k_p) = \min\{n_p^\mathrm{before}(k_p),\ C_p(k_p)\},
+% \end{equation}
+% where
+% \begin{align}\label{lmpc-w}
+%     n^\mathrm{before}_{p}(k_p) = n_{p}(k_p) + & \rho_{p}(k_p+1) \left(d_{p}(k_p) - d^\mathrm{pre}_{p}(k_p) \right)\\
+%     &+ n^\mathrm{trans}_{p}(k_p) \nonumber
+% \end{align}
+% is the number of passengers at platform $p$ immediately before the departure of train service $k_p$. The passenger capacity for train service $k_p$ at platform $p$ is defined as
+% \begin{equation}
+%     C_{p}(k_p) = \ell_{p}(k_p) C_\mathrm{max},
+% \end{equation}
+% where $\ell_{p} (k_p)$ represents the number of train units (or train composition) for train service $k_p$ at platform $p$ and $C_\mathrm{max}$ is the capacity of each train unit. The train composition can be altered in platforms that are attached to a depot. Furthermore, each train service must have a minimum and maximum number of train units, which is expressed as the constraint 
+% % the number of train units must satisfy the following constraint
+% \begin{equation}
+%     \ell_{\min}\le \ell_{p}(k_{p}) \le \ell_{\max},
+% \end{equation}
+% % where $\ell_{\min}$ and $\ell_{\max}$ are the minimum and maximum number of train units respectively.
+% The number of passengers at platform $p$ after the departure of train service $k_p$ is represented by
+% \begin{equation}
+%     n^\mathrm{after}_{p}(k_p) = n^\mathrm{before}_{p}(k_p) - n^\mathrm{depart}_{p}(k_p).
+% \end{equation}
+
+% \begin{figure}[htbp]
+% \begin{center}
+% \includegraphics[width=9cm]{PlatformDemandsColor.pdf}    % The printed column width is 8.4 cm.
+% \caption{Illustration of piecewise approximation of passenger demands for platform $p$. Reproduced from \cite{liu2025learningbasedmodelpredictivecontrol}.}
+% \label{fig:passenger_flow}
+% \end{center}
+% \end{figure}
+
+
+
+% For each platform, the train services must obey certain additional operational constraints. 
+% % For safety, there must be a minimum time between the arrival and the departure of successive trains at the same platform. 
+% % Besides, there are lower and upper bounds for the running times between each platforms. 
+% At the terminal stations, there are also lower and upper bounds for the time required for turning around the train service to change its direction. The number of trains of each train service is constrained to lower and upper bounds. Finally, there is finite and fixed number of trains in each line. By defining auxiliary binary variables, the constraints can be suitably expressed as a linear matrix inequality.
+
+% The control time step is defined as the span of time between two consecutive departure times of the predetermined timetable. This quantity is assumed to be constant for all of the platforms of a train line. Moreover, we use $\kappa$ to express the index of the control time step. 
+By using the transformation method in \cite{bemporad1999control,williams2013model}, the finite-horizon optimal control problem for the MPC controller can finally be defined as  \citep{liu2025learningbasedmodelpredictivecontrol}:
+\begin{subequations}\label{eq:minlp}
+\begin{align}
+&{\mathop {\min}\limits_{\scriptstyle\substack{{\bm{x}}(\kappa_0),\\ {\bm{\epsc}}(\kappa_0),{\bm{\epsd}}(\kappa_0)}}  J^{(\mathrm{MPC})}(\chi(\kappa_0)) := \sum\limits_{\kappa = {\kappa_0}}^{{\kappa_0}+ {N_p} - 1} {L(x(\kappa),\epsc(\kappa),{\epsd}(\kappa))} } \label{lmpc-obj}\\
+&\quad {\rm{s}}.{\rm{t}}.\quad {x}(\kappa + 1) = {A_\kappa}{x}(\kappa) + {B_{1,\kappa}}{\epsc}(\kappa) + {B_{2,\kappa}}{\epsd}(\kappa),\label{eq:minlp_state_dynamics}\\
+&\quad \qquad {D_{3,\kappa}}{x}(\kappa) + {D_{1,\kappa}}{\epsc}(\kappa) +  {D_{2,\kappa}}{\epsd}(\kappa)  \le  {D_{4,\kappa}},\label{eq:minlp_constraints}\\
+&\quad  \qquad \kappa = {\kappa_0}, \cdots ,{\kappa_0} + N_p - 1, \nonumber
+\end{align}
+\end{subequations}
+% \begin{subequations}\label{eq:minlp}
+% \begin{align}
+% &{\mathop {\min }\limits_{\scriptstyle{\bm{x}}(\kappa_0),{\bm{\epsc}}(\kappa_0),{\bm{\epsd}}(\kappa_0)} \!  J(\kappa_0) := \sum\limits_{\kappa = {\kappa_0}}^{{\kappa_0}+ {N_p} - 1} {L(x(\kappa),\epsc(\kappa),{\epsd}(\kappa))} } \label{lmpc-obj}\\
+% &\quad {\rm{s}}.{\rm{t}}.\quad {x}(\kappa + 1) = {A_\kappa}{x}(\kappa) + {B_{1,\kappa}}{\epsc}(\kappa) + {B_{2,\kappa}}{\epsd}(\kappa),\label{eq:minlp_state_dynamics}\\
+% & \quad \qquad {D_{3,\kappa}}{x}(\kappa) + {D_{1,\kappa}}{\epsc}(\kappa) +  {D_{2,\kappa}}{\epsd}(\kappa)  \le  {D_{4,\kappa}},\label{eq:minlp_constraints}\\
+% & \quad  \qquad \kappa = {\kappa_0}, \cdots ,{\kappa_0} + N_p - 1, \nonumber
+% \end{align}
+% \end{subequations}
+where $ J^{(\mathrm{MPC})}(\chi (\kappa_0))$ represents the cost function as defined in (\ref{problem_original}), ${\bm{\epsc}}(\kappa_0) = [{\epsc}^\intercal (\kappa_0), {\epsc}^\intercal(\kappa_0+1), \ldots, {\epsc}^\intercal(\kappa_0+N_p-1)]^\intercal$ represents the continuous decision variables over the prediction horizon, ${\bm{\epsd}}(\kappa_0) = [{\epsd}^\intercal (\kappa_0), {\epsd}^\intercal(\kappa_0+1), \ldots, {\epsd}^\intercal(\kappa_0+N_p-1)]^\intercal$ expresses the discrete decision variables over the prediction horizon, and $N_p$ is the prediction horizon. Particularly, $\bm{\epsd}(\kappa_0)$ represents the train composition, and $\bm{\epsc}(\kappa_0)$ describes the departure and arrival times for each train service.
+The system state is expressed as 
+\begin{equation}\label{eq:augmented_state}
+    \chi (\kappa) := [x^\intercal(\kappa_0),\ \bm{\rho}^\intercal(\kappa) ]^\intercal,
+\end{equation}
+where $\bm{x}(\kappa_0) = [{x}^\intercal (\kappa_0), {x}^\intercal(\kappa_0+1), \ldots, {x}^\intercal(\kappa_0+N_p-1)]^\intercal$ collects the dynamic component of the state trajectory over the prediction horizon, $\bm{\rho}(\kappa_0) = [\rho(\kappa_0)^\intercal, \rho(\kappa_0+1)^\intercal,\ldots, \rho(\kappa_0+N_\mathrm{p}-1)^\intercal]$ represents a concatenated vector with the expected passenger flows for each platform of the train line over the prediction horizon. 
+More specifically, $x(\kappa_0)$ is composed of the number of passengers at each platform, the train composition for each running train service, and the number of trains in each depot of the line.
+The optimization program \eqref{eq:minlp} can be either a mixed-integer nonlinear program (MINLP) or a linear mixed program (MILP) depending on whether the accurate nonlinear cost \eqref{eq:cost_passenger_nonlinear} or the approximate linear cost \eqref{eq:cost_passenger_linear} is chosen.
+% where $\bm{x}(\kappa_0) = [{x}^\intercal (\kappa_0), {x}^\intercal(\kappa_0+1), \ldots, {x}^\intercal(\kappa_0+N_p-1)]^\intercal$ collects the predicted system state trajectory over the prediction horizon, $\bm{\rho}(\kappa_0) = [\rho(\kappa_0)^\intercal, \rho(\kappa_0+1)^\intercal,\ldots, \rho(\kappa_0+N_\mathrm{p}-1)^\intercal]$ represents a concatenated vector with the passenger flows for each platform of the train line over the prediction horizon. 
+% Moreover, $\bm{x}(\kappa_0)$ is composed of the number of passengers at each platform, the train composition for each running train service, and the number of trains in each depot of the line.
+% The cost \eqref{eq:minlp} can be either nonlinear or linear depending on whether the accurate nonlinear cost \eqref{eq:cost_passenger_nonlinear} or the approximate linear cost \eqref{eq:cost_passenger_linear} is chosen.
+
+% Consider a train line with $2P$ platforms as shown in Fig. \ref{fig:lmpc-line}. Let the departure and arrival times over a prediction horizon $N_p$ be collected into vectors as follows
+% \begin{equation}
+% \begin{split}
+%     \mathbf{d}(\mathbf{k})=[d_1(k_1),...,& d_1(k_1+N_p),d_2(k_2),...,\\ d_2(k_2+N_p),....  &,d_{2P}(k_{2P}), ...,d_{2P}(k_{2P}+N_p)] \ \ \text{and} \\
+%     \mathbf{a}(\mathbf{k})=[a_1(k_1),...,& a_1(k_1+N_p),a_2(k_2),...,\\ a_2(k_2+N_p),....  &,a_{2P}(k_{2P}), ...,a_{2P}(k_{2P}+N_p)] \ 
+% \end{split}
+% \end{equation} 
+% where the initial indices of the train services
+% % $\{k_i\}_{i=1}^{2P}$
+% $\mathbf{k}=[k_1,...,k_{2P}]$
+% are determined based on the predetermined schedule and the time of the day.
+% % denote the collection of the continuous decision variables over a prediction horizon $N_\p$
+% $\epsc(\mathbf{k}) = [\mathbf{d}^\T(\mathbf{k}),\ \mathbf{a}^\T(\mathbf{k})]^\T$
+% % $\{\{d_p(k_p+l)\}_{p=1}^{2P}\}_{l=0}^{N_p}$
+
+% The discrete decision variable $\epsd$ represents the train composition for each train service. The continuous decision variable $\epsc$ denotes the train departure and arrival times for each platform. 
+% The system state $x$ is composed of the number of passengers for each platform, the predicted passenger flow of each platform, the train composition of operating trains, and the number of trains in the depots.
+
+\section{State Reduction Approach for Learning-based MPC}\label{method}
+
+This section focuses on the proposed state reduction approach, which integrates into the learning-based MPC framework presented in \cite{liu2025learningbasedmodelpredictivecontrol}. 
+% Therein, the computation of the discrete decision variables and the continuous decision variables is decoupled. 
+% A supervised learning classifier is trained offline to predict the optimal discrete decision variables -- the train composition -- over a prediction horizon. During online operation, the predicted discrete variables can be used to turn the original mixed-integer nonlinear (linear) program \eqref{eq:minlp} into a nonlinear (linear) program \eqref{eq:nlp}, depending on the choice of the passenger cost: nonlinear \eqref{eq:cost_passenger_nonlinear} or linear \eqref{eq:cost_passenger_linear}. 
+% Then the continuous discrete variables -- the departure and arrival times -- can be determined by the solution of \eqref{eq:nlp}.
+% In the context of train rescheduling, the supervised learning classifier determines the train composition, while the MPC controller computes the departure and arrival times. 
+In the following, we describe the decoupling of discrete and continuous decision variables, the design of the state representation with different resolutions for learning and MPC, and the training and inference of the learning-based MPC approach with state reduction. 
+% A reduced state representation is employed for learning, while the full unreduced state is used for MPC.
+% for learning is introduced in the framework of \cite{liu2025learningbasedmodelpredictivecontrol}
+% In the following, the learning-based MPC approach is examined thoroughly.
+
+% In our approach, the computation of the discrete decision variables and the continuous decision variables is decoupled. A supervised learning classifier is trained offline to predict the optimal discrete decision variables over a prediction horizon. During online operation, the predicted discrete variables can be used to turn the original mixed-integer nonlinear (linear) program \eqref{eq:minlp} into a nonlinear (linear) program, depending on the choice of the passenger cost: nonlinear \eqref{eq:cost_passenger_nonlinear} or linear \eqref{eq:cost_passenger_linear}. In the setting of train rescheduling, the supervised learning classifier determines the train composition, while the MPC controller computes the departure and arrival times.
+
+% \begin{equation}
+%     \bm{\chi}(\kappa) = [\bm{n}^\intercal(\kappa), \bm{\rho}^\intercal(\kappa), \bm{N}^\intercal(\kappa) ]^\intercal,
+% \end{equation}
+\subsection{Decoupling of the decision variables}\label{sec:decoupling}
+% Let the state $\chi(\kappa)$ be represented as
+% \begin{equation}\label{eq:augmented_state}
+%     \chi(\kappa) = [x^\intercal(\kappa_0),\ \bm{\rho}^\intercal(\kappa) ]^\intercal,
+% \end{equation}
+% where $\bm{x}(\kappa_0)$ is defined in \eqref{eq:minlp} and $\bm{\rho}(\kappa_0)$ represents a concatenated vector with the passenger flows for each platform of the train line over the prediction horizon.
+% where $\bm{x}(\kappa_0)$, defined in \eqref{eq:minlp}, is a collection of the system states over the prediction window $[\kappa_0 \cdot T,\ (\kappa_0+N_p-1) \cdot T]$, where $T$ is the length of control time step. Particularly, $\bm{x}(\kappa_0)$ is composed of the number of passengers at each platform at time, the train composition for each running train service at time step, and the number of trains in each depot of the line. Moreover, the variable $\bm{\rho}(\kappa_0)$ represents a concatenated vector with the passenger flows for each platform of the train line over the prediction horizon.
+
+Consider a supervised learning classifier $\phi :\chi \mapsto \bm{\epsd}$ that approximates the mapping from the state $\chi$ into the optimal discrete decision variables $\bm{\epsd}^*$ over the prediction horizon, i.e., $\phi(\chi) \approx \bm{\epsd}^*(\chi)$,
+% \begin{equation}\label{eq:mapping}
+%     (\phi :\chi \mapsto \bm{\epsd})  \approx (\phi^*:\chi \mapsto \bm{\epsd}^*),
+% \end{equation}
+% \begin{equation}\label{eq:mapping}
+%     ,
+% \end{equation}
+where $\bm{\epsd}^*(\chi)$ is the solution of \eqref{eq:minlp} in the conditions specified by the state $\chi$.
+During online operation, the predicted discrete variables $\bm{\epsd} = \phi(\chi)$ can be used to turn the original problem \eqref{eq:minlp} into a nonlinear (NLP) or linear (LP) problem, depending again on the choice of the performance index.
+% mixed-integer nonlinear (linear) program (MINLP, MILP) \eqref{eq:minlp} into a nonlinear (linear) program (NLP, LP) \eqref{eq:nlp}, depending on the choice of the passenger cost: nonlinear \eqref{eq:cost_passenger_nonlinear} or linear \eqref{eq:cost_passenger_linear}. 
+Then the continuous decision variables -- the departure and arrival times -- can be determined by the solution of the following optimization problem:
+% Such a function $\phi$ can be used to set the discrete variables of the optimization problem \eqref{eq:minlp}, which then only needs to optimize over real-valued variables. Hence, the MINLP (MILP) of \eqref{eq:minlp} is simplified into a nonlinear (linear) program (NLP, LP) depending on which passenger cost -- \eqref{eq:cost_passenger_nonlinear} or \eqref{eq:cost_passenger_linear} -- is used in the formulation. 
+% The optimization problem \eqref{eq:minlp} with precomputed discrete variables $\bm{\epsd}$ can be then rewritten as
+\begin{subequations}\label{eq:nlp}
+\begin{align}
+&{\mathop {\min }\limits_{\scriptstyle{\bm{x}}(\kappa_0),{\bm{\epsc}}(\kappa_0)} \!  J_\mathrm{d}^{(\mathrm{MPC})}(\chi(\kappa_0),\ \bm{\epsd}) := \sum\limits_{\kappa = {\kappa_0}}^{{\kappa_0}+ {N_p} - 1} {L^{(\epsd)}(x(\kappa),\epsc(\kappa))} } \label{eq:nlp_obj}\\
+&\quad {\rm{s}}.{\rm{t}}.\quad {x}(\kappa + 1) = {A_\kappa}{x}(\kappa) + {B_{1,\kappa}}{\epsc}(\kappa) + {B_{2,\kappa}^{(\epsd)}},\label{eq:nlp_state_dynamics}\\
+& \quad \qquad {D_{3,\kappa}}{x}(\kappa) + {D_{1,\kappa}}{\epsc}(\kappa)  \le  {D_{4,\kappa}^{(\epsd)}},\label{eq:nlp_constraints}\\
+& \quad  \qquad \kappa = {\kappa_0}, \cdots ,{\kappa_0} + N_p - 1, \nonumber
+\end{align}
+\end{subequations}
+where the cost $L^{(\epsd)}$ and the matrices (${B_{2,\kappa}^{(\epsd)}},{D_{4,\kappa}^{(\epsd)}}$) are introduced to reflect that $\epsd$ no longer is a decision variable.
+
+% In our setting, there is a temporal relation between the discrete decision variables $\epsd$ since the train composition is over a prediction horizon.
+
+% To capture the temporal relation between the discrete decision variables, we propose the use of recurrent neural networks, which encode this information in its internal state, to be the estimator described in \eqref{eq:mapping}.
+% The state design, training and inference of such an estimator are described in the following sections.
+
+\subsection{State reduction}
+
+State dimensionality reduction in neural networks has several benefits, from training to inference. In a simpler state space, the neural network typically generalizes better, resulting in improved accuracy \citep{chandrashekar2014survey}. During training, the usage of computational resources can be lowered, as a lower-dimensional dataset occupies less memory. 
+Alternatively, while maintaining the storage requirement identical, the number of points in the training set can be increased for a lower-dimensional state, which may enhance accuracy. Moreover, a lower-dimensional state space allows for a simpler neural network architecture since fewer neurons are required in each layer, allowing faster inference times. 
+These benefits highlight the importance of proper design of the state space for learning. 
+In what follows, we discuss a state reduction method that is tailored to the train rescheduling problem.
+
+The core idea is to partition the vector $\bm{\rho}(\kappa)$ into a predetermined number $N_\mathrm{s}$ of segments, and then compute the average passenger flow for each segment. To illustrate this process, we consider the passenger flow at platform $p$ over a number $M=H\cdot N_\mathrm{s}$ of train services $\bm{\rho}_p=[\rho_p(k_p),...,\rho_p(k_p+M-1)]$, where $H$ is the length of the segments. Let $[\bm{\rho}_p]_j$ be the $j$th element of the vector $\bm{\rho}_p$ and $[\bm{\rho}_p]_{i:j}$ a slice of the vector $\bm{\rho}_p$ between the indices $i$ and $j$ provided that $i<j$. The state reduction procedure can be expressed as
+% \begin{equation}\label{eq:state_reduction}
+% \begin{split}
+%     [\bm{\rho}^\mathrm{reduced}_p]&_{k\cdot H:(k+1)\cdot H}= \mathrm{mean(}[\bm{\rho}_p]_{k\cdot H:(k+1)\cdot H}) \\
+%     & \text{for }k=0,...,N_\mathrm{s}
+% \end{split}
+% \end{equation}
+\begin{equation}\label{eq:state_reduction}
+\begin{split}
+    [\bm{\rho}^\mathrm{reduced}_p]_{k}= \mathrm{mean(}[\bm{\rho}_p]_{k\cdot H:(k+1)\cdot H})
+    \text{ for }k=0,...,N_\mathrm{s}
+\end{split}
+\end{equation}
+where
+$
+    \mathrm{mean}([\bm{\rho}_p]_{i:j}) = \frac{1}{j-i}\sum_{q=i}^{j-1}[\bm{\rho}_p]_q
+$.
+% and $H = \lfloor M/N_\mathrm{s} \rfloor$ is the number of samples in each of the segments. The last segment of the vector may have more elements than $H$ if $M$ is not divisible by $N_\mathrm{s}$. 
+This operation reduces the number of elements in the original vector by a factor of $H$. 
+The state reduction preserves the mean of the original vector, ensuring no error in the computation of total 
+Hereafter, the collection of the passenger flow $\bm{\rho}_p^\mathrm{reduced}$ across all platforms of a train line is denoted by $\bm{\rho}^\mathrm{reduced}$.
+number of arriving passengers for each segment.
+% Moreover, the state reduction preserves the mean of the original vector. 
+% This property is important since the reduction then does not introduce any error in the computation of total number of arriving passengers for each segment. 
+% meaning that it does not introduce any error is the reduced state is used to compute the number of arriving passengers. 
+% approximates well the mean of the original vector. In particular, the approximation is exact when $M$ is divisible by $N_\mathrm{s}$.
+
+The discrete decision variable $\bm{\epsd}$, which represents the train composition of the train services over the prediction horizon, is relatively insensitive to fast changes in passenger flow over time. %This is due to the fact that the train composition of each train service is typically modified only at depots located at the terminal stations of a train line. 
+In this paper, we consider that train compositions can only be modified at depots located at the terminal stations of the line.  Thus, once the composition of the train of a particular train service is established, it has a lasting effect on the optimization problem \eqref{eq:nlp} as it cannot be changed on any of the intermediate platforms. 
+Consequently, the variable $\bm{\epsd}$ is more sensitive to long temporal patterns of the passenger flow rather than short ones.
+Therefore, we argue that a reduced passenger flow vector is more suitable for learning due to its lower dimensionality and its capacity to adequately capture the essential characteristics of the passenger flow required to estimate the optimal train composition.
+% might take several time steps for this variable to have a noticeable effect on the cost \eqref{eq:nlp_obj}.
+Consequently, a compact state such as $\bm{\rho}_p^\mathrm{reduced}$, which has lower resolution than $\bm{\rho}_p$, may be used for the estimator $\phi$. Finally, the state described in \eqref{eq:augmented_state} can be rewritten as
+\begin{equation}\label{eq:reduced_state}
+    \chi^\mathrm{learning}(\kappa) = [x^\intercal(\kappa),\  (\bm{\rho}^{\mathrm{reduced}}(\kappa))^\intercal ]^\intercal,
+\end{equation}
+and the estimator $\phi$ uses this reduced state.
+% of \eqref{eq:mapping} is redefined as
+% \begin{equation}
+%     \phi :\chi^\mathrm{learning} \mapsto \epsd, \ \phi(\chi^\mathrm{learning}) \approx \epsd^*(\chi^\mathrm{learning})
+% \end{equation}
+
+On the other hand, in the optimization problem \eqref{eq:nlp}, the unreduced passenger flow $\bm{\rho}$ is required to accurately model system dynamics. Furthermore, the continuous decision variable $\bm{\epsd}$, including departure and arrival times, has a relatively faster effect on \eqref{eq:nlp} and can react to faster changes in passenger flows. Hence, passenger flow $\bm{\rho}$ with the original resolution is more appropriate to be included in the MPC formulation of \eqref{eq:nlp} that computes $\bm{\epsd}$.
+% The train composition is typically changed only on depots located at the terminal stations of a train line, meaning that it might take several time steps for this variable to have a noticeable effect on the cost \eqref{eq:nlp_obj}. 
+% Consequently, the train composition is less sensitive to fast changes in the passenger flow.
+
+In essence, we advocate for the use of states with different levels of resolution for learning and optimization, leveraging the fact that the decision variables exhibit different sensitivities to changes in passenger flow. A low-resolution state is employed in learning to determine the discrete actions, while the original state representation is used in the MPC formulation to compute the continuous actions. In this manner, the state representation is tailored to the specific requirements of each component of the framework.
+
+% \begin{figure}[htb!]
+%     \centering
+%     \begin{tikzpicture}
+%         \begin{axis}[
+%             xlabel={Time step},
+%             ylabel={Passenger flow},
+%             title={},
+%             grid=major,
+%             % width=9.2cm,
+%             width=.48\textwidth,
+%             height=5cm,
+%             ymin=0.2, ymax=1.2,
+%             enlarge x limits=0.05, % <-- Add padding to left and right
+%             % enlarge y limits=0.35, % <-- Add padding to top and bottom
+%             ytick={0.2,0.4,0.6,0.8,1},
+%             xtick={0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16},
+%             % legend style={at={(0.5,-0.15)}, anchor=northwest, cells={align=left}},
+%             legend pos=north east,
+%             legend columns=2
+%         ]
+
+%         % First stair plot
+%         \addplot+[
+%             const plot,
+%             % const plot mark right,
+%             thick,
+%             dashed,
+%             blue,
+%             mark=none
+%         ] coordinates {
+%             (0, 0.9169089072761831)
+%             (1, 0.26925105154467605)
+%             (2, 0.24846955480228675)
+%             (3, 0.4201167142894815)
+%             (4, 0.5876701094717343)
+%             (5, 0.2879634539230588)
+%             (6, 0.7344530249744994)
+%             (7, 0.5991795177952477)
+%             (8, 0.9422102848618648)
+%             (9, 0.9511110004421444)
+%             (10, 0.7862329672891974)
+%             (11, 0.6622383428413366)
+%             (12, 0.49350741754970795)
+%             (13, 0.2569431053091682)
+%             (14, 0.7607879607512871)
+%             (15, 0.7774538926773424)
+%             (16, 0.7774538926773424)
+%         };
+%         \addlegendentry{$\bm{\rho_p}$}
+
+%         % Second stair plot
+%         \addplot+[
+%             const plot,
+%             % const plot mark left,
+%             thick,
+%             red,
+%             mark=none
+%         ] coordinates {
+%             (0, 0.46368655697815686)
+%             (1, 0.46368655697815686)
+%             (2, 0.46368655697815686)
+%             (3, 0.46368655697815686)
+%             (4, 0.552316526541135)
+%             (5, 0.552316526541135)
+%             (6, 0.552316526541135)
+%             (7, 0.552316526541135)
+%             (8, 0.8354481488586357)
+%             (9, 0.8354481488586357)
+%             (10, 0.8354481488586357)
+%             (11, 0.8354481488586357)
+%             (12, 0.5721730940718763)
+%             (13, 0.5721730940718763)
+%             (14, 0.5721730940718763)
+%             (15, 0.5721730940718763)
+%             (16, 0.5721730940718763)
+%         };
+%         \addlegendentry{$\bm{\rho}_p^{\mathrm{reduced}}$}
+%         \end{axis}
+%     \end{tikzpicture}
+%     \caption{A depiction of the state reduction for the passenger flow. The original vector is denoted by $\bm{\rho}_p$ in the blue dashed line and the reduced vector is represented by $\bm{\rho}_p^\mathrm{reduced}$ in the red solid line.}
+% \end{figure}
+
+
+\subsection{Training and inference}
+
+The procedure for the construction of the training dataset is described in Alg. \ref{alg:data_acquisition}. The training dataset is composed of tuples of states and their optimal solution for the discrete decision variables $\mathcal{D} = \{(\chi_\mathrm{learning}^{(k)},\ \bm{\epsd}^{(*,k)})\}_{k=1}^{N_\mathcal{D}}$. To generate a set of states that represent real operation, a number of episodes are started from random states within the operational range, and then the closed-loop trajectory with the optimal solution \eqref{eq:nlp} is simulated for a predetermined number of steps.
+
+\begin{algorithm}[htb]
+    \caption{Data acquisition}
+    \label{alg:data_acquisition}
+    \begin{algorithmic}[1] % [1] for line numbers
+            \State \textbf{Input:} training dataset $\mathcal{D} \leftarrow \{\}$
+            \For{episode = $1, ...,N_\mathrm{episodes}$}
+                \State Set random state $\chi$
+                \For{step = $1,...,N_\mathrm{steps}$}
+                \State Get $\bm{\epsd}^*$ and $\bm{\epsd}^*$ by solving \eqref{eq:minlp} for state $\chi$
+                \State Get $\chi_\mathrm{learning}$ via state reduction
+                \State $\mathcal{D} \leftarrow \mathcal{D} \  \cup \  \{(\chi_\mathrm{learning},\ \bm{\epsd}^*)\}$
+                \State Update $\chi$ by applying \eqref{eq:minlp_state_dynamics} with ($\bm{\epsd}^*,\ \bm{\epsd}^*$) 
+                % $\chi \leftarrow f_\chi (\chi,\ \bm{\epsd}^*,\ \bm{\epsd}^*)$
+                \EndFor
+            \EndFor
+            \State\textbf{Output:} training set $\mathcal{D}$
+    \end{algorithmic}
+\end{algorithm}
+
+With the training set $\mathcal{D}$, the supervised learning classifier in $\phi$ can then be trained. %For such a classifier, 
+% During inference, the discrete variables over the prediction horizon can be recursively computed by unrolling the LSTM network.
+We consider a set of hyperparameter configurations
+% $\mathcal{P}=\{\mathcal{P}_1, \mathcal{P}_2,...,\mathcal{P}_{n_\mathrm{NN}}\}$.
+$\mathcal{P}=\{\mathcal{P}_i\}_{i=1}^{n_\mathrm{NN}}$, such that for each $\mathcal{P}_i$, a classifier $\phi_i(\cdot)$ is trained via gradient descent.
+% , which can be determined by techniques such as grid-search, random search, and Bayesian optimization. 
+% Hyperparameter optimization is a critical step in neural network training for accuracy.
+% For each combination of hyperparameter $\mathcal{P}_i$, a classifier $\phi_i(\cdot)$ is trained via gradient descent. 
+Finally, the trained neural networks are stored in a set 
+% $\mathcal{N}=\{\phi_1, \phi_2,...,\phi_{n_\mathrm{NN}}\}$
+$\mathcal{N}=\{\phi_i\}_{i=1}^{n_\mathrm{NN}}$. 
+% The entire training procedure is given in Alg. \ref{alg:network_training}.
+As the choice of the classifier, we propose the use of recurrent neural networks, which are capable of encoding temporal dependencies in the discrete decision variables through their internal state.
+In particular, LSTM networks are selected for their ability to represent long-term dependencies in sequential data.
+
+% Hyperparameter optimization is a critical step in neural network training. It fundamentally consists of repeating training for a set of hyperparameters $\mathcal{P}=\{\mathcal{P}_1, \mathcal{P}_2,...,\mathcal{P}_{n_\mathrm{NN}}\}$, which can be determined by techniques such as grid-search, random search, and Bayesian optimization. For each combination of hyperparameter $\mathcal{P}_i$, a classifier $\phi_i(\cdot)$ is trained via gradient descent. The training process is described in Alg. \ref{alg:network_training}.
+
+% \begin{algorithm}[htb]
+%     \caption{Neutral network training}
+%     \label{alg:network_training}
+%     \begin{algorithmic}[1] % [1] for line numbers
+%             \State \textbf{Input:} set of hyperparameter configurations
+            
+%             $\mathcal{P} \leftarrow \{\mathcal{P}_1, \mathcal{P}_2,\ ...,\mathcal{P}_{n_\mathrm{NN}}\}$
+%             \For{i=$1,...,n_\mathrm{NN}$}
+%                 \State Set hyperparameter combination $\mathcal{P}_i$ and randomly initialize the weights of the network $\phi_i$
+%                 \For{j=$1,...,N_\mathrm{training}$}
+%                     \State Sample a mini-batch of transitions $\{(\chi_\mathrm{learning}^{(j)}, \bm{\epsd}^{(*,j)}\}_{j=1}^{N_\mathrm{batch}}$ from $\mathcal{D}$
+%                     \State Perform a gradient descent step on $\sum_{j=1}^{N_\mathrm{batch}} (\bm{\epsd}^{(*,j)}-\phi_i(\chi_\mathrm{learning}^{(j)}))^2$ to update the network weights $\theta$
+%                 \EndFor
+%             \EndFor
+%             \State \textbf{Output:} a set of trained neural networks $\mathcal{N} = \{\phi_1, \phi_2,...,\phi_{n_\mathrm{NN}}\}$
+%     \end{algorithmic}
+% \end{algorithm}
+
+
+% In the setting where a supervised learning classifier is used to predict the discrete variables $\bm{\epsd}$ of a mixed-integer optimal control program, feasibility is commonly an issue, see \cite{cauligi22_PRISM}.
+The learning-based MPC approach becomes infeasible when the approximator fails to provide a discrete decision variable $\bm{\epsd}=\phi_i(\chi_\mathrm{learning})$ that renders the problem \eqref{eq:nlp} feasible. To mitigate this issue, we employ an ensemble of neural networks trained with heterogeneous hyperparameter configurations. Typically, after hyperparameter optimization, only the most accurate neural network is retained, while the others are discarded. In contrast, our approach evaluates each of the neural networks through closed-loop simulations of the system, as shown in Alg. \ref{alg:ensemble}. Based on this evaluation, a set $\mathcal{I} \subseteq \{1,...,n_\mathrm{NN}\}$ of the indices of the best-performing neural networks is selected and sorted from lowest to highest closed-loop total cost. 
+% The ensemble, which is denoted by $\mathcal{N}_\mathcal{I}$, is composed of the aggregation of the networks corresponding the indices in $\mathcal{I}$. 
+% To represent the ensemble of the best performing neural networks, we use .
+
+\begin{algorithm}[htb]
+    \caption{Formation of the ensemble}
+    \label{alg:ensemble}
+    \begin{algorithmic}[1] % [1] for line numbers
+            \State \textbf{Input: } set of trained neural networks $\mathcal{N}$
+            \For{$i=1,...,n_\mathrm{NN}$}
+                \For{episode = $1, ...,N_\mathrm{test}$}
+                \Comment{\textit{Closed-loop test}}
+                    \State Set random state $\chi$
+                    \For{step = $1,...,N_\mathrm{steps}$}
+                    \State Get $\chi_\mathrm{learning}$ via state reduction
+                    \State $\bm{\epsd} \leftarrow \phi_i(\chi_\mathrm{learning})$
+                    \If{\eqref{eq:nlp} is feasible for $(\chi,\ \bm{\epsd})$}
+                        \State Retrieve $\bm{\epsd}$
+                    \Else{}
+                        % \State Break loop
+                        \State Use heuristics to find a feasible $\bm{\epsd}$
+                        \State Get $\bm{\epsd}$ by solving \eqref{eq:nlp}
+                    \EndIf
+                    \State Update $\chi$ by applying \eqref{eq:nlp_state_dynamics} with ($\bm{\epsd},\ \bm{\epsd}$)
+                    % \State $\chi \leftarrow f_\chi (\chi,\ \bm{\epsd},\ \bm{\epsd})$
+                    \EndFor
+                \EndFor
+            \EndFor
+        \State \textbf{Output: } $\mathcal{I} \subseteq \{1,...n_\mathrm{NN}\}$: ordered set of indices of the networks arranged from lowest to highest total cost. 
+        % $\mathcal{N}_\mathcal{I}$: set of best neural networks.
+    \end{algorithmic}
+\end{algorithm}
+
+% \begin{algorithm}[htb]
+%     \caption{Offline training}
+%     \label{alg:offline}
+%     \begin{algorithmic}[1] % [1] for line numbers
+%             \State \textbf{Data acquisition:}
+%             \State Initialize the training dataset $\mathcal{D} = \{\}$
+%             \For{episode = $1, ...,N_\mathrm{episodes}$}
+%                 \State Set random state $\chi$
+%                 \For{step = $1,...,N_\mathrm{steps}$}
+%                 \State Get $\bm{\epsd}^*$ and $\bm{\epsd}^*$ by solving \eqref{eq:minlp} or \eqref{eq:milp} for state $\chi$
+%                 \State Get $\chi_\mathrm{learning}$ via state reduction
+%                 \State $\mathcal{D} \leftarrow \mathcal{D} \  \cup \  \{(\chi_\mathrm{learning},\ \bm{\epsd}^*)\}$
+%                 \State $\chi \leftarrow f_\chi (\chi,\ \bm{\epsd}^*,\ \bm{\epsd}^*)$
+%                 \EndFor
+%             \EndFor
+%             \State\textbf{Output:} training set $\mathcal{D}$
+%             \State
+%             \State \textbf{Neutral network training:}
+%             \State Define a set of hyperparameter combinations $\mathcal{P} = \{\mathcal{P}_1, \mathcal{P}_2,\ ...,\mathcal{P}_{n_\mathrm{NN}}\}$
+%             \For{i=$1,...,n_\mathrm{NN}$}
+%                 \State Set hyperparameter $\mathcal{P}_i$ and randomly initialize the weights of the network $\phi_i$
+%                 \For{j=$1,...,N_\mathrm{training}$}
+%                     \State Sample a minibatch of transitions $\{(\chi_\mathrm{learning}^j, \bm{\epsd}^{*,j}\}_{j=1}^{N_\mathrm{batch}}$ from $\mathcal{D}$
+%                     \State Perform a gradient descent step on $\sum_{j=1}^{N_\mathrm{batch}} (\bm{\epsd}^{*,j}-\phi_i(\chi_\mathrm{learning}^j))^2$ to update the network weights $\theta$
+%                 \EndFor
+%             \EndFor
+%             \State \textbf{Output:} a set of trained neural networks $\mathcal{N} = \{\phi_1, \phi_2,...,\phi_{n_\mathrm{NN}}\}$
+%             \State
+%             \State \textbf{Formation of the ensemble:}
+%             \For{$i=1,...,n_\mathrm{NN}$}
+%                 \For{episode = $1, ...,N_\mathrm{test}$}
+%                 \Comment{\textit{Closed-loop test}}
+%                     \State Set random state $\chi$
+%                     \For{step = $1,...,N_\mathrm{steps}$}
+%                     \State Get $\chi_\mathrm{learning}$ via state reduction
+%                     \State $\bm{\epsd} \leftarrow \phi_i(\chi_\mathrm{learning})$
+%                     \If{\eqref{eq:nlp} or \eqref{eq:lp} is feasible for $(\chi,\ \bm{\epsd})$}
+%                         \State Retrieve $\bm{\epsd}$
+%                     \Else{}
+%                         \State Break loop
+%                     \EndIf
+%                     \State $\chi \leftarrow f_\chi (\chi,\ \bm{\epsd},\ \bm{\epsd})$
+%                     \EndFor
+%                 \EndFor
+%             \EndFor
+%         \State \textbf{Output: } $\mathcal{I} \subseteq \{1,...n_\mathrm{NN}\}$: ordered set of indices of the best networks using criterion \eqref{eq:opt_gap}
+%     \end{algorithmic}
+% \end{algorithm}
+
+\begin{figure}[tb]
+    \centering
+    \includegraphics[width=0.44\textwidth]{control_framework.pdf}
+    \caption{A representation of the control framework with state reduction.}
+    \label{fig:control_framework}
+\end{figure}
+
+The online inference procedure is described in Alg. \ref{alg:online} and Fib. The core idea is to sequentially evaluate the trained neural networks in the ensemble, i.e., $\phi_i(\chi_\mathrm{learning})$ for $i \in \mathcal{I}$, until a feasible solution for the problem \eqref{eq:nlp} is found. If a feasible solution is not found by the supervised learning classifier, then heuristics described in can be used to restore feasibility, e.g., maintaining the same train composition of the previous time step or selecting the minimum number of train units for every train service, see \cite{liu2025learningbasedmodelpredictivecontrol} for more details.
+By construction, feasibility also implies that all the constraints are satisfied and that the continuous decision variables $\bm{\epsd}$ are optimal with respect to the choice of $\bm{\epsd}$. As a result, integrating a learning-based approach with MPC can combine fast online evaluation with constraint satisfaction and optimality.
+Although the neural network ensemble is evaluated sequentially due to its lower computational cost, the proposed approach is flexible to other types of evaluation, e.g., parallel evaluation followed by selection of the most common action or the one with the lowest cost.
+% For example, the solution $\bm{\epsd}$ of the previous time step can be shifted one time step ahead. For the train rescheduling problem, feasibility can always be guaranteed by simply allowing the train that arrives to a depot to go back into service with the same train composition.
+
+\begin{algorithm}[htb]
+    \caption{Online Inference}
+    \label{alg:online}
+    \begin{algorithmic}[1] % [1] for line numbers
+            % \State \textbf{Input:} set of trained neural networks $\mathcal{N}$ and set of indices $\mathcal{I}$ of the best performing networks
+            \State \textbf{Input:} set of indices $\mathcal{I}$, system state $\chi(\kappa)$
+            \State $\chi \leftarrow \chi(\kappa)$
+            % \Comment{\textit{Measure state}}
+            \State $\texttt{solution\_found} \leftarrow False$
+            \State Get $\chi_\mathrm{learning}$ via state reduction
+            % \For{$i \in \mathcal{I}$}
+            % \For{$\phi_i \in \mathcal{N}_\mathcal{I}$}
+            \For{$i \in \mathcal{I}$}
+                \State $\bm{\epsd} \leftarrow \phi_i(\chi_\mathrm{learning})$
+                \If{\eqref{eq:nlp} is feasible for $(\chi,\ \bm{\epsd})$}
+                    \State Retrieve $\bm{\epsd}$
+                    \State $\texttt{solution\_found} \leftarrow True$
+                    \State Break for loop
+                \EndIf
+            \EndFor
+            \If{$\texttt{solution\_found == False}$}
+                \State Use heuristics to find a feasible $\bm{\epsd}$
+                \State Get $\bm{\epsd}$ by solving \eqref{eq:nlp}
+            \EndIf
+            \State \textbf{Output: $\bm{\epsd}, \ \bm{\epsd}$} 
+    \end{algorithmic}
+\end{algorithm}
+
+% Alternative selection procedures in the ensemble can also be employed. For instance, the neural networks in the ensemble can be evaluated in parallel and the solution of \eqref{eq:nlp} with lowest cost can be chosen. Furthermore, the discrete variable $\bm{\epsd}$ may be chosen by majority voting, in which the most common prediction is chosen. In essence, the proposed approach is flexible with regard to the choice of the discrete variable $\bm{\epsd}$ given the individual predictions of the ensemble. The sequential evaluation is chosen herein since it is the method that require the least number of evaluations of neural networks.
+
+% In approaches that employ learning-based techniques to determine the discrete variables of mixed-integer controller problems, the designer has the freedom to define the state of the learning problem in a suitable manner.
+\section{Case study}\label{case_study}
+
+A three-line railway network in Beijing, shown in Fig. \ref{fig:railnetwork}, is used to assess the performance of the proposed approach. The network has 3 bidirectional lines, 45 stations, and 3 transfer stations (ZXZ, XEQ, HY). There is a depot connected to each line: CPX for Changping Line, XZM for Line 13, and ZXZ for Line 8. Moreover, the passenger flow data are based on real-world data.
+% For more details on the setting, the reader is referred to \cite{liu2025learningbasedmodelpredictivecontrol}.
+The full description of the case study is provided in
+\cite{liu2025learningbasedmodelpredictivecontrol}.
+The experiments were conducted on Python with Intel XEON E5-6248R CPUs using PyTorch and Gurobi for machine learning and optimization, respectively.
+
+\begin{figure}[htb]
+\begin{center}
+\includegraphics[width=0.48\textwidth]{3_full_lines.pdf}    % The printed column width is 8.4 cm.
+\caption{Three-line railway network in Beijing.} 
+\label{fig:railnetwork}
+\end{center}
+\end{figure}
+
+% The simulation experiments were performed on Python in a computer cluster with Intel XEON E5-6248R CPUs. Furthermore, the libraries PyTorch and Gurobi were used for machine learning and optimization, respectively. The control time step was set to $4$ minutes and the prediction horizon of the MPC controller was set to $N_p = 40$. 
+
+% The dataset set for the full and reduced state were obtained by Alg \ref{alg:data_acquisition}. 
+The dataset characteristics for the full and reduced states, obtained by Alg. \ref{alg:data_acquisition}, are represented in Table \ref{table:dataset}. In our case, we had the two originally contrasting goals of (i) improving accuracy by enlarging the dataset and (ii) reducing memory requirements, which was one of the computational bottlenecks in our setup. Both goals were achieved by applying the state reduced approach \eqref{eq:state_reduction} with $N_\mathrm{s}=4$ and $H=9$. Consequently, the state dimension was reduced from $4002$ to $748$. Moreover, the number of data points could be increased by a factor of $2.65$, while decreasing the memory usage by a factor of $1.5$.
+The datasets were then used for the training of $|\mathcal{P}|=64$ LSTM networks. Subsequently, a subset of $|\mathcal{I}|=15$ networks was selected to form the neural network ensemble according to Alg. \ref{alg:ensemble}.
+% In total, $|\mathcal{P}|=64$ LSTM networks were trained following Alg. \ref{alg:network_training} and a subset of $|\mathcal{N}_\mathcal{I}|=15$ networks was selected to form the neural network ensemble according to Alg. \ref{alg:ensemble}.
+Each hyperparameter configuration $\{\mathcal{P}_i\}_{i=1}^{64}$ included distinct values for the learning rate, number of hidden neurons, dropout rate, and two Boolean variables indicating whether output masking, and learning rate scheduling were applied.
+% Each of the hyperparameter combinations $\{\mathcal{P}_i\}_{i=1}^{64}$ contains different values of the learning rate, the number of hidden neurons, the dropout rate, the boolean variables utilized to represent output masking and the use of learning rate scheduling.
+
+\begin{table}[htb]
+\begin{center}
+\caption{Dataset information.}\label{table:dataset}
+\resizebox{.48\textwidth}{!}{%
+\begin{tabular}{cccc}
+State & State dimension & Number of points & Memory (GB) \\\hline
+Full & 4002 & 94871 & 5.00 \\
+Reduced & 748 & 252207 & 3.29 \\ \hline
+\end{tabular}
+}
+\end{center}
+\end{table}
+
+The comparison of the closed-loop operation of seven different methods over $4745$ samples is shown in Table \ref{tab:results}. The control time step and the MPC prediction horizon were set to $T = 4$ minutes and $N_p = 40$, respectively. Each closed-loop simulation was initialized at the same random state and had a maximum length of $30$ time steps. In methods (I)--(III), both the discrete and continuous variables are determined by optimization. The benchmark (I) corresponds to the solution of \eqref{eq:minlp} with a maximum solution time of $10$ minutes, rendering the method unachievable since the MPC controller must find a solution within the control time step.
+Hence, benchmark (I) is used solely to define the optimality gap, measured as the percentage difference between the performance of a given method and that of benchmark (I).
+% Therefore, method (I) is solely used to compute a reference for the comparison of the other methods. 
+% which is longer than the control time step. Therefore, the benchmark is practically unachievable since the MPC controller must find a solution within the control time step. 
+The methods (II) and (III) represent the solution of \eqref{eq:minlp} with a maximum solution time of $4$ minutes -- equal to the control time step -- and nonlinear and linear performance indices, respectively.  In contrast, methods (IV)--(VII) employ the decoupling procedure described in Section \ref{sec:decoupling}, where the discrete variables are determined by an ensemble of neural networks, as described by Alg. \ref{alg:online}, and the continuous variables are computed by the solution of the optimization problem \eqref{eq:nlp} with a maximum solution time of $4$ minutes. 
+The approaches (IV) and (V) use the original state representation, while (VI) and (VII) employ the reduced state described in \eqref{eq:reduced_state}. Although methods (V) and (VII) use the linear performance index \eqref{eq:cost_passenger_linear}, their solutions were evaluated on the nonlinear index \eqref{eq:cost_passenger_nonlinear}, ensuring consistency in the evaluation of all the methods. 
+% The optimality gap is defined as the percentage difference of a given method and the benchmark (I).
+% that the same performance index is used for all the methods.
+
+As illustrated by Table \ref{tab:results}, the optimality gaps of the learning-based approaches with unreduced state (IV) and (V) are significantly reduced by the proposed approaches (VI) and (VII).
+% , showing that the state reduction procedure \eqref{eq:state_reduction} has a significant effect on the optimality gap. 
+More specifically, comparing (IV) to (VI) the optimality gap dropped from $7.38\%$ to $0.25\%$, and comparing (V) to (VII) the optimality gap decreases from $8.03\%$ to $0.15\%$, showing the significant effect of the state reduction procedure \eqref{eq:state_reduction}.
+The learning-based approaches (IV)--(VII) reduce the computation time considerably compared to the optimization-based approaches (I)--(III).
+Particularly, the learning-based approach (VII) with the linear performance index \eqref{eq:cost_passenger_linear} has the best overall performance considering optimality and computation time.
+% In principle, the method (VI) should have a lower optimality gap than that of (VII) because it uses the more accurate and nonlinear performance index \eqref{eq:cost_passenger_nonlinear}. However, t
+In methods (IV) and (VI), the NLP \eqref{eq:nlp} is not solved to optimality, as an early termination criterion is employed to reduce the CPU time. 
+% Essentially, the solver is stopped when the solution objective value does not decrease for a certain percentage over a fixed period of time. 
+This heuristic considerably reduces the computation at the expense of a minimal increase in the optimality gap. This accounts for the slightly larger optimality gap of (VI) when compared to that of (VII).
+% Finally, 
+% Regarding the computation time, the advantage of the learning-based approaches (IV)--(VII) with respect to the optimization-based approaches (I)--(III) is evident from Table \ref{tab:results}.
+% which explains the fact that the optimality gap of (VI) is slightly larger than that of (VII).
+
+% \begin{table*}[htb]
+% \centering
+% \caption{Closed-loop optimization for real-time train rescheduling}\label{lmpc-open-loop}%[H]
+% \begin{tabular}{c|c|ccc|ccc|c} \hline
+% \multirow{2}*{Approach}& \multirow{2}*{Warm-start}& \multicolumn{3}{c}{Optimality gap}  & \multicolumn{3}{c}{CPU time (s)} & \multirow{2}*{Feasibility rate}   \\ \cline{3-8}
+% &  & max & average& min & max  & average& min   & \\ \hline
+% Benchmark & yes&- & -&- &  600.10 &222.18 & 3.67 &  100\% \\ 
+% MINLP &no& 100.81\% & 7.22\% &0\%  &240.14 & 239.84 &52.47  & 100\% \\ 
+% Warm-start MINLP & yes  & 12.96\% &  0.04\% & -0.24\% &240.10 & 96.71 & 3.58 & 100\% \\ 
+% MILP & no &1.54\% & 0.47\%  & -33.73\% & 240.01&  8.77 &0.37&  100\% \\ 
+% Learning + NLP & no  &3.48\%&-0.11\%  &-34.28\%  &112.22 &6.89 &1.80 & 98.94\% \\ 
+% Learning + LP& no &1.73\% &0.22\%  &-33.42\%  &0.25 & 0.13&0.11 & 98.55\%
+% \end{tabular}
+% \end{table*}
+
+% Please add the following required packages to your document preamble:
+% \usepackage{multirow}
+% \usepackage{graphicx}
+\begin{table}[tb]
+\centering
+\caption{Comparison of the closed-loop performance for several approaches, with the proposed approach highlighted in bold.}
+\label{tab:results}
+\resizebox{.48\textwidth}{!}{%
+\begin{tabular}{c|ccc|cll}
+\hline
+\multirow{2}{*}{Method} & \multicolumn{3}{c|}{Optimality gap (\%)} & \multicolumn{3}{c}{CPU time (s)} \\ \cline{2-7} 
+ & mean & max & std & mean & max & std \\ \hline
+(I) Benchmark & 0.00 & 0.00 & 0.00 & 196.00 & 600.40 & 272.50 \\ \cline{1-1}
+(II) MINLP & 0.00 & 3.07 & 0.24 & 26.99 & 240.1 & 39.01 \\ \cline{1-1}
+(III) MILP & 0.30 & 1.47 & 0.35 & 4.00 & 115.3 & 10.13 \\ \hline
+(IV) Learning + NLP & 7.38 & 44.66 & 9.61 & 6.88 & 56.07 & 7.18 \\ \cline{1-1}
+(V) Learning + LP & 8.03 & 44.27 & 10.27 & 0.15 & 0.37 & 0.11 \\ \hline
+\textbf{\begin{tabular}[c]{@{}c@{}}(VI) Learning + NLP\\ with state reduction\end{tabular}} & \textbf{0.25} & \textbf{5.58} & \textbf{1.30} & \textbf{6.65} & \textbf{30.45} & \textbf{5.62} \\ \cline{1-1}
+\textbf{\begin{tabular}[c]{@{}c@{}}(VII) Learning + LP\\ with state reduction\end{tabular}} & \textbf{0.15} & \textbf{3.61} & \textbf{0.92} & \textbf{0.16} & \textbf{0.41} & \textbf{0.03} \\ \hline
+\end{tabular}%
+}
+\end{table}
+
+% Furthermore, since the input layer of the neural network $\phi_i(\cdot)$ has the same number of units as the state dimension, the number of neurons of the neural network for the reduced state may be significantly reduced. Generalization typically improves when learning occurs on a well-designed compact representation of the input.
+
+% Let the full state training dataset be denoted by $\mathcal{D}^\mathrm{f}$ and the reduced state training dataset be denoted by $\mathcal{D}^\mathrm{r}$. During training, for the same number of data points in the sets $|\mathcal{D}^\mathrm{f}| = |\mathcal{D}^\mathrm{r}|$, memory usage can be reduced. Alternatively, the reduced state training dataset can be enlarged $|\mathcal{D}^\mathrm{r}| > |\mathcal{D}^\mathrm{f}|$ so that both occupy the same amount of memory. While the first option reduces the computational resources required, the second option favors performance.
+
+\section{Conclusions}\label{conclusion}
+
+This paper has proposed a state reduction scheme for learning-based MPC in the context of train rescheduling, where different levels of resolution are used to represent the system state for learning and control.
+Simulation experiments conducted on a large-scale railway network revealed a dramatic decrease in suboptimality when the proposed state reduction was employed, thereby confirming its effectiveness.
+Future research will explore alternative state reduction techniques such as principal component analysis and autoencoders.
+% In the case study, it was shown how different states.  
+% By applying this scheme, the suboptimality was reduced dramatically to a negligible level.
+
+% A conclusion section is not required. Although a conclusion may review the main points of the paper, do not replicate the abstract as the conclusion. A conclusion might elaborate on the importance of the work or suggest applications and extensions.
+
+% The combination of learning and optimization has great promise in shaping the future of intelligent transportation systems.
+
+\begin{ack}
+This research has received funding from the European Research Council (ERC) under the European Union’s Horizon 2020 research and innovation programme (Grant agreement No. 101018826 - CLariNet).
+\end{ack}
+
+%\small
+\bibliography{ifacconf}            
+% bib file to produce the bibliography with bibtex (preferred)
+
+% \section{Procedure for Paper Submission}
+% ~(\ref{eq:sample})
+% \begin{thm}   % use the thm environment for theorems
+% \end{thm}
+% \begin{pf}    % and the pf environment for proofs
+% \end{pf}
+%% There are a number of predefined theorem-like environments in
+%% ifacconf.cls:
+%%
+%% \begin{thm} ... \end{thm}            % Theorem
+%% \begin{lem} ... \end{lem}            % Lemma
+%% \begin{claim} ... \end{claim}        % Claim
+%% \begin{conj} ... \end{conj}          % Conjecture
+%% \begin{cor} ... \end{cor}            % Corollary
+%% \begin{fact} ... \end{fact}          % Fact
+%% \begin{hypo} ... \end{hypo}          % Hypothesis
+%% \begin{prop} ... \end{prop}          % Proposition
+%% \begin{crit} ... \end{crit}          % Criterion
+% \texttt{amstex} package for enhanced math
+% capabilities.
+
+% \appendix
+% \section{A summary of Latin grammar}    % Each appendix must have a short title.
+% \section{Some Latin vocabulary}              % Sections and subsections are supported  
+                                                                         % in the appendices.
+\end{document}

@@ -1,0 +1,178 @@
+\beginbass
+%
+We now use the Agda library for \GIS (see \Cref{ch:gis_lib}) to 
+formally define the inference system for fair termination shown in \Cref{fig:ft}. 
+First, we encode the universe on which the predicate is defined. In this
+case, it consists of session types, that is, $\SessionType$.
+
+\begin{lstlisting}
+U : Set
+U = SessionType
+\end{lstlisting}
+
+Now we define the sets containing the names of the (co)rules. 
+Although we try to be as consistent as possible with respect to
+the \GIS in \Cref{fig:ft}, we need to split both 
+\refrule{t-all} and \refrule{t-any} according to the polarity
+of the involved session type. Hence, we obtain three rules
+and two corules.
+
+\begin{lstlisting}
+data RuleNames : Set where
+  nil inp out : RuleNames
+
+data CoRuleNames : Set where
+  inp out : CoRuleNames
+\end{lstlisting}
+
+We can look at the definitions of the five metarules.
+Notably, as we presented in \Cref{ch:gis_lib}, the library offers 
+a simpler way for defining a metarule with a finite number of premises
+(see \lstinline{FinMetaRule} datatype). We take advantage of such feature
+to define the axiom as well as the corules that differ from the rules since they
+have a single premise.
+We show rules and corules separately.
+
+\begin{lstlisting}
+nil-r : FinMetaRule U
+nil-r .Ctx = $\top$
+nil-r .comp _ =
+  [] ,
+  ----
+  nil
+
+inp-r : MetaRule U
+inp-r .Ctx = Continuation
+inp-r .Pos _ = $\Message$
+inp-r .prems f p = f p .force
+inp-r .conclu f = inp f
+
+out-r : MetaRule U
+out-r .Ctx = Continuation
+out-r .Pos _ = $\Message$
+out-r .prems f p = f p .force
+out-r .conclu f = out f
+\end{lstlisting}
+
+The axiom simply states that $\TNil$ is trivially fairly terminating.
+Concerning the context, we use the datatype \lstinline{$\top$} from 
+the standard library which can be always instantiated with
+the constructor \lstinline{tt}.
+The two rules have have the \lstinline{Pos} field set to \lstinline{$\Message$}
+since they have a premise for each element in $\Message$. Note also that 
+each session type is unfolded in the premises by accessing the \lstinline{force}
+filed of the coinductive record \lstinline{$\infty$SessionType}.
+
+\begin{lstlisting}
+inp-co-r : FinMetaRule U
+inp-co-r .Ctx = $\Sigma$[ (f , x) $\in$ Continuation $\times$ $\Message$ ] x $\in$ dom f
+inp-co-r .comp ((f , x) , _) =
+  f x .force :: [] ,
+  --------------------
+  inp f
+
+out-co-r : FinMetaRule U
+out-co-r .Ctx = $\Sigma$[ (f , x) $\in$ Continuation $\times$ $\Message$ ] x $\in$ dom f
+out-co-r .comp ((f , x) , _) =
+  f x .force :: [] ,
+  --------------------
+  out f
+\end{lstlisting}
+
+As mentioned before, the corules differ from the rules because they have a single premise.
+This is represented by the existential quantifier in the context which informally
+asks that the must be a continuation of the involved session type which is
+fairly terminating.
+%
+Now we can compose the two inference systems \lstinline{FairTerminationIS} and \lstinline{FairTerminationCOIS}
+consisting of the rules and the corules, respectively.
+The desired predicate \lstinline{FairTermination} is obtained through the generalized interpretation of the whole
+inference system.
+\lstinline{FairTerminationI} is the inductive predicate obtained by inductively
+interpreting all the rules.
+
+\begin{lstlisting}
+FairTerminationIS : IS U
+Names FairTerminationIS = RuleNames
+rules FairTerminationIS nil = from nil-r
+rules FairTerminationIS inp = inp-r
+rules FairTerminationIS out = out-r
+
+FairTerminationCOIS : IS U
+FairTerminationCOIS .Names = CoRuleNames
+FairTerminationCOIS .rules inp = from inp-co-r
+FairTerminationCOIS .rules out = from out-co-r
+
+FairTermination : SessionType $\rightarrow$ Set
+FairTermination = 
+  FCoInd$\llbracket$ FairTerminationIS , FairTerminationCOIS $\rrbracket$
+
+FairTerminationI : SessionType $\rightarrow$ Set
+FairTerminationI = 
+  Ind$\llbracket$ FairTerminationIS $\cup$ FairTerminationCOIS $\rrbracket$
+\end{lstlisting}
+
+where we recall that the function \lstinline{from} turns a \lstinline{FinMetaRule} into
+a \lstinline{MetaRule} (see \Cref{fig:finmetarule-dt}).
+
+In order to prove the correctness of \lstinline{FairTermination} we need to encode
+the specification, that is, \Cref{def:wt}.
+
+\begin{lstlisting}
+FairTerminationS : SessionType $\rightarrow$ Set
+FairTerminationS S = $\forall${$\phi$} $\rightarrow$ 
+  $\phi$ $\in$ $\llbracket$ S $\rrbracket$ $\rightarrow$ $\exists$[ $\psi$ ] ($\phi$ ++ $\psi$ $\in$ Maximal $\llbracket$ S $\rrbracket$)
+\end{lstlisting}
+
+where \lstinline{$\phi$,$\psi$ : Trace} and traces are defined as \lstinline{List Action}.
+Hence \lstinline{_++_} is the library function for computing the concatenation of two lists.
+\lstinline{$\llbracket$_$\rrbracket$} denotes the set of all the possible traces of
+a session type. Finally, \lstinline{Maximal} is a predicate on sets of traces and denotes
+all those traces that cannot be extended (see \Cref{def:traces}). 
+
+The correctness of \lstinline{FairTermination} is expressed in terms of soundness
+and completeness with respect to \lstinline{FairTerminationS}.
+We are not going to detail the proofs. Instead we report the declarations
+of the main lemmas.
+Concerning the \emph{soundness}, \GISs do not provide a canonical technique to prove it.
+
+\begin{lstlisting}
+sound : FairTermination $\subseteq$ FairTerminationS
+\end{lstlisting}
+
+where \lstinline{P $\subseteq$ Q} is equivalent to \lstinline{$\forall$$\{$x$\}$ $\rightarrow$ P x $\rightarrow$ Q x}
+with \lstinline{P,Q} predicates over some \lstinline{A : Set _} and \lstinline{x : A}.
+For what concerns the \emph{completeness}, it is by bounded coinduction (\Cref{prop:bcp}, \Cref{fig:principles});
+hence we have to prove that \lstinline{FairTerminationS} is \emph{bounded} and \emph{consistent} with respect
+to the \GIS.
+
+\begin{lstlisting}
+bounded : FairTerminationS $\subseteq$ FairTerminationI
+
+consistent : 
+  FairTerminationS $\subseteq$ ISF[ FairTerminationIS ] FairTerminationS
+
+complete : FairTerminationS $\subseteq$ FairTermination
+complete =
+  bounded-coind[ FairTerminationIS , FairTerminationCOIS ]
+    FairTerminationS bounded consistent
+\end{lstlisting}
+
+\begin{remark}
+	Assume that we instanciate \lstinline{Specification} from \Cref{sec:agda_fairt} using
+	\lstinline{SessionType} (see \Cref{ssec:agda_st_formalization_types}) as set of states and
+	\lstinline{Transition} (see \Cref{ssec:agda_st_formalization_lts}) as transition system.
+	Such instance of \lstinline{Specification} will not be equivalent to \lstinline{FairTerminationS}
+	as, for example, a client sending always \lstinline{true} would be fairly terminating since
+	the \lstinline{false} branch would always lead to $\TNil$.
+	To make the two specifications equivalent we need to instanciate \lstinline{Specification}
+	by using the following transition system
+	\[
+		\inferrule
+			{S \lred\action T}
+			{S \xrightarrow{\action}' T}
+			~ T \ne \TNil
+	\]
+	%
+	\eor
+\end{remark}

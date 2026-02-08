@@ -1,0 +1,155 @@
+\beginalto
+%
+\begin{figure}
+\begin{lstlisting}[frame=single]
+open import Relation.Nullary using ($\neg$_)
+open import Relation.Unary using (Satisfiable; _$\cup$_)
+open import Relation.Binary.Core using (Rel)
+open import Relation.Binary.Construct.Closure.ReflexiveTransitive 
+		using (Star)
+open import Function.Base using (_$\circ$_)
+\end{lstlisting}
+\caption{Imported modules}
+\label{fig:ft_imports}
+\end{figure}
+%
+In this section we mechanize \emph{fair termination} in its general form, that is,
+considering an arbitrary labeled transition system.
+In particular, we mechanize the definitions and the notions that we presented in \Cref{sec:ft_formally}.
+We will instanciate such property in \Cref{sec:agda_ft,sec:agda_fc} in session based scenarios.
+Notably, the entire development is available on GitHub (see \cite{FairTermination}).
+
+\begin{remark}[Imports]
+	The codes that we present takes advantage of many features from the standard library.
+	\Cref{fig:ft_imports} illustrates the modules that are imported and used in the formalization in this section.
+	\lstinline{Satisfiable P} holds when a proof of \lstinline{P} can be exhibited whereas
+	\lstinline{Star} is used to obtain the reflexive transitive closure of the reference relation.
+	\lstinline{$\neg$ P} is equivalent to \lstinline{P $\rightarrow$ $\bot$}.
+	For more details see \cite{FairTermination}.
+	%
+	\eor
+\end{remark}
+
+First, we have to consider an arbitrary labelled transition system. Hence
+the Agda module is parametric on
+\begin{center}
+	\lstinline{(State : Set) (_$\sim>$_ : State $\rightarrow$ State $\rightarrow$ Set)}
+\end{center}
+that is, a set of states and a transition relation.
+Then, we define the reflexive transitive closure of the transition relation and the set 
+of predicates over states. The predicates \lstinline{Reduces} and \lstinline{Stuck} hold when
+a state can reduce to another one and when no reductions are allowed, respectively.
+
+\begin{lstlisting}
+StateProp : Set$_1$
+StateProp = State $\rightarrow$ Set
+
+_$\sim>^*$_ : Rel State _
+_$\sim>^*$_ = Star _$\sim>$_
+
+Reduces : StateProp
+Reduces S = Satisfiable (S $\sim>$_)
+
+Stuck : StateProp
+Stuck S = $\neg$ (Reduces S)
+\end{lstlisting}
+
+A run is a maximal sequence of states 
+\lstinline{S $\sim>$ S$_1$ $\sim>$ S$_2$ $\sim>$ $\dots$}, that is a
+sequence of reductions that is either infinite or it ends with a
+stuck state.
+
+\begin{lstlisting}
+data Run (S : State) : Set
+record $\infty$Run (S : State) : Set where
+  coinductive
+  field force : Run S
+
+data Run S where
+  stop : (stuck : Stuck S) $\rightarrow$ Run S
+  _::_ : $\forall${S'} (red : S $\sim>$ S') ($\rho$ : $\infty$Run S') $\rightarrow$ Run S
+ 
+RunProp : Set$_1$
+RunProp = $\forall${S} $\rightarrow$ Run S $\rightarrow$ Set
+\end{lstlisting}
+
+Note that runs are defined using a \emph{coinductive record}. 
+\lstinline{RunProp} identifies predicates over runs.
+Now we model the fact that each property of states induces a corresponding property of
+runs in which there is a state that satisfies such property.
+A run is finite if it contains a stuck state.
+
+\begin{lstlisting}
+data Eventually (P : StateProp) : RunProp where
+  here : $\forall${S} {$\rho$ : Run S} (proof : P S) $\rightarrow$ Eventually P $\rho$
+  next : $\forall${S S'} (red : S $\sim>$ S') {$\rho$ : $\infty$Run S'} 
+  	(ev : Eventually P ($\rho$ .force)) $\rightarrow$ Eventually P (red :: $\rho$)
+ 
+Finite : RunProp
+Finite = Eventually Stuck
+\end{lstlisting}
+
+A fairness assumption is a proposition over runs such that every
+partial run \lstinline{S $\sim>^*$ S'} can be extended to a fair run. This
+condition is called feasibility or machine closure (see \Cref{lem:feasibility}).
+
+\begin{lstlisting}
+record FairnessAssumption : Set$_1$ where
+  field
+    Fair : RunProp
+    feasible : $\forall${S S'} (reds : S $\sim>^*$ S') $\rightarrow$ 
+    			$\Sigma$[ $\rho$ $\in$ Run S' ] Fair (reds ++ $\rho$)
+ 
+StuckFairness : FairnessAssumption
+StuckFairness = record { Fair = Fair' ; feasible = feasible' }
+  where
+    Fair' : RunProp
+    Fair' = Eventually (Stuck $\cup$ NonTerminating)
+\end{lstlisting}
+
+where \lstinline{++} is used to concatenate runs and \lstinline{StuckFairness}
+denotes our fairness assumption (see \Cref{def:fair_run}). For the sake of 
+clarity we omit the definition of \lstinline{feasible'}.
+We recall that a run is fair if it contains finitely many weakly terminating
+states. This means that the run is either finite or divergent.
+Now we can define \emph{fair termination} (see \Cref{def:fair_termination}). 
+We recall that a state S is fairly terminating if the fair runs of S are finite.
+
+\begin{lstlisting}
+WeaklyTerminating : StateProp
+WeaklyTerminating S = $\Sigma$[ $\rho$ $\in$ Run S ] Finite $\rho$
+
+FairlyTerminating : FairnessAssumption $\rightarrow$ StateProp
+FairlyTerminating $\phi$ S = $\forall${$\rho$ : Run S} $\rightarrow$ Fair $\phi$ $\rho$ $\rightarrow$ Finite $\rho$
+
+Specification : StateProp
+Specification S = $\forall${S'} $\rightarrow$ S $\sim>^*$ S' $\rightarrow$ WeaklyTerminating S'
+\end{lstlisting}
+
+\lstinline{Specification} is the alternative characterization of fair termination that
+does not use fair runs. A state S satisfies the specification if
+any S' that is reachable from S is weakly terminating. 
+A state is weakly terminating if it has a finite run.
+Now we can state \Cref{thm:fair_termination} (proofs are omitted).
+In particular, we prove that the specification is a \emph{necessary} condition for fair
+termination, regardless of the fairness assumption being made and that
+the specification is a \emph{sufficient} condition for the notion of
+fair termination induced by our assumption.
+
+\begin{lstlisting}
+ft$\rightarrow$spec : ($\phi$ : FairnessAssumption) $\rightarrow$ $\forall${S} $\rightarrow$ 
+	FairlyTerminating $\phi$ S $\rightarrow$ Specification S
+
+spec$\rightarrow$ft : $\forall${S} $\rightarrow$ 
+	Specification S $\rightarrow$ FairlyTerminating StuckFairness S
+\end{lstlisting}
+
+At last, as a consequence we can prove that our assumption is the fairness assumption that 
+induces the largest family of fairly terminating states.
+
+\begin{lstlisting}
+ft$\rightarrow$ft : ($\phi$ : FairnessAssumption) $\rightarrow$ 
+	$\forall${S} $\rightarrow$ FairlyTerminating $\phi$ S $\rightarrow$ 
+	FairlyTerminating StuckFairness S
+ft$\rightarrow$ft $\phi$ = spec$\rightarrow$ft $\circ$ ft$\rightarrow$spec $\phi$
+\end{lstlisting}

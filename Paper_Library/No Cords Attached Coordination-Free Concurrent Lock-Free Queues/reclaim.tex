@@ -1,0 +1,50 @@
+\begin{algorithm}
+\caption{Coordination-Free Memory Reclamation}
+\begin{algorithmic}[1]
+\Function{reclaim}{queue}
+   \State \textit{// Phase 1: Calculate current protection boundary}
+   \State $cycle \gets$ LOAD$(queue.deque\_cycle)$
+   \State $window \gets queue.protection.window\_size$
+   \State $safe\_cycle \gets \max(0, cycle - window)$
+   \State $head \gets$ LOAD$(queue.head)$
+   \State $current \gets$ LOAD$(head.next,)$
+   
+   \While{$current \neq$ NULL}
+       \State $original\_next \gets current$
+       \State $new\_next \gets current$
+       
+       \State \textit{// Collect batch of safely reclaimable nodes}
+       \While{$current \neq$ NULL}
+           \State \textit{// Phase 2: Cycle-based protection check}
+           \If{$current.cycle \geq safe\_cycle$}
+               \State \textbf{break}
+           \EndIf
+           \State \textit{// Phase 3: State-based protection check}
+           \If{LOAD$(current.state)$ = AVAILABLE}
+               \State \textbf{break}
+           \EndIf
+           
+           \State \textit{// Phase 4: Add to reclamation batch}
+	   \State $batch.add(current)$
+           \State $next \gets$ LOAD$(current.next)$
+           \State $new\_next \gets next$
+           \State $current \gets next$
+       \EndWhile
+       
+       \State \textit{// Enforce minimum batch size for efficiency}
+       \If{$batch.count < MIN\_BATCH\_SIZE$}
+           \State \textbf{break}
+       \EndIf
+       
+       \State \textit{// Phase 5: Atomic head pointer advancement}
+       \If{CAS$(head.next, original\_next, new\_next)$}
+	   \State \textit{// Free and reset nodes (set next = NULL)}
+           \State deallocate\_nodes$(batch)$
+       \Else
+           \State \textit{// Concurrent modification detected}
+           \State \textbf{break}
+       \EndIf
+   \EndWhile
+\EndFunction
+\end{algorithmic}
+\end{algorithm}

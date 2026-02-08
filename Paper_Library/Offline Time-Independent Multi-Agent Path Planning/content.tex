@@ -1,0 +1,462 @@
+\section{Introduction}
+The eventual goal of collective path planning for multiple agents is to make each agent in a shared workspace be on their respective goal status.
+This problem becomes non-trivial when agents cannot pass through each other, i.e., each agent occupies some resources in the space while the others are blocked to access these resources at that time.
+We see such situations in fleet operations of warehouses~\cite{wurman2008coordinating}, intersection management for self-driving cars~\cite{dresner2008multiagent}, multi-robot 3D printing systems~\cite{zhang2018large}, packet-switched networks with limited buffer spaces~\cite{tel2000introduction}, and lock operations of transactions on distributed databases~\cite{knapp1987deadlock}, to name just a few.
+
+In such multi-agent systems, each agent inherently takes and finishes actions (or moves) \emph{at their own timings independently and unpredictably from other actors}, regardless of centralized or decentralized controls.
+This is due to the nature of \emph{distributed environments} such as message delay or clock shift/drift, as well as uncaptured individual differences between agents like frictions of physical robots.
+Nevertheless, the cutting‐edge research on pathfinding for multiple agents, known as Multi-Agent Path Finding (MAPF)~\cite{stern2019def} that aims at finding a set of collision-free paths on graphs, heavily rely on timing assumptions.
+Typical MAPF assumes that agents take actions just at the same time.
+Not to mention, such ``timed'' schedules contradict the nature of distributed environments.
+Even worse, on-time execution of offline planning is too optimistic with more agents.
+
+One counter approach to the timing uncertainties is runtime supports by online monitoring, re-planning, and intervention, e.g.,~\cite{van2011reciprocal,ma2017multi,atzmon2020robust,okumura2021time}.
+This approach however requires runtime effort and additional infrastructures (e.g., steady network and monitoring systems) to manage agents' status in real-time.
+Moreover, how to realize such schemes in large systems is not trivial at all.
+
+Instead, this paper studies a novel planning problem in which agents spontaneously take actions without any timing assumptions. The problem requests a set of paths (i.e., solution) ensuring that all agents eventually reach their destinations without blocking each other permanently.
+To see this, consider the situation in Fig.~\ref{fig:example}(left).
+This plan runs a risk of execution failure;
+if the agent $j$ gets delayed for any reason while the agent $i$ moves two steps to the right, then each agent blocks each other and neither agent can progress on its respective path.
+In contrast, in Fig.~\ref{fig:example}(right), regardless of how the two agents are scheduled, both agents eventually reach their destinations unless they permanently stop the progression.
+We call the corresponding problem \emph{Offline Time-Independent Multi-Agent Path Planning (OTIMAPP)}.
+
+\input{fig/example}
+
+The contribution of this paper is to establish the foundation of OTIMAPP for both theory and practice.
+Specifically, the topics are categorized into two:
+
+\medskip
+\noindent
+$\blacktriangleright$~\emph{We formalize and analyze OTIMAPP.}
+Section~\ref{sec:solution-analysis} identifies a necessary and sufficient condition for a \emph{solution}, i.e., a set of paths that makes all agents reach their goals without timing assumptions.
+This is based on characterization of \emph{deadlocks}.
+Section~\ref{sec:complexity} conducts a series of complexity analyses and reveals that
+(1)~finding a solution is NP-hard on directed graphs,
+(2)~finding a solution is NP-hard on undirected graphs when solutions are restricted to simple paths, and
+(3)~verifying a solution is co-NP-complete.
+
+\medskip
+\noindent
+$\blacktriangleright$~\emph{We present algorithms to solve OTIMAPP and demonstrate the utility of OTIMAPP via robotic applications.}
+Section~\ref{sec:solvers} presents two approaches to derive solutions: prioritized planning (PP) and deadlock-based search (DBS).
+Both algorithms are respectively derivative from basic MAPF algorithms~\cite{erdmann1987multiple,sharon2015conflict} and rely on a newly developed procedure to detect deadlocks within a set of paths.
+Section~\ref{sec:eval} shows that either PP or DBS can compute large OTIMAPP instances to some extent.
+Furthermore, we show that solutions keep robots' moves efficient in an adverse environment for timing assumptions compared to existing approaches with runtime supports~\cite{ma2017multi,okumura2021time}.
+Moreover, we demonstrate that solutions are executable with physical robots in both a centralized style and a decentralized style with only local interactions, without cumbersome procedures of online interventions.
+
+\medskip
+In the remainder, all omitted proofs including sketches are available in the appendix.
+The appendix, code, and movie are available on \url{https://kei18.github.io/otimapp}.
+Related work will be discussed at the end.
+
+\section{Problem Definition}
+An \emph{OTIMAPP instance} is given by a graph $G = (V, E)$, a set of agents $A=\{1, 2, \ldots, N\}$, an injective initial state function $s:A \mapsto V$, and an injective goal state function $g:A \mapsto V$.
+An OTIMAPP instance on digraphs is similar to the undirected case.
+
+An \emph{execution schedule} is an infinite sequence of agents.
+An \emph{OTIMAPP execution} is defined by an OTIMAPP instance, an execution schedule $\mathcal{E}$, and a set of paths $\{\path{1}, \ldots, \path{N}\}$ as follows.
+The agents are \emph{activated} in turn according to $\mathcal{E}$.
+Upon activation and until reaching the end of its path $\path{i}$, an agent $i$ takes a single step along $\path{i}$ if the vertex is vacant or stays at its current location otherwise.
+After reaching the end of the path, the agent only stays.
+$\mathcal{E}$ is called \emph{fair} when every agent appears infinitely-many times in $\mathcal{E}$.
+
+An \emph{OTIMAPP problem} is to decide whether there is a set of paths $\{\path{1}, \ldots, \path{N}\}$ such that
+(1)~each path for an agent $i$ begins from $s(i)$ and ends at $g(i)$,
+(2)~for any fair execution schedule, all agents reach the end of their paths (i.e., goals) in a finite number of activations.
+A \emph{solution} is a set of paths satisfying these two.
+
+\paragraph{Other Notations}
+Let $s_i$ and $g_i$ denote $s(i)$ and $g(i)$, respectively.
+A location for an agent $i$ is associated with a \emph{progress index} $\clock_i \in \{1, \cdots, |\path{i}|\}$ and represented as $\loc{i}{\clock_i}$, where $\loc{i}{j}$ is the $j$-th vertex in \path{i}.
+Every progress index starts at one and is incremented each time the agent moves a step along its path.
+The progress index is non-decreasing and no longer increases after reaching the end of the path.
+We use $S[-1]$ to denote the last element of the sequence $S$.
+
+\paragraph{Rationale and remarks}
+Any solution must deal with all timing uncertainties because execution schedules are unknown when offline planning.
+We assume that agents are activated sequentially and that each activation is atomic.
+However, there is no loss of generality as long as an agent can atomically reserve its destination before each move.
+Indeed, several robots acted simultaneously in our demos.
+Throughout the paper, we assume that each path \path{i} starts from $s_i$ and ends at $g_i$ to focus on analyses related to schedules.
+
+\input{fig/counterexamples}
+
+\section{Solution Analysis}
+\label{sec:solution-analysis}
+Given a set of paths, our first question is to determine whether it is a solution.
+This section derives a necessary and sufficient condition for solutions.
+For this purpose, we introduce four types of \emph{deadlocks}, categorized as; \emph{cyclic} or \emph{terminal}; \emph{potential} or \emph{reachable}.
+Informally, a cyclic deadlock is a situation where agent $i$ wants to move to the current vertex of $j$, who wants to move to the current vertex of $k$, who wants to move to ... of $i$.
+A terminal deadlock is a situation where agent $i$ reaches its destination and blocks the progress of another agent $j$.
+A potential deadlock is called reachable when there exists an execution schedule leading to the deadlock.
+
+\begin{definition}[potential cyclic deadlock]
+  Given an OTIMAPP instance and a set of paths $\{ \path{1}, \ldots \path{N} \}$, a \emph{potential cyclic deadlock} is a pair of tuples $\left((i, j, k, \ldots, l), (t_i, t_j, t_k, \ldots, t_l)\right)$ such that $\loc{i}{t_i+1} = \loc{j}{t_j} \land \loc{j}{t_j+1} = \loc{k}{t_k} \land \ldots \land \loc{l}{t_l+1} = \loc{i}{t_i}$.
+  The elements of the first tuple are without duplicates.
+  \label{def:potential-cycle-deadlock}
+\end{definition}
+
+\begin{definition}[potential terminal deadlock]
+  Given an OTIMAPP instance and a set of paths $\{ \path{1}, \ldots \path{N} \}$, a \emph{potential terminal deadlock} is a tuple $(i, j, t_j)$ such that $\path{i}\left[-1\right] = \path{j}[t_j]$ and $i \neq j$.
+  \label{def:potential-terminal-deadlock}
+\end{definition}
+
+\begin{definition}[reachable cyclic deadlock]
+  A potential cyclic deadlock $\left((i, j, \ldots, l), (t_i, t_j, \ldots, t_l)\right)$ is \emph{reachable} when there is an execution schedule leading to a situation where $\clock_i = t_i \land \clock_j = t_j \land \ldots \land \clock_l = t_l$.
+  This deadlock is called a \emph{reachable cyclic deadlock}.
+  \label{def:reachable-cycle-deadlock}
+\end{definition}
+
+\begin{definition}[reachable terminal deadlock]
+  A potential terminal deadlock $\left(i, j, t_j\right)$ is \emph{reachable} when there is an execution schedule leading to a situation where $\clock_i = |\path{i}| \land \clock_j = t_j - 1$.
+  This deadlock is called a \emph{reachable terminal deadlock}.
+  \label{def:reachable-terminal-deadlock}
+\end{definition}
+
+We refer to both reachable (or potential) cyclic/terminal deadlocks by reachable (resp. potential) deadlocks and simply use ``deadlock'' whenever the context is obvious.
+At least one execution schedule is required to verify whether a potential deadlock is reachable.
+For instance, in Fig.~\ref{fig:example} (left), a schedule $(i, i, \ldots )$ is evidence.
+A potential deadlock is not always reachable as illustrated in Fig.~\ref{fig:counterexamples}.
+
+\begin{theorem}[necessary and sufficient condition]
+  Given an OTIMAPP instance, a set of path $\{ \path{1}, \ldots, \path{N} \}$ is a solution if and only if there are (1)~no reachable terminal deadlocks and (2)~no reachable cyclic deadlocks.
+  \label{thrm:necessary-sufficient}
+\end{theorem}
+\begin{sketch}
+  Verifying that they are necessary is straightforward.
+  To see that they are sufficient, consider a potential function $\phi \defeq \sum_{i \in A} (|\path{i}| - \clock_i)$ defined over a configuration $\{ \clock_1, \ldots, \clock_N \}$.
+  Observe that $\phi$ is non-increasing and $\phi=0$ means that all agents have reached their goals.
+  Furthermore, when $\phi > 0$, $\phi$ is guaranteed to decrease if each agent is activated at least once.
+\end{sketch}
+
+\section{Computational Complexity}
+\label{sec:complexity}
+This section studies the complexity of OTIMAPP.
+In particular, we address two questions: the difficulty to find solutions (Sec.~\ref{sec:complexity:finding}) and the difficulty to verify solutions (Sec.~\ref{sec:complexity:verification}).
+Our main results are that both problems are computationally intractable;
+the former is NP-hard and the latter is co-NP-complete.
+Both proofs are based on reductions from the 3-SAT problem, deciding satisfiability for a formula in conjunctive normal form with three literals in each clause.
+
+\subsection{Finding Solutions}
+\label{sec:complexity:finding}
+We distinguish directed graphs and undirected graphs to analyze the complexity.
+The following proof is partially inspired by the NP-hardness of MAPF on digraphs~\cite{nebel2020computational}.
+
+\begin{theorem}[complexity on digraphs]
+  OTIMAPP on \emph{directed} graphs is NP-hard.
+  \label{thrm:np-hard-directed}
+\end{theorem}
+\begin{proof}
+  The proof is a reduction from the 3-SAT problem.
+  Figure~\ref{fig:3-sat-finding} is an example of the reduction from a formula $(x_1 \lor x_2 \lor \lnot x_3) \land (\lnot x_1 \lor x_2 \lor x_3)$.
+
+  \medskip
+  \noindent
+  \emph{A. Construction of an OTIMAPP instance.}
+  We introduce two gadgets, called \emph{variable decider} and \emph{clause constrainer}.
+  The OTIMAPP instance contains one variable decider for each variable and one clause constrainer for each clause.
+
+  The variable decider for a variable $x_i$ assigns $x_i$ to true or false.
+  This gadget contains one agent $\chi_i$ with two paths to reach its goal: \emph{left} or \emph{right}.
+  Taking a left path corresponds to assigning $x_i$ to false, and vice versa.
+  For the $j$-th clause $C^j$ in the formula, when its $k$-th literal is either $x_i$ or $\lnot x_i$, we further add one agent $c^j_k$ to the gadget.
+  Its start and goal are positioned on the \emph{right} side from $\chi_i$ when the literal is a negation; otherwise, on the \emph{left} side.
+  When several such agents are positioned on one side, let them connect (see the gadget for $x_2$).
+  $c^j_k$ has two alternate paths to reach its goal: a path within the variable decider or a path via a clause constrainer.
+  The former is available only when $\chi_i$ takes a path of the opposite direction to avoid a reachable cyclic deadlock.
+
+  The clause constrainer for a clause $C^j$ connects the start and the goal of $c^j_k$.
+  The gadget contains a triangle.
+  Each literal $c^j_k$ enters this triangle from a distinct vertex and exits from another vertex.
+  As a result, this gadget prevents three literals in $C^j$ from being false simultaneously; if not so, three agents enter the gadget and there is a reachable cyclic deadlock.
+
+  The number of agents, vertices, and edges are all polynomial with respect to the size of the formula.
+
+  \medskip
+  \noindent
+  \emph{B. The formula is  satisfiable if OTIMAPP has a solution}:
+  the use of one clause constrainer by three agents leads to a reachable cyclic deadlock.
+  Thus, at least one literal for each clause becomes true in any OTIMAPP solution.
+
+  \medskip
+  \noindent
+  \emph{C. OTIMAPP has a solution if the formula is satisfiable}:
+  If satisfiable, let $\chi_i$ take a path that follows the assignment.
+  Let $c^j_k$ take a path within the variable decider when $\chi_i$ takes the opposite direction; otherwise, use the clause constrainer.
+  Since three agents never enter one clause constrainer due to satisfiability, those paths constitute a solution.
+\end{proof}
+
+For undirected graphs, we limit solutions to those containing only simple paths.%
+\footnote{
+  We recently proved that it is NP-hard for the general case of undirected graphs.
+  The formal proof will appear soon.
+}
+
+\input{fig/3-sat}
+\input{fig/undirected-gadget}
+
+\begin{theorem}[complexity on undirected graphs]
+  For OTIMAPP on \emph{undirected} graphs, it is NP-hard to find a solution with \emph{simple} paths.
+  \label{thrm:np-hard-undirected}
+\end{theorem}
+\begin{sketch}
+  We add a new gadget called \textit{oneway constrainer}, which transforms an undirected edge to a virtually directed one, to the proof of the NP-hardness on digraphs (Thm.~\ref{thrm:np-hard-directed}).
+  We derive the claim by replacing all directed edges, except for bidirectional edges, with this gadget.
+  Figure~\ref{fig:undirected-gadget} illustrates it, including two new agents: $z_1$ and $z_2$.
+  In this gadget, any agents outside of the gadget are allowed to move only in the direction from $u$ to $v$.
+\end{sketch}
+
+\subsection{Verification}
+\label{sec:complexity:verification}
+The co-NP completeness of the verification relies on the following lemma, stating that finding cyclic deadlocks is computationally intractable.
+Its entire proof is delivered in the Appendix.
+\begin{lemma}[complexity of detecting cyclic deadlocks]
+  Determining whether a set of paths contains either reachable or potential cyclic deadlocks is NP-complete.
+  \label{lemma:deadlock-np-comp}
+\end{lemma}
+We then derive the complexity result since a solution has no reachable deadlocks.
+\begin{theorem}[complexity of verification]
+  Verifying a solutions of OTIMAPP is co-NP-complete.
+  \label{thrm:co-np-hard:verification}
+\end{theorem}
+\begin{proof}
+  Thm.~\ref{thrm:necessary-sufficient} states that a solution has no reachable terminal/cyclic deadlocks.
+  Verifying no terminal deadlocks is in co-NP; a terminal deadlock is verified in polynomial time with an execution schedule.
+  Verifying no potential deadlocks is co-NP-complete according to Lemma~\ref{lemma:deadlock-np-comp}.
+\end{proof}
+
+
+\section{Solvers}
+\label{sec:solvers}
+We now focus on how to solve OTIMAPP.
+In practice, it is difficult to use the necessary and sufficient condition (Thm.~\ref{thrm:necessary-sufficient}) because we have to find corresponding schedules.
+This motivates to build a relaxed sufficient condition.
+\begin{theorem}[relaxed condition]
+  Given an OTIMAPP instance, a set of path $\{ \path{1}, \ldots, \path{N} \}$ is a solution when there are
+  (1)~no use of other goals, i.e., $g_j \not\in \path{i}$ for all $i \neq j$ except for $s_i = g_j$, and
+  (2)~no potential cyclic deadlocks.
+  \label{thrm:sufficient}
+\end{theorem}
+It is straightforward to see that the above conditions are respectively sufficient for the two conditions in Thm.~\ref{thrm:necessary-sufficient}.
+Given a set of paths, ``no use of other goals'' is easy to check while ``no potential cyclic deadlocks'' is intractable to compute (Lemma~\ref{lemma:deadlock-np-comp}).
+Nevertheless, \emph{detecting potential cyclic deadlock is the heart of solving OTIMAPP}.
+Thus, we first explain how to detect potential cyclic deadlocks.
+After that, two algorithms to solve OTIMAPP are presented.
+
+\subsection{Detection of Potential Deadlocks}
+Due to the space limit, we only describe the intuition behind the algorithm.
+The details are in the Appendix (Alg.~\ref{algo:detecting-deadlock}).
+We first introduce a \emph{fragment}, a candidate of potential cyclic deadlocks.
+\begin{definition}[fragment]
+  Given a set of paths $\{\path{1},$$\ldots,$$\path{N}\}$, a \emph{fragment} is a tuple $\left((i, j, k, \ldots, l), (t_i, t_j, t_k, \ldots, t_l)\right)$ such that $\loc{i}{t_i+1}=\loc{j}{t_j} \land \loc{j}{t_j+1} = \loc{k}{t_k} \land \ldots = \loc{l}{t_l}$.
+  The elements of the first tuple are without duplicates.
+  \label{def:fragment}
+\end{definition}
+\noindent
+We say that a fragment \emph{starts} from a vertex $u$ when $\loc{i}{t_i} = u$ and a fragment \emph{ends} at a vertex $v$ when $\loc{l}{t_l+1} = v$.
+A fragment that ends at its start (i.e., $\loc{l}{t_l+1} = \loc{i}{t_i}$) is a potential cyclic deadlock.
+
+\input{table/update-tablefrom}
+
+Using fragments, we construct an algorithm to detect a potential cyclic deadlock in a set of paths if it exists.
+This is based on induction on \path{i}.
+The induction hypothesis for $i$ is that there are no potential cyclic deadlocks for $\{ \path{1}, \ldots, \path{i-1} \}$ and all fragments for them are identified.
+All new fragments about \path{i} are categorized into three groups:
+(1)~a fragment only with \path{i},
+(2)~a fragment that extends existing fragments, and
+(3)~a fragment that connects existing two fragments.
+In either case, if a newly created fragment ends at its start, this is a deadlock.
+
+The algorithm realizes this procedure by managing two tables that store fragments: \tablefrom and \tableto.
+Both tables take one vertex as a key.
+One entry in \tablefrom stores all fragments starting from the vertex.
+One entry in \tableto stores all fragments ending at the vertex.
+Table~\ref{table:update-tablefrom} presents an example to detect deadlocks.
+
+\subsection{Prioritized Planning (PP)}
+Prioritized planning~\cite{erdmann1987multiple,silver2005cooperative} is neither complete nor optimal, but it is computationally cheap hence a popular approach to MAPF.
+It plans paths sequentially while avoiding collisions with previously planned paths.
+Instead of inter-agent collisions, solvers for OTIMAPP have to care about potential cyclic deadlocks.
+
+Algorithm~\ref{algo:pp} is prioritized planning for OTIMAPP, named \emph{PP}.
+When planning a single-agent path, PP avoids using (1)~goals of other agents and (2)~edges causing potential cyclic deadlocks~[Line~\ref{algo:pp:planning}].
+The latter is detected by storing all fragments created by previously computed paths.
+For this purpose, PP uses the adaptive version of Alg.~\ref{algo:detecting-deadlock} [Line~\ref{algo:pp:register}] in the Appendix.
+A path satisfying the constraints can be found by ordinary pathfinding algorithms.
+If not, PP returns \FAILURE.
+The correctness of PP is derived from Thm.~\ref{thrm:sufficient}.
+
+\input{algo/pp.tex}
+
+PP is simple but incomplete.
+In particular, the planning order of agents is crucial; an instance may be solved or may not be solved as illustrated in Fig.~\ref{fig:prioritization}.
+One resolution is repeating PP with random priorities until the problem is solved; let call this PP$^+$.
+However, finding good orders can be challenging because there are $|A|!$ patterns.
+This motivates us to develop a search-based solver, described in the next.
+
+\input{fig/prioritization}
+
+\subsection{Deadlock-based Search (DBS)}
+We present \emph{deadlock-based search (DBS)} to solve OTIMAPP, based on a popular search-based MAPF solver called \emph{conflict-based search (CBS)}~\cite{sharon2015conflict}.
+CBS uses a two-level search.
+The high-level search manages collisions between agents.
+When a collision occurs between two agents at some time and location, two possible resolutions are depending on which agent gets to use the location at that time.
+Following this observation, CBS constructs a binary tree where each node includes constraints prohibiting to use space-time pairs for certain agents.
+In the low-level search, agents find a single path constrained by the corresponding high-level node.
+
+Instead of collisions, DBS considers potential cyclic deadlocks.
+When detecting a deadlock in a set of paths, a resolution is that one of the agents in the deadlock avoids using the edge.
+Thus, the constraints identify which agents prohibit using which edges in which orientation.
+
+\input{algo/dbs.tex}
+
+Algorithm~\ref{algo:cp} describes the high-level search of DBS.
+Each node in the high-level search contains \emph{constraints}, a list of tuples consisting of one agent and two vertices (representing ``from vertex'' and ``to vertex''), and \emph{paths} as a solution candidate.
+The root node does not have any constraints~[Line~\ref{algo:cp:root:constraints}].
+Its paths are computed following ``no use of other goals'' of Thm.~\ref{thrm:sufficient}~[Line~\ref{algo:cp:root:paths}].
+Then, the node is inserted into a priority queue \open~[Line~\ref{algo:cp:root:insert}].
+In the main loop [Line~\ref{algo:cp:while}--\ref{algo:cp:while:end}], DBS repeats;
+(1)~Picking up one node~[Line~\ref{algo:cp:pop}].
+(2)~Checking a deadlock and creating constraints~[Line~\ref{algo:cp:get-constraints}].
+(3)~Returning a solution if the paths contain no deadlocks~[Line~\ref{algo:cp:return-solution}].
+(4)~If not, creating successors and inserting them to \open~[Line~\ref{algo:cp:exapnd:for}--\ref{algo:cp:exapnd:for:end}].
+DBS returns \FAILURE when \open becomes empty~[Line~\ref{algo:cp:return-failure}].
+We complement several details below.
+
+{
+\smallskip
+\newcommand{\myitemize}[2]{\noindent{$\blacktriangleright$~\emph{#1}:}#2\smallskip}
+
+\myitemize{Line~\ref{algo:cp:pop}}{
+  \open is a priority queue and needs the order of nodes.
+  DBS works in any order but good orders reduce the search effort.
+  As effective heuristics, we use the descending order of the number of deadlocks with two agents, which is computed within a reasonable time.}
+
+\myitemize{Line~\ref{algo:cp:get-constraints}}{
+  Let $((i, j, k, \ldots, l),$$(t_i, t_j, t_k, \ldots, t_l))$ be a returned deadlock by Alg.~\ref{algo:detecting-deadlock}.
+  Then, create constraints $(i, \loc{i}{t_i}, \loc{i}{t_i+1}), (j, \loc{j}{t_j}, \loc{j}{t_j+1}), \ldots, (l, \loc{l}{t_l}, \loc{l}{t_l+1})$.}
+
+\myitemize{Line~\ref{algo:cp:update}}{
+  forces one path \path{i} in the node to follow the new constraints.
+  This low-level search must follow ``no use of other goals,'' furthermore, all edges in the constraints for $i$.
+  If not found, DBS discards the corresponding successor.}
+}
+
+\begin{theorem}[DBS]
+  DBS returns a solution when solutions satisfying Thm.~\ref{thrm:sufficient} exist; otherwise returns \FAILURE.
+  \label{thrm:dbs}
+\end{theorem}
+
+\paragraph{Example}
+We describe an example of DBS using Fig.~\ref{fig:prioritization}.
+Assume that the initial path of $i$ is the solid blue line and the path for $j$ is the dashed red line [Line~\ref{algo:cp:root:paths}].
+This node is inserted into \open~[Line~\ref{algo:cp:root:insert}] and is expanded immediately~[Line~\ref{algo:cp:pop}].
+There is one potential cyclic deadlock in the paths then two constraints are created: either $i$ or $j$ avoids using the shared edge~[Line~\ref{algo:cp:update}].
+Two child nodes are generated, however, the node that changes $i$'s path is invalid because there is no such path without the use of the goal of $j$.
+Another one is valid; $j$ takes the solid red line.
+Therefore, one node is added to \open from the root node.
+In the next iteration, this newly added node is expanded.
+There are no potential cyclic deadlocks in this node;
+DBS returns its paths as a solution.
+
+\paragraph{Optimization}
+Although this paper focuses on a feasibility problem, DBS can adapt to optimization problems.
+As objective functions, total path length and maximum path length in a solution can be defined.
+Those optimization problems are solved optimally by DBS when it prioritizes high-level search nodes with smaller scores, as commonly done in CBS.
+Note that metrics that assess time aspects such as total traveling time used in MAPF studies are significantly affected by execution schedules; the adaptation is not trivial.
+
+\section{Evaluation}
+\label{sec:eval}
+This section empirically demonstrates that OTIMAPP solutions are computable to some extent (Sec.~\ref{sec:stress-test}) and they are useful in adverse environments about timings (Sec.~\ref{sec:delay-tolerance}) through the simulation experiments.
+We also present OTIMAPP execution with robots (Sec.~\ref{sec:demo}).
+The simulator was coded in C++ and the experiments were run on a desktop PC with Intel Core~i9 \SI{2.8}{\giga\hertz} CPU and \SI{64}{\giga\byte} RAM.
+
+\subsection{Stress Test}
+\label{sec:stress-test}
+\paragraph{Setup}
+Each solver was tested with a timeout of \SI{5}{\minute} on four-connected undirected grids picked up from~\cite{stern2019def}, as a graph $G$.
+We also tested random graphs, shown in the Appendix.
+All instances were generated by setting a start $s_i$ and a goal $g_i$ randomly while ensuring that $s_i$ and $g_i$ have at least one path without the use of other goals; otherwise, it violates ``no use of other goals'' of Thm.~\ref{thrm:sufficient}.
+Note that unsolvable instances might still be included.
+
+\input{fig/stress-test}
+
+\paragraph{Result}
+Fig.~\ref{fig:stress-test} presents the results.
+The main findings are:
+(1)~Both solvers can solve instances with tens of agents in various maps within a reasonable time.
+(2)~PP often fails due to priority orders (e.g., Fig.~\ref{fig:prioritization}) while PP$^+$ and DBS can overcome such limitations to some extent.
+(3)~A bottleneck of each solver is the procedure of detecting potential cyclic deadlocks, an NP-hard problem (Lemma.~\ref{lemma:deadlock-np-comp}).
+This also leads to similar success rates of PP$^+$ and DBS.
+
+\subsection{Delay Tolerance}
+\label{sec:delay-tolerance}
+We next show that OTIMAPP solutions (if found) are useful in a simulated environment with stochastic delays of agents' moves built on conventional MAPF, called MAPF-DP (with Delay Probabilities)~\cite{ma2017multi}.
+Given a graph and start-goal pairs for each agent, the aim of MAPF is to move agents to their goals without collisions.
+Collisions occur when two agents occupy the same vertex or traverse the same edge simultaneously.
+Time is discrete.
+All agents synchronously take actions, i.e., either move to an adjacent vertex or stay at the current location.
+MAPF-DP emulates the imperfect execution of MAPF by introducing the possibility $p_i$ of unsuccessful moves for agent $i$ (remaining there).
+
+\paragraph{Setup}
+The delay probabilities $p_i$ were chosen uniformly at random from $[0, \bar{p}]$, where $\bar{p}$ is the upper bound of $p_i$.
+The higher $\bar{p}$ means that agents delay often, and vice versa.
+The metric is the total traveling time of agents; smaller values mean less wasting time at runtime.
+We tested the following two as baselines:
+(1)~MCPs~\cite{ma2017multi} force agents to preserve order relations of visiting one vertex in an offline MAPF plan at runtime.
+The plan was obtained by ECBS~\cite{barer2014suboptimal}.
+(2)~Causal-PIBT~\cite{okumura2021time} is online time-independent planning, that is, each agent repeats one-step planning and action adaptively to surrounding current situations.
+The other details are in the Appendix.
+
+\paragraph{Result}
+Table~\ref{table:result-delay} shows that the execution of OTIMAPP solutions outperforms the alternatives.
+This is because:
+(1)~Unlike MCPs, OTIMAPP solutions are free from temporal dependencies of offline plans that one agent delays are possibly fatal.
+(2)~Unlike Causal-PIBT, agents follow long-term plans and avoid possible congested locations.
+
+\paragraph{Discussion}
+Although finding OTIMAPP solutions is challenging, Table~\ref{table:result-delay} motivates us to compute them.
+Meanwhile, the other approaches can solve larger instances with more agents (e.g., $|A|=200$) and with much smaller planning time than solving OTIMAPP.
+Moreover, there are situations where OTIMAPP has no solutions while the others can find feasible plans because OTIMAPP assumes no intervention at runtime.
+One future direction pursues to fill these gaps.
+
+\input{table/result-delay}
+\input{fig/demo}
+
+\subsection{Robot Demonstrations}
+\label{sec:demo}
+We present two OTIMAPP execution styles:
+(1)~a \emph{centralized} control using the \emph{toio} robots (\url{https://toio.io}) and
+(2)~a \emph{decentralized} one with only local interactions using a multi-robot platform~\cite{kameyama2021active}.
+A solution was obtained by DBS.
+Figure~\ref{fig:demo} is snapshots.
+A video is available online.
+In both cases, robots move without any synchronization procedures but are ensured to eventually reach their goals thanks to the nature of OTIMAPP.
+Moreover, for the latter, any actor has no methods to know the entire configuration, which cannot be addressed by conventional execution strategies.
+
+\section{Related Work}
+% System deadlock
+A \emph{deadlock}~\cite{coffman1971system} is a widely recognized phenomenon not limited to robotics;
+a system state that several components claim resources that others hold, then block each other permanently.
+Strategies to cope with deadlocks are categorized into prevention, detection/recovery, and avoidance~\cite{silberschatz2006operating,fanti2004deadlock};
+\emph{OTIMAPP is prevention}.
+A non-deadlock state that is ``inevitable'' to reach deadlocks is called \emph{unsafe}~\cite{silberschatz2006operating}.
+Meanwhile, reachable deadlocks of OTIMAPP correspond to states that are ``possible'' to reach deadlocks.
+The notion of potential terminal deadlock is related to well-formed instances of MAPF~\cite{vcap2015prioritized}, that is, for each start-goal pair, a path exists that traverses no other starts and goals.
+The notion of reachable cyclic deadlock is mentioned as nonlive states/sets for deadlock management in automated manufacturing systems~\cite{fanti2004deadlock} or in a multi-robot scheduling problem~\cite{mannucci2021provably}.
+
+% multi-agent path finding
+The \emph{multi-agent pathfinding (MAPF)} problem~\cite{stern2019def} aims at finding a set of collision-free paths on a graph.
+Many studies on MAPF consider timing uncertainties because they are inevitable in multi-agent scenarios.
+However, current methods largely rely on additional assumptions on the travel speed of agents or assume delays to follow some probability distributions~\cite{wagner2017path,mansouri2019multi,peltzer2020stt,atzmon2020probabilistic}.
+Failing to represent the inherent uncertainty in the domain means the system behavior can be unpredictable.
+Alternative approaches are online intervention during execution, e.g., forcing agents to preserve temporal dependencies of offline planning via communication~\cite{ma2017multi,honig2019persistent,atzmon2020robust}.
+Another direction is online time-independent planning~\cite{okumura2021time} that incrementally moves agents based on current situations.
+OTIMAPP shares the concept of time independence but aims at offline planning without or less runtime effort.
+
+In graph theory, the (vertex) disjoint path problem and its variants~\cite{robertson1985disjoint} are partly related to ours in the sense that a set of disjoint paths clearly satisfies the solution condition of OTIMAPP, but the reverse does not.
+
+\section{Conclusion}
+This paper studied a novel path planning problem called OTIMAPP, motivated by the nature of distributed environments (i.e., timing uncertainties) that multi-agent systems must address.
+We focused on robotic applications in evaluation but believe that OTIMAPP can be leveraged to other resource allocation problems with mutual exclusion, e.g, distributed databases, which is our future direction.

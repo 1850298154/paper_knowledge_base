@@ -1,0 +1,163 @@
+
+\section{Experiments}
+\label{sec:experiments}
+\subsection{Experimental Conditions}
+
+\subsubsection{Baseline}
+\label{sec:baseline}
+The experiments presented by Yao et al. are partially reproduced \cite{yao2023collie}.
+In particular, the constrained sentence generation tasks described in Tab. \ref{tab:benchmarklist}. 
+Five LLMs were selected: GPT4, GPT4-O, Mistral Next, Claude 3.5, and Gemini.
+The four LLMs are prompted with the same example command given in \cite{yao2023collie}.
+For example, ``Please create a sentence of exactly 82 characters.'' for the Sent-1 task\footnote{https://chatgpt.com/share/b2834735-f7d8-468a-ba54-7da19dd6723c}.
+Tab. \ref{tab:iclrBaseline} gives an overview of the performance of the five LLMs on the four tasks. 
+The satisfaction rate is based on ten trials per task per model. 
+In addition, Tab. \ref{tab:iclrBaseline} also shows that the LLMs perform well on the lexically constrained scenario task-4 with a 90+\% satisfaction rate over ten trials.
+Also, as Yao et al. previously showed in their paper, LLMs struggle to produce constrained sentences involving counting (e.g., words and characters). They provide a nice picture of current LLM satisfaction capabilities by introducing new benchmarks. Unfortunately, the Yao et al. article only provides the benchmarks and some hints on reproducing them. However, it does not give any hints on how to solve the tasks associated with the benchmarks (see the original article for more details~\cite{yao2023collie}). 
+
+
+
+
+\input{0_results/arrays/arrBenchmarkList}
+
+\begin{table}[!ht]
+    
+    \centering
+    \resizebox{\textwidth}{!}{
+    \begin{tabular}{c|*{3}{c}|*{3}{c}|*{3}{c}|*{3}{c}|*{3}{c}}
+    \toprule
+    name & \multicolumn{3}{c}{GPT-4} & \multicolumn{3}{c}{GPT-4.0} & \multicolumn{3}{c}{Mistral Next} & \multicolumn{3}{c}{Claude3.5 Sonnet} & \multicolumn{3}{c}{Gemini}\\
+      & \#s & \#f & \%sat & \#s & \#f & \%sat & \#s & \#f & \%sat & \#s& \#f & \%sat  & \#s& \#f & \%sat \\
+     \midrule
+     sent-1 &1&9& 10\%     &0&10& 0\%    &0&10& 0\%     &1&9& 10\%    &0&10& 0\%\\
+     sent-2 &0&10& 0\%     &0&10& 0\%    &0&10& 0\%     &0&10& 0\%    &0&10& 0\%\\
+     sent-3 &1&9& 10\%     &5&5& 50\%    &0&10& 0\%     &9&1& 90\%    &1&9& 10\%\\
+     sent-4 &9&1& 90\%     &9&1& 90\%    &10&0& 100\%   &10&0&100\%   &1&9& 10\%\\
+     \bottomrule
+\end{tabular}
+}
+    \caption{Number of successes (\#s), Number of fails (\#f) and satisfaction rate (\%sat) for each model (GPT-4, GPT-4.0, Mistral Next, Claude 3.5, Gemini) for each task (sent-1, sent-2, sent-3, sent-4).}
+    \label{tab:iclrBaseline}
+\end{table}
+
+
+
+
+
+\subsubsection{Hardware \& Implementation}
+The experiments were performed on a laptop with Windows 10 Professional, 32 GB RAM, and Intel 16 CPU cores.
+The approach and the BS are implemented in Java 17 for easier comparisons. 
+\subsubsection{LLM choice}
+ LLaMa~\cite{touvron2023llama} is responsible for the predictions of words as domains for the variables, mainly because an efficient implementation in C++ was recently released\footnote{https://github.com/ggerganov/llama.cpp}. It allows running a model on a personal laptop and CPU (only) efficiently. 
+Thanks to quantization \cite{quantization_survey:2022} (model weight compression), the 7B parameters model (in Float16) of 13GB original size, in 4-bit quantization (Q4) drops to 3.9GB of RAM. However, the biggest model of LLama 65B (120GB), even in Q4, needs 38.5 GB of RAM. %
+Thus, the LLaMa v1 model used in the experiments is LLaMa~7B~Q4 with low temperature (i.e., $\leq 1$, temp = 0.8). 
+
+When asked for $k$ words, this version of LLaMa will take the same amount of time to ouput $1$ word and $1000$ words. To minimize the importance of $k$, $callLLM$ outputs more than $k$ words, a beam/variable only keeps $k$ ``valid" words. A ``valid" word is a word that does not violate a constraint on its own. For example, a word that does not violate the constraint ``does not contain the letter \emph{e}".
+
+\subsubsection{\BS Technical Remarks}
+
+%
+In the current implementations two halting conditions are defined for BS:
+\begin{itemize}
+    \item First solution: when the current beam contains at least one solution, BS is stopped and output the solutions.
+    \item All solutions: when the current beam contains at least one solution but another beam can continue to generate words without violating a constraint (for instance, it does not contain enough characters to satisfy a length constraint), the beam solutions are saved and BS continues with the remaining beams. %
+\end{itemize}
+
+\subsubsection{Benchmarks Settings}
+
+BS and GenCP are compared  on some recent benchmarks described in Sec. \ref{sec:baseline}. %
+
+To guarantee GenCP and BS to be judged on the generation of sentences of the same quality, a solution is a sentence that satisfies all the constraints of the current task and, when given this sentence, the LLM predicts a period (``."). Not to alter BS too much, words are ordered by probability (PPL is not used) and, since BS sentences have low variability, GenCP is used without $backtrackTo$($n$).
+
+ % 
+
+BS and GenCP are compared on the following criteria:
+\begin{itemize}
+    \item Time in seconds.
+    % 
+    \item Number of solutions. GenCP was stopped when it found the same number of solutions as BS on a task. $0/1$ means that BS found no solution while GenCP found one solution.
+    % 
+    \item The ratio solutions/outputs as a constraint satisfaction rate.
+    \item For BS only, the number of bad outputs (number of outputs that are not a solution).
+    \item For GenCP only, the number of backtracks.
+\end{itemize}
+
+
+
+
+\subsection{Result Analysis}
+
+
+
+The results show that GenCP can be used to solve efficiently \tg problems. GenCP is faster than BS and all the outputs are solutions, contrary to BS where some outputs are not solutions.
+
+Although the results suggest that GenCP succeeds in all tasks (see Tab. 3),
+ it becomes particularly interesting when considering size constraints (e.g., sentences with a precise number of words or characters). It obtains sentences that satisfy the constraint with a low PPL score on sent-1 and sent-3 tasks.
+ 
+GenCP also succeeds in producing sequences obeying lexical constraints in sent-2 and sent-4.
+However, the PPL and a human evaluation on these sentences show a substantial deterioration in term of quality (i.e., meaningfulness).
+
+Therefore, regarding sent-1 and sent-3 tasks, GenCP is to be preferred, whereas for sent-4 and sent-2 tasks, LLMs prompted alone or joint with BS is still adequate.
+
+\input{0_results/arrays/CPvBS}
+\input{0_results/arrays/CPres}
+
+% \color{black}
+\subsubsection{\BS}
+
+BS and GenCP are compared in Tab. \ref{er:arrcpvbs}. In all tables, the number of backtracks is denoted by \#bk. 
+BS is slower than GenCP and has lower satisfaction rate (number of outputs that are solutions / total number of outputs), denoted by \%sat. This is due to multiple facts:
+
+\begin{enumerate}
+    % 
+    \item \BS can not guarantee to find every solution.
+    \item \BS chooses the next word depending on the probability of the LLM. \label{bs:proba}
+    \item At each step, BS considers $k$ sentences, each sentence asks $k$ words to the LLM, so each step considers $k^2$ words. BS orders these words decreasingly by probability and only keeps the $k$ first. \label{bs:reduce}
+\end{enumerate}
+
+% 
+Facts \ref{bs:proba} and \ref{bs:reduce} explain why increasing $k$ does not guarantee to find the same/more solutions, it might even cause BS to find less solutions.
+%
+
+
+
+Let us suppose $k$ = 5, BS found one solution, and at depth 4, the candidate needed to find this solution was ranked 5 out of 25.
+    Let us suppose now $k$ is increased to 6: at each step BS will consider 36 candidates and take the 6 best ones. BS considers 11 more candidates than with $k$ = 5; if at depth 4, the candidate needed to find the previous solution is now ranked 7 instead of 5, BS will not consider it and $k$ = 6 will not find the solution found with $k$ = 5.
+
+
+\subsubsection{GenCP}
+
+\input{0_results/arrays/CPres2}
+
+% 
+
+% 
+Tab. \ref{er:arrCPres} shows the capability of GenCP to generate more solutions than BS.
+GenCP is given the same time as BS for the same task and $k=50$, GenCP obtains more solutions than BS. Note that for sent-1, without $backtrackTo$ GenCP only obtains 2 solutions in 1123 seconds, while with $backtrackTo(6)$ GenCP obtains 11 solutions in 1123 seconds.
+
+The LLM-enhanced GenCP avoids the drawbacks of BS and proposes an alternative approach to \tg for the following reasons:
+
+\begin{itemize}
+    % 
+    \item GenCP can guarantee to find every solution (if any). 
+    Increasing $k$ guarantees to find at least the same solutions previously found and potentially finds new solutions. Furthermore, it can offer more solutions than BS.
+    %
+    \item All the outputs answered by GenCP are solutions (all the constraints are satisfied). %
+    \item GenCP offers more options for improvement, for example to ensure better variability ($backtrackTo$ explained in \ref{bkTO} can be used) or other orderings than probability (\ref{order}).
+    %
+\end{itemize}
+
+
+
+
+
+
+
+\subsubsection{Variability and Perplexity}
+
+Tab. \ref{er:arrCPres2} demonstrates the importance of enforcing variability and perplexity.
+When GenCP generated solutions for Tab. \ref{er:arrcpvbs} and \ref{er:arrCPres}, the maximum variability was 4. Tab. \ref{er:arrCPres2} shows that with $backtrackTo(2)$/$backtrackTo(3)$, sentences generated are almost completely different thanks to high variability (10+ for sent-3 for example).
+
+Tab. \ref{er:arrCPres2} purposefully contains sentences with high perplexity to illustrate that this leads to a degradation in the sentence quality (i.e., low meaning).
+
+All the sentences generated for sent-4 had the words ``soft", ``beach" and ``math" next to each other. To showcase the capability of GenCP to improve sentences, sent-4* was created: it is the same as sent-4 except that ``soft", ``beach" and ``math" must contain at least three words between them.

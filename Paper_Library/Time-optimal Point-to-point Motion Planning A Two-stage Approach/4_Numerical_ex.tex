@@ -1,0 +1,129 @@
+\section{Numerical Example and Discussion}\label{Sec_IV}
+The remainder of this paper validates the proposed two-stage approach through two numerical examples.
+The first one, detailed in Section \ref{Sec_IV1}, compares the two-stage approach with the alternatives discussed in Section \ref{Sec_II}.
+This comparison evaluates the time-optimal trajectory, computation time, and feasibility of the collision avoidance constraint by solving a single optimal control problem.
+The second example, presented in Section \ref{Sec_IV2}, demonstrates the integration of the two-stage approach with the ASAP-MPC update strategy, addressing challenges arising from delayed and fluctuating computation times.
+
+Both numerical examples involve time-optimal point-to-point motion planning for a point-mass unicycle model while avoiding an elliptical obstacle.
+We consider the following unicycle model with position $(x,y)$ and orientation $\theta$ as its states, and the forward speed $v$ and the angular velocity $w$ as its control inputs:
+\begin{equation}
+    s=\begin{bmatrix}
+        x\\
+        y\\
+        \theta
+    \end{bmatrix}, 
+    u=\begin{bmatrix}
+        v\\
+        \omega
+    \end{bmatrix},
+    \dot{s}(t)=\begin{bmatrix}
+        v(t)\cos\theta(t)\\
+        v(t)\sin\theta(t)\\
+        \omega(t)
+    \end{bmatrix}.
+\end{equation}
+% consider integration time explicitly????
+The continuous-time system is discretized using the explicit Runge-Kutta method of order 4, implemented with CasADi (\cite{casadi}).
+For the discrete-time model (\ref{eq: discrete_time}), the control sampling time $t_s = 0.02s$.
+
+The time-optimal motion planning problem encompasses two types of stage constraints: control input limits 
+% ($v\in[0, 0.5]\ \text{m/s}$ and $\omega\in[-\pi/3, \pi/3]\ \text{rad/s}$)
+($0\leq v\leq 0.5 [\text{m/s}]$ and $-\pi/3\leq\omega\leq\pi/3 [\text{rad/s}]$)
+, and collision avoidance with an elliptical obstacle defined by parameters $p_e=[x_e,y_e,a_e,b_e,\theta_e]$ as follows:
+\begin{equation}
+    h_e: 1-{p^{\mathrm{diff}}}^\top\Omega_ep^{\mathrm{diff}}\leq0,
+    \label{eqn:collision}
+\end{equation}
+where $p^{\mathrm{diff}}=\begin{bmatrix}x-x_e\\y-y_e\end{bmatrix}$, and $\Omega_e=R(\theta_e)^\top\text{diag}(\frac{1}{a_e^2}, \frac{1}{b_e^2})R(\theta_e)$ with $R(\theta_e)$ represents the elliptical rotation matrix.
+
+The two-stage time-optimal OCP and the two alternatives are formulated in Python using the Rockit toolbox for rapid OCP prototyping, presented in \cite{rockit}, and solved with Ipopt by \cite{ipopt} using ma57 of \cite{hsl} as the linear solver. 
+% Key steps in the implementation including integrator and Jacobian matrix calculation are handled using Casadi \cite{casadi}.
+All computations are performed on a laptop with an Intel$^{\circledR}$ Core\textsuperscript{\texttrademark} i7-1185G7 processor with eight cores at 3GHz and with 31.1GB RAM.
+
+\subsection{Comparison of Time-Optimal Approaches}\label{Sec_IV1}
+To compare OCPs formulated by the three approaches (\ref{ocp: time_scaling}), (\ref{ocp: exponential_weight}) and (\ref{ocp: two_stage}), we define the following problem, aiming to transition the system from an initial state $s_{\text{t0}}=[0.70713\mathrm{m}, 1.83274\mathrm{m}, 1.38778\mathrm{rad}]^\top$, which is a position on the edge of the elliptical obstacle, to a terminal state $s_{\text{tf}}=[4\mathrm{m}, 3.5\mathrm{m}, 0\mathrm{rad}]^\top$.
+The elliptical obstacle is with parameter $p_e=[2.5\mathrm{m},1\mathrm{m},2\mathrm{m},1\mathrm{m},-\pi/6\mathrm{rad}]$.
+The time scaling approach chooses a horizon length of 50.
+The exponential weighting approach chooses a horizon length of 400 and the weighting factor $\gamma=1.025$.
+For both stages of the two-stage approach, horizon lengths $N_1=N_2=25$ are chosen.
+In addition, the two-stage approach chooses the same value of $\gamma$ as the exponential weighting approach and the weighting factor $w_1=0$ and $w_2=1$.
+
+Fig. \ref{fig:compare_3_traj} illustrates the $x-y$ position trajectory obtained by the three approaches. 
+The trajectories derived from the time scaling approach and the two-stage approach are nearly identical. 
+In this context, the total trajectory times for the time scaling approach and the two-stage approach are 7.0428s and 7.0439s, respectively.
+The minimal horizon length for the exponential weighting approach is $N^*=353$, leading to a total trajectory time of $N^*t_s=7.06s$. The difference in the optimal trajectory times is noticeably smaller than one control sampling time $t_s$. 
+The difference in motion trajectories is caused by the different optimization objectives.
+Specifically, in this example, the exponential weighting approach strives to reach the terminal state sooner in the $y$ position and $\theta$ orientation than in the $x$ position, which is a direct consequence of the L1-norm objective.
+This illustrates the inherent non-uniqueness of time-optimal motion planning in discrete-time.
+\begin{figure}[t]
+    \begin{center}
+    \includegraphics[width=8.4cm]{plots/ex1_traj.pdf}    % The printed column width is 8.4 cm.
+    \caption{$x-y$ position trajectories, obtained by the three approaches.} 
+    \label{fig:compare_3_traj}
+    \end{center}
+\end{figure}
+\begin{figure}[t]
+    \begin{center}
+    \includegraphics[width=8.4cm]{plots/ex1_h.pdf}    % The printed column width is 8.4 cm.
+    \caption{Compare the satisfaction of collision avoidance constraint. It is considered feasible when the value of the collision avoidance constraint does not exceed zero.} 
+    \label{fig:compare_3_h}
+    \end{center}
+\end{figure}
+
+In regard to computation time for this example, the time scaling approach requires approximately 0.06s, the two-stage approach takes around 0.1s, and the exponential weighting approach takes around 1.5s. 
+All of these durations surpass one control sampling time, i.e., 0.02s. 
+The computational overhead of the exponential weighting approach is significantly higher than that of the other two approaches, primarily due to the notably larger number of decision variables resulting from the large horizon length.
+
+Furthermore, we showcase the satisfaction of collision avoidance constraint (\ref{eqn:collision}) during the initial 0.5 seconds (the trajectory time of stage 1 in the two-stage approach) in Fig. \ref{fig:compare_3_h}.
+Both the two-stage approach and the exponential weighting approach undoubtedly meet the collision avoidance constraint.
+To align with the time grid, we interpolate both state and control input trajectories obtained from the time scaling approach using the control sampling time $t_s$.
+However, for the time scaling approach, both the interpolated state trajectory and the simulated state trajectory with interpolated control inputs fall short of fully satisfying the collision avoidance constraint, posing a risk of collision.
+
+\subsection{Integration of the Two-stage Approach with the ASAP -MPC Update Strategy}\label{Sec_IV2}
+This example demonstrates the integration of the two-stage approach with the ASAP-MPC update strategy, as outlined in Algorithm \ref{algo1}.
+The horizon length for both stages is set to be $N_1=N_2=25$, with weighting factors $w_1 = 1$ and $w_2 = 1000$ when signifying stage 2 dominates time-optimality; otherwise, set $w_1 = 1000$ and $w_2 = 1$.
+% (We choose not to set the value of the weighting factors to 0 to maintain the OCP code structure.)
+The task is to transition the unicycle model from the initial state $s_{\text{t0}}=[0.1\mathrm{m}, 0.5\mathrm{m}, 0\mathrm{rad}]^\top$ to a desired terminal state $s_{\text{tf}}=[5\mathrm{m}, 2.5\mathrm{m}, 0\mathrm{rad}]^\top$, avoiding the elliptical obstacle $p_e=[2.5\mathrm{m},1\mathrm{m},2\mathrm{m},1\mathrm{m},\pi/6\mathrm{rad}]$ in the meantime.
+\begin{figure}[t]
+    \begin{center}
+    \includegraphics[width=8.4cm]{plots/ex2_traj.pdf}    % The printed column width is 8.4 cm.
+    \caption{Four instances of the NMPC example. The red cross, the blue star, the black line, the red and the blue dot lines denote the initial and desired terminal positions, the executed trajectory, the remaining stage 1 trajectory, and the stage 2 trajectory, respectively.} 
+    \label{fig:asap_2s_traj}
+    \end{center}
+\end{figure}
+
+The OCP (\ref{ocp: two_stage}) is iteratively solved with current initial state $s_{\text{t0}}$ until the desired terminal state $s_{\text{tf}}$ is reached.
+Fig. \ref{fig:asap_2s_traj} depicts four time instances when the current solution is available, seamlessly stitched with the executed trajectory, and concurrently initiates a new planning with the updated current state $s_{\text{t0}}$.
+At the outset, the system is at $s_{\text{t0}}=[0.1\mathrm{m}, 0.5\mathrm{m}, 0\mathrm{rad}]^\top$ and initiates planning a time-optimal trajectory starting from this $s_{\text{t0}}$.
+The initial planned trajectory, depicted in the top-left subplot of Fig. \ref{fig:asap_2s_traj}, encompasses a total trajectory time of 10.9191s.
+Subsequently, it will continuously replan. 
+As an instance, the 11th replanning takes $n_{\text{update}}=15$ control sampling times to solve, and the resulting trajectory is displayed in the top-right subplot of Fig. \ref{fig:asap_2s_traj}. 
+In this scenario, the first 15 trajectory points are seamlessly stitched with the executed trajectory, which is depicted in the black line.
+The remaining trajectory of stage 1 and the trajectory of stage 2 are depicted in red and blue dot lines, respectively.
+The 15th on-trajectory state of stage 1 becomes the updated $s_{\text{t0}}$ for the subsequent replanning.
+The total trajectory time, which is the sum of the trajectory time of the current executed trajectory and the trajectory time of the upcoming replanned trajectory, amounts to 10.9179 seconds. 
+Importantly, this duration still embodies the time-optimal solution.
+This process and conclusion remain consistent in the 30th (left-bottom subplot of Fig. \ref{fig:asap_2s_traj}), 56th (right-bottom subplot of Fig. \ref{fig:asap_2s_traj}), and all other replannings.
+One remark is that the 56th replanning serves as an instance where the trajectory time of stage 2 is zero.
+Therefore, with updated weighting factors, the two-stage approach aligns with the exponential weighting approach and stabilizes the system to the desired terminal state $s_{\text{tf}}$ relying solely on stage 1.
+Fig. \ref{fig:asap_final_u} depicts the control inputs of stage 1 obtained from the 56th replanning, indicating that the system reaches the desired terminal state $s_{\text{tf}}$ at $t=10.92s$, at which point the forward velocity is zero.
+This can be deemed as the time-optimal solution, as discussed in Section \ref{Sec_IV1}.
+
+\begin{figure}[t]
+    \begin{center}
+    \includegraphics[width=8.4cm]{plots/ex2_u.pdf}    % The printed column width is 8.4 cm.
+    \caption{The control inputs of stage 1 obtained from the 56th replanning, with black dashed lines denoting the control limits.} 
+    \label{fig:asap_final_u}
+    \end{center}
+\end{figure}
+\begin{figure}[t]
+    \begin{center}
+    \includegraphics[width=8.4cm]{plots/ex2_time.pdf}    % The printed column width is 8.4 cm.
+    \caption{Number of control sampling time $t_s$ spent for each solve. The black dashed line denotes the upper bound.} 
+    \label{fig:asap_2s_tcomp}
+    \end{center}
+\end{figure}
+
+In total, it plans 60 times until reaching the desired terminal state $s_{\text{tf}}$.
+Fig. \ref{fig:asap_2s_tcomp} illustrates the number of control sampling times spent for each solve.
+In this example, each replanning takes no longer than the fixed total time of stage 1, i.e., $N_1t_s=0.5s$.

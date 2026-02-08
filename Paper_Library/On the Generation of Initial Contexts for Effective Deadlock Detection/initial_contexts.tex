@@ -1,0 +1,552 @@
+% ;; -*- coding: iso-latin-1; TeX-PDF-mode: t; TeX-master: "main" -*-%
+
+In our asynchronous programs, the most \emph{general} initial contexts
+consist of sets of locations with \emph{free} variables in their fields, and
+initial tasks in each location queue with \emph{free} variables as
+parameters, i.e., neither the fields nor the parameters have concrete
+values.  A first approach to systematically generate initial contexts
+could consist in generating, on backtracking, all possible multisets
+of initial tasks (method names), and for each one, generate all
+aliasing combinations with the locations of the tasks belonging to the
+same type of location. They are multisets because there can be
+multiple occurrences of the same task.  To guarantee termination of
+this process we need to impose some limit in the generation of the
+multisets. For this, we could simply set a limit on the multiset
+global size. However it would be more reasonable and useful to set a
+limit on the maximum cardinality of each element in the multiset. To
+allow further flexibility, let us also set a limit on the minimum
+cardinality of each element. For instance, if we have a program with just one
+location type $A$ with just one method $m$, and we set $1$ and $2$ as
+the minimum and maximum cardinalities respectively, then there are two
+possible multisets, namely, $\{m\}$ and $\{m,m\}$. The first one leads
+to one initial context with one location of type $A$ with an instance
+of task $m$ in its queue. The second one leads to two contexts, one
+with one location of type $A$ with two instances of task $m$ in its
+queue, and the other one with two different locations, each with an
+instance of task $m$ in its queue.
+
+On the other hand, it makes sense to allow specifying which tasks
+should be considered as initial tasks and which should not. A typical
+scenario is that the user knows which are the main tasks of the
+application and does not want to consider auxiliary or internal tasks
+as initial tasks. Another scenario is in the context of integration
+testing, where the tester might want to try out together different
+groups of tasks to observe how they interfere with each other. Also,
+the use of  static analysis can help determine a subset of
+tasks of interest to detect some specific property. This is the
+case of our deadlock-guided approach of
+Section~\ref{sec:initialtasks}.
+%
+With all this, the input to our automatic generation of initial
+contexts is: (1) a set of \emph{abstract tasks} $\inittasks$ such that
+each task is abstracted by the method name that is executing, (2) the
+minimum and maximum cardinalities. Thus, an initial context is a set of tuples
+(\lst{C.M},$\mincard,\maxcard$), where \lst{C} and \lst{M} are the
+class and method name resp., and $\mincard$ resp. $\maxcard$ is the
+associated minimum resp. maximum cardinality.
+%
+Note that this does not limit the approach in any way since one could
+just include in $\inittasks$ all methods in the program and set
+$\mincard = 0$ and a sufficiently large $\maxcard$. 
+
+%The goal of
+%starting from this input is hence usefulness and flexibility.
+
+\begin{example}\label{ex:cmincmax}
+  % Let us consider the set $\inittasks = \{$(\lst{DB.register},0,2)$\}$
+  % from which we derive the multisets $\sf\{\{\emptyset\},\{register\},
+  % \{register,register\}\}$. The empty multiset is useless since it
+  % does not lead to any initial context of interest. From multiset $\sf
+  % \{register\}$ we just have to consider an initial context containing
+  % an instance of class \lst{DB} and a task \lst{register} in its
+  % queue. The multiset $\sf \{register,register\}$ requires an initial
+  % context containing exactly two instances of task \lst{register},
+  % which leads to two different contexts: (1) a context composed by two
+  % instances of class \lst{DB}, each of them with a task \lst{register}
+  % in its queue, and, (2) a context composed by an instance of class
+  % \lst{DB} with two tasks \lst{register} in its queue.
+  Let us consider the set $\inittasks = \sf
+  \{(DB.register,1,1),(DB.getData,0,1)\}$. The corresponding
+  multisets are $\sf \{register\}$ and $\sf
+  \{register,getData\}$. All contexts must contain exactly one
+  instance of task \textsf{register} and at most one instance of task
+  \textsf{getData}. This leads to three possible contexts: (1) a
+  \textsf{DB} location instance with a task \textsf{register} in its queue,
+  (2) a \textsf{DB} location instance with tasks \textsf{register} and
+  \textsf{getData} in its queue, and, (3) two different \textsf{DB}
+  location instances, one of them with an instance of task
+  \textsf{register} and the other one with an instance of task
+  \textsf{getData}. For instance, the state corresponding to the latter
+  context would be: 
+
+\vspace{-.25cm}
+\[ \small\begin{array}{llll}
+\tt
+ S & =\! &\tt [loc(DB1,bot, &\tt [data \mapsto D1, clients
+             \mapsto Cl1, checkOn \mapsto B1], \\
+   &   &   &\tt [tsk(1,register,[this \mapsto r(DB1), m \mapsto
+             W1],body(register))]) \\
+   &   &\tt ~loc(DB2,bot, &\tt [data \mapsto D2, clients \mapsto
+    Cl2, checkOn \mapsto B2], \\
+   &   &   &\tt  [tsk(2,getData,[this
+    \mapsto r(DB2), m \mapsto W2],body(getData))])],
+\end{array} \]
+%
+\noindent where $\sf D1, Cl1,$ and $\sf B1$ (resp. $\sf D2, Cl2,$ and
+$\sf B2$) are the fields \textsf{data, clients,} and \textsf{checkOn}
+of location $\sf DB1$ (resp. $\sf DB2$), and \textsf{W1}
+resp. \textsf{W2} the parameter of the task \textsf{register} resp.
+\textsf{getData}, and \textsf{body(m)} is the sequence of instructions
+in method \textsf{m}. Note that both fields and task parameters are
+fresh variables so that the context is the most general possible.
+Note that the first parameter of a task is always the location
+\textsf{this} and it is therefore fixed. \hfill $\Box$
+\end{example}
+
+% \begin{example}\label{ex:system}
+%   \fxnote{byMZ: Le anadiria al ejemplo al principio algunas otras
+%     configuraciones de $\maxcard$ y $\mincard$ mostrando a que
+%     multiconjuntos darían lugar para luego entrar en detalles con el
+%     caso $\maxcard=1$ y $\mincard=1$ }
+%Let us consider the set
+%   $\{$\textsf{DB.register},\textsf{Worker.work}$\}$ and $\maxcard=1$ for the
+%   system testing of our motivating example. From this input, we must
+%   consider all possible contexts to be performed. This simple example
+%   only needs to consider one initial context containing an instance of
+%   class \textsf{Database} with a pending task \textsf{register} and an
+%   instance of class \textsf{Worker} with a pending task \textsf{work} and
+%   their respective future variables. That is:
+
+% \texttt{\footnotesize \hspace{-0.35cm}Locs \!=\! [loc(1,\textit{bot},[field(data,D),field(clients,C),field(connected,B)], \\
+% {\color{white}{aaaaaaaaaaaaaaaaaaaaaaaaa}}   [tsk(1,register,register([r(1),r(Worker)],Ret1),\ref{pp:reginit},call)])\!,\\
+% {\color{white}{000000}}  loc(2,\textit{bot},[field(data,N)], \\
+% {\color{white}{aaaaaaaaaaaaaaaaaaaaaaaaa}}
+% [tsk(2,work,work([r(2),r(DB)],Ret2),\ref{pp:workinit},call)])\!,\\
+% {\color{white}{0000000}})]}, and,\newline 
+% \texttt{\footnotesize Futs
+%   =
+%   [fut(0,1,1,\ref{pp:reginit},\textit{bot}),fut(1,2,2,\ref{pp:workinit},\textit{bot})]},
+% \fxnote{check futures}
+% where \texttt{D, C, B} are the database's unknown fields, \texttt{N} is the
+% worker's unknown field, \texttt{Worker}
+% and \texttt{DB} are unknown references to any worker and database,
+% respectively.
+% We can find several situations depending on the value of \texttt{B} and the
+% aliasing of the \texttt{Worker} and \texttt{DB} locations.
+% \begin{itemize}
+% \item Once task \textsf{register} is chosen to be executed, \texttt{B} is a variable, so
+%   perfoming symbolic execution, it results in two different executions
+%   with constraints: \texttt{\{B = true\}} and
+%   \texttt{\{B = false\}}, respectively. In case of execution with path condition \texttt{\{B = false\}}, \textsf{register} finishes
+%   without making any asynchronous call and, thus, after executing tasks
+%   \textsf{work} and \textsf{getData}, we obtain a correct test case with no
+%   bugs.
+% %
+% \item In the case of path condition \texttt{\{B  = true\}}, an asynchronous call is made
+%   on the variable \textsf{Worker}. Symbolic execution needs to try all
+%   possible aliasings. \textsf{Worker} is firstly instantiated to the initial
+%   worker (\textsf{Worker = 2}) and then, database $1$ gets blocked.
+%   Now, the initial worker can execute \textsf{work} or \textsf{ping}. 
+%   The most interesting case is when \textsf{work} is executed (the other
+%   one does not lead to deadlock). Here,
+%   again an asynchronous call is made on the variable \texttt{DB}. If \texttt{DB} is
+%   instantiated to the initial db (\texttt{DB = 1} is added to the
+%   current condition path) then it also gets blocked and, thus, we will obtain several test
+%   cases of deadlock. On the other hand, if \texttt{DB} is
+%   bound to a new data base, then we will not find any deadlock
+%   situation.
+% %
+% \item In a similar way if \texttt{Worker} is instantiated to a new worker
+%   instead of the worker $2$, we cannot find any deadlock either and
+%   the execution finishes correctly.
+% %
+% \item If \textsf{work} is executed before \textsf{register}, we obtain
+%   analagous situations to the ones explained aforementioned.
+% \end{itemize}
+% \end{example}
+
+
+In the following, we formally define the contexts that must be
+produced from a set of abstract tasks $\inittasks$ with associated
+cardinalities, and a procedure (as a Prolog rule) that generates these
+contexts as partially instantiated states. 
+%
+We use the notation $\{[m_1,...,m_n]_{o_i}\}$ for an initial context
+where there exists a location
+$\buffer(o_i,\bot,\heap,\{\tkid(tk_1,m_1,\mapping_1,body(m_1))\}\cup...\cup
+\{\tkid(tk_n,m_n,\mapping_n,body(m_n))\})$. Note that  we can have $m_i =
+m_j$ with $i \neq j$. For instance, the three contexts in
+Example~\ref{ex:cmincmax} are written as $\sf
+\{[register]_{db_1}\},\{[register,getData]_{db_1}\}$ and $\sf \{[register]_{db_1},[getData]_{db_2}\}$,
+respectively.
+%
+% Therefore, an initial state is a multiset of terms $o.m$, that is, a
+% set of locations containing tasks inside their queues.  Example
+% \ref{ex:system} is simple as $\mincard = \maxcard=1$ and tasks
+% belong to different classes, so we only need to consider the initial
+% context $\sf \{db.register,w.work\}$.  However, in those cases of
+% $\maxcard > 1 $ or there are several abstract tasks belongs to the
+% same class (Example \ref{ex:cmincmax}), we must consider all
+% possible distributions among tasks and instances of the class
+% containing such tasks, some of them can be repeated and, thus, this
+% is the reason why initial contexts are multisets.
+Let us first define the set of initial contexts from a given
+$\inittasks$ when all tasks belong to the same class.
+% Then, we define how to generate the set when abstract tasks belong
+% to different classes.
+\begin{definition}[Superset of initial contexts (same class $C_i$)]
+  Let
+  $\inittasks=\{(C_i.m_{1},\mincard_1,\maxcard_1),\ldots,(C_i.m_{n},\mincard_n,\maxcard_n)\}$
+  be the set of abstract tasks with associated
+  cardinalities.  
+  % We will obtain all possible configurations related to class $C_i$.
+% 
+  Let us have $\sum\limits_{i=1}^n\maxcard_i$ different identifiers:
+  $o_{1,1},\ldots,o_{1,\maxcard_1}, \\
+  \ldots,o_{n,1},\ldots,o_{n,\maxcard_n}$.  We can find at most
+  $\sum\limits_{i=1}^n\maxcard_i$ instances of class $C_i$, that is,
+  each abstract task $m_{i}$ ($i \in [1,n]$) has at most $\maxcard_i$
+  instances and each of them can be inside a different instance of
+  class $C_i$.  Let $u^{m_k}_{i,j}$ be an integer variable that
+  denotes the number of instances of task $m_k$ inside the location
+  $o_{i,j}$ and let us consider the following integer system:
+\begin{equation*}
+\begin{cases}
+\mincard_1 \leq
+u^{m_1}_{1,1}+\ldots+u^{m_1}_{1,\maxcard_1}+\ldots+u^{m_1}_{n,1}+\ldots+u^{m_1}_{n,\maxcard_n}
+\leq \maxcard_1 \\ 
+ \ldots \\
+\mincard_n \leq
+u^{m_n}_{1,1}+\ldots+u^{m_n}_{1,\maxcard_1}+\ldots+u^{m_n}_{n,1}+\ldots+u^{m_n}_{n,\maxcard_n}
+\leq \maxcard_n 
+\end{cases} 
+\end{equation*}
+Each formula requires at least $\mincard_k$ and at most $\maxcard_k$
+instances of task $m_k$. Each solution to this system corresponds to
+an initial context.
+%
+\newline Let
+$(d^{m_1}_{1,1},\ldots,d^{m_1}_{n,\maxcard_n},\ldots,d^{m_n}_{1,1},\ldots,d^{m_n}_{n,\maxcard_n})$
+be a solution, then the corresponding initial context contains:
+\begin{itemize}
+\item $\buffer(o_{i,j},\bot,\heap,\queue)$, that is, a location
+  $o_{i,j}$ whose lock is free, the fields in $\heap$ are mapped to
+  fresh variables, and the queue $\queue$ contains:
+  $d^{m_1}_{i,j}$ instances of abstract task $m_1$,\ldots, and
+  $d^{m_n}_{i,j}$ instances of $m_n$, if $i \in [1,n]$, $j \in
+  [1,\maxcard_i]$ and $\exists d^{m_k}_{i,j} > 0, k \in [1,n]$, where
+  each instance of $m_i$ is $tsk(\tkid,m_i,\mapping,body(m_i))$ and
+  every argument in $\mapping$ is mapped to a fresh variable.
+\end{itemize} 
+\end{definition}
+
+\begin{example}\label{ex:superset}
+ \noindent Let us consider the example $\inittasks {=} \sf
+  \{(DB.register,0,1),(DB.getData,1,1)\}$. The identifiers are
+  $o_{1,1}$ and $o_{2,1}$, and the variables of the system are $u^{reg}_{1,1}$, $u^{reg}_{2,1}$,
+  $u^{get}_{1,1}$ and $u^{get}_{2,1}$. Finally, we obtain the next system:
+\begin{equation*}
+\begin{cases}
+0 \leq u^{reg}_{1,1} + u^{reg}_{2,1} \leq 1 \\
+1 \leq u^{get}_{1,1} + u^{get}_{2,1} \leq 1
+\end{cases}
+\end{equation*}
+
+\noindent We obtain $6$ solutions: $(0,0,1,0), (0,0,0,1), (1,0,1,0),
+(1,0,0,1), (0,1,1,0)$ and $(0,1,0,1)$. Then, the superset of initial
+contexts is $$\sf \{\{[getData]_{o_{1,1}}\},\{[getData]_{o_{2,1}}\},
+\{[register,getData]_{o_{1,1}}\},\{[register,getData]_{o_{2,1}}\},$$ $$\sf
+\{[register]_{o_{2,1}},[getData]_{o_{1,1}}\},\{[register]_{o_{1,1}},[getData]_{o_{2,1}}\}\}  $$ 
+ \hfill $\Box$
+\end{example}
+%
+Let us observe that the two last contexts are equivalent since they
+are both composed of two instances of \lst{DB} with tasks
+\lst{register} and \lst{getData} respectively. Therefore, we only need
+to consider one of these two contexts
+% , namely the most \emph{general} one,\fxnote{MZ: Pero son igual de
+% generales...}
+for symbolic execution. Considering both would lead to
+\emph{redundancy}. The notion of minimal set of initial contexts below
+eliminates redundant contexts, hence avoiding useless executions.
+
+\begin{definition}[Equivalence relation $\sim$]
+  Two contexts $C_1$ and $C_2$ are equivalent, written $C_1 \sim C_2$,
+  if $C_1 = C_2 = \emptyset$ or $C_1 =
+  \{\buffer(\objid_1,\bot,\heap_1,\queue_1)\} \cup C_1'$, and
+  $\exists~ \objid_2 \in C_2$ such that:
+\begin{enumerate} 
+\item $C_2 = \{\buffer(\objid_2,\bot,\heap_2,\queue_2)\} \cup C_2'$, 
+\item $\queue_1$ and $\queue_2$ contain the same number of instances of
+  each task, and
+\item $C_1' \sim C_2'$ .
+\end{enumerate}
+\end{definition}
+
+\begin{example}
+  The superset in Example \ref{ex:superset} contains 3 equivalence
+  classes induced by the relation $\sim$: (1) the class $\sf
+  \{\!\{[getData]_{o_{1,1}}\},\{[getData]_{o_{2,1}}\}\!\},$ where both
+  contexts are composed of a location with a task \lst{getData},
+  (2) the class $\sf \{\!\{[register,getData]_{o_{1,1}}\}, \\
+  \{[register,getData]_{o_{2,1}}\}\!\},$ whose locations have two
+  tasks \lst{register} and \lst{getData}.  and, finally, (3) the class
+  $\sf
+  \{\!\{[register]_{o_{2,1}},[getData]_{o_{1,1}}\},\{[register]_{o_{1,1}},[getData]_{o_{2,1}}\}\!\}
+  $, where both contexts have two locations with a task \lst{register}
+  and a task \lst{getData}, respectively.  \hfill $\Box$
+\end{example}
+
+\begin{definition}[Minimal set of initial contexts
+  $\initcontexts{C_i}$ (same class $Cl_i$)]
+  Let $\inittasks$ be the set of abstract tasks, then the
+  \emph{minimal set of initial contexts} $\initcontexts{Cl_i}$ is
+  composed of a representative of each equivalence class induced by
+  the relation $\sim$ over the superset of initial contexts for the
+  input $\inittasks$.
+\end{definition}
+
+\begin{example} 
+  As we have seen in the previous example, there are three different
+  equivalence classes. So, the minimal set of initial contexts is
+  composed of a representative of each class (we have renamed the
+  identifiers for the sake of clarity): $$\initcontexts{DB} = \sf
+  \{\{[getData]_{{db_1}}\}, \{[register,getData]_{{db_1}}\},
+  \{[register]_{{db_1}},[getData]_{{db_2}}\}\} $$ \hfill $\Box$
+\end{example}
+
+Let us now define the set of initial contexts $\initcontexts{}$ when
+the input set $\inittasks$ contains tasks of different types of
+locations.
+
+\begin{definition}[Minimal set of initial contexts  $\initcontexts{}$  (Different classes)]\label{def:different}
+  \noindent \\ Let $\inittasks = 
+  \{(C_1.m_1,\mincard_1,\maxcard_1),\ldots, (C_n.m_n,\mincard_n,\maxcard_n)\}$
+  be the set of abstract tasks with associated cardinalities, and let
+  us consider a partition of this set where every equivalence class is
+  composed of abstract tasks of the same class. Hence, we have: 
+  $\inittasks^{C_1}=\{C_1.m'_1,{\ldots},C_1.m'_{j_1}\},\ldots,\inittasks^{C_n}=\{C_n.m{''}_1,\ldots,C_n.m{''}_{j_n}\}$
+  where $C_i \neq C_j, \forall i,j \in [1,n], i\neq j$. \\
+Then, 
+  let $\initcontexts{C_i}$ be the minimal set of initial contexts for the input
+  $\inittasks^{C_i},~ i \in [1,n]$ and $U : \initcontexts{C_1} \times \ldots \times
+  \initcontexts{C_n} \rightarrow \initcontexts{}$, defined by
+  $U(s_1,\ldots,s_n) = s_1 \cup \ldots \cup s_n$. The set $\initcontexts{}$ is defined by the
+  image set of application $U$.
+\end{definition} 
+
+\begin{example}\label{ex:initialcontexts}
+  Let us consider the set 
+  $\inittasks = \sf
+  \{(DB.register,1,1),(DB.getData,1,1),\\(Worker.work,1,1)\}$
+  from which we get the initial contexts $\initcontexts{Worker}= \sf
+  \{\{[work]_{{w_1}}\}\}$ and $\initcontexts{DB} = \sf
+\{\{[register,getData]_{{db,1}}\},
+\{[register]_{{db_1}},[getData]_{{db_2}}\}\}$. Then, by Def.~\ref{def:different},  
+  $$\initcontexts{} \!= \!\sf
+  \{ \{[register,getData]_{{db_1}},[work]_{{w_1}}\},\{[register]_{{db_1}},
+   [getData]_{{db_2}},[work]_{{w_1}}\}\!\}$$ \hfill $\Box$
+% \begin{example}
+%   Let us consider now the following simple example to illustrate this syntax and how
+%   to generate the appropiated context.
+
+% \begin{minipage}{1\textwidth}
+% \begin{center}
+% \begin{tabular}{c}
+% \begin{lstlisting}[name=smallexamples]
+% class O{
+%   ${\text{\bf Int}}$ M(){
+%     return 0;
+%   }
+% }
+% \end{lstlisting}
+% \end{tabular}
+% \end{center}
+% \end{minipage}
+%   The previous code defines a class \lst{O} with a method \lst{M} which returns the
+%   value $0$. If the system testing receives as
+%   input the set $\{$\lst{O.M}$\}$ and $C^{max}=1$ we only need to consider the
+%   context $\{o.m\}$, which means: the initial context requires an
+%   initial object $o$ which is an instance of the class \lst{O} whose
+%   pending tasks queue contains an instance $m$ of the abstract task
+%   \lst{M}. The fields of the object $o$ and the paramaters that
+%   task $m$ requires (in case it does) are unknown variables as usual in the
+%   context of symbolic execution.
+\end{example}
+% However, If the maximum cardinality is increased, the number of initial
+% contexts also does.
+
+% \begin{example}
+%   Let us consider now the input $\mathfrak{S} = \sf \{$Worker.ping$\}$ and $C^{max}=3$, then
+%   $\mathfrak{I^S} =$ $\{o_1.work\}$ ,$\{o_1.work.,o_1.work\}$
+%   ,$\{o_1.work,o_2.work\}$, 
+% $\{o_1.work,o_1.work,o_1.work\},$ 
+
+% $\{o_1.work,o_1.work,o_2.work\},$ $ \{o_1.work,o_2.work,o_3.work\}$, being
+%   $o_1,o_2,o_3$ instances of class \textsf{Worker} and m a instance
+%   of abstract task \textsf{Worker}.
+% \end{example}
+% %
+
+% For testing, it is not needed though to take into account all these initial
+% contexts but only the ones where the maximum cardinality is reached,
+% as test cases of the discarded contexts will be obtained during the
+% execution of the bigger ones. We discard those initial contexts that
+% are prefixes of others. E.g. $\{o_1.work\}$
+% and $ \{o_1.work,o_1.work\} $ are discarded by $ \{o_1.work,o_1.work,o_1.work\}$ and
+% $\{o_1.work,o_2.work\} $ by $\{o_1.work,o_2.work,o_3.work\}$.
+% Then, during the execution of system testing of the bigger context,
+% we will obtain the desired test cases for the discarded contexts 
+% where all the tasks present in the
+% discards are executed but none of the tasks which are not.
+% %
+% However, the bigger the input set is, the harder the combinatorial explosion
+% becomes, as we can see in the following example.
+% %
+
+
+\begin{figure}[t]
+\begin{center}
+\begin{tabular}{ll}
+\begin{lstlisting}[style=PrologStyle]
+generate_contexts([(M,MinC,MaxC)|Methods],SOut) :-
+   add_calls([],[(M,0,MinC,MaxC)|Methods],SOut),
+   normal_form(SOut,N),
+   (prev_generated(N) -> fail ; assertz(prev_generated(N))).
+
+add_calls(SIn,[(M,Instances,MinC,MaxC)|Ms],SOut) :-
+   Instances < MaxC, 
+   add_task(SIn,M,SAux),$\label{pp:add-calls12}$
+   I2 is Instances + 1, 
+   add_calls(SAux,[(M,I2,MinC,MaxC)|Methods],SOut). $\label{pp:add-calls15}$
+add_calls(SIn,[(_,I,Min,_),(M,MinC,MaxC)|Methods],SOut) :-
+   Min <= I,
+   add_calls(SIn,[(M,0,MinC,MaxC)|Methods],SOut). $\label{pp:add-calls22}$
+add_calls(SIn,[(_,I,Min,_)],SIn) :-
+   Min <= I. $\label{pp:add-calls31}$
+
+add_task([],M,SIn) :-
+   fresh_location(LocId),fresh_task(TkId),
+   initialize_fields(M,Fields),initialize_mapping(M,L),
+   SIn = [loc(LocId,$\bot$,Fields,[tsk(TkId,M,L,body(M))])]. $\label{pp:add-task14}$
+add_task([Loc|SIn],M,[Loc2|SIn]) :-
+   Loc = loc(Id,Lock,Fields,Q),
+   class(Id,Class), class(M,Class), $\label{pp:add-task22}$
+   fresh_task(TkId), initialize_mapping(M,L),$\label{pp:add-task23}$
+   Loc2 = loc(Id,Lock,Fields,[tsk(TkId,M,L,body(M))|Q]). $\label{pp:add-task24}$
+add_task([Loc|SIn],M,[Loc|SOut]) :-
+   add_task(SIn,M,SOut). $\label{pp:add-task31}$
+\end{lstlisting}
+\end{tabular}
+\end{center}
+\caption{Prolog predicate to generate minimal set of initial contexts}
+\label{fig:clp-builtins}
+\end{figure}
+
+% \begin{figure}[t]
+% \begin{center}
+% \begin{tabular}{ll}
+% \begin{lstlisting}[style=PrologStyle]
+% add_task(SIn,M,SIn):-
+%   var(SIn),!,
+%   fresh_location(LocId),fresh_task(TkId),
+%   initialize_fields(M,Fields),initialize_mapping(M,L),
+%   SIn = [loc(LocId,$\bot$,Fields,[tsk(TkId,M,L,body(M))])|SVar]. $\label{pp:add-task14}$
+
+% add_task([Loc|SIn],M,[Loc2|SIn]):-
+%   Loc = loc(Id,Lock,Fields,Q),
+%   class(Id,Class),class(M,Class), $\label{pp:add-task22}$
+%   fresh_task(TkId),initialize_mapping(M,L),$\label{pp:add-task23}$
+%   Loc2 = loc(Id,Lock,Fields,[tsk(TkId,M,L,body(M))|Q]). $\label{pp:add-task24}$
+
+% add_task([Loc|SIn],M,[Loc|SOut]):-
+%   add_task(SIn,M,SOut). $\label{pp:add-task31}$
+% \end{lstlisting}
+% \end{tabular}
+% \end{center}
+% \caption{CLP operations for handling reference aliasing.}
+% \label{fig:clp-builtins4}
+% \end{figure}
+
+We now define a Prolog predicate that generates the minimal set of
+initial contexts as partially instantiated states. Predicate
+\texttt{generate\_contexts/2} in Figure~\ref{fig:clp-builtins}
+receives a set of abstract tasks with their associated maximum and
+minimum cardinalities, and generates on backtracking all generated
+initial contexts by means of \texttt{add\_calls/3}. Predicate
+\texttt{normal\_form/2} produces a normal form for the new context
+which is the same for all initial contexts in the same equivalence
+class. The new context is therefore only generated if it has not been
+previously generated (i.e., if the call \texttt{prev\_generated/1}
+fails).  The first rule of \texttt{add\_calls/3} checks if the number
+of instances \texttt{Instances} of task \texttt{M} is smaller than the
+maximum cardinality \texttt{MaxC}, in which case we add a new instance
+of \texttt{M}, \texttt{Instances} is incremented, and,
+\texttt{add\_calls/3} is recursively invoked. The second rule checks
+if the number of instances is greater than or equal to \texttt{Min},
+it initializes the number of instances for the next method
+(\texttt{M}) and makes the recursive call to
+\texttt{add\_calls/3}. Finally, the third rule corresponds to the base
+case when we are processing the last method of the list and the number
+of instances if greater than or equal to \texttt{Min}.
+%
+Predicate \texttt{add\_task/3} adds a new instance of method
+\texttt{M} to the current location.  Note here that it can add the new
+task to one of the existing locations in \texttt{Locs} or create a new
+one to add it.  The first rule checks if \texttt{SIn} is a variable
+(the end of the locations list) and then, it creates a new location to
+add the task \texttt{M}. To do so, we initialize the location fields,
+the method arguments and its tasks queue with a new task with fresh
+identifier \texttt{TkId}, and the instructions of method \texttt{M}
+(\texttt{body(M)}). The second rule checks if method \texttt{M} can be
+added to the first location by checking if the class of location
+\texttt{Id} matches with the class of \texttt{M}. If it does, then we
+add a new task to its tasks queue \texttt{Q}. The third rule ignores
+the first location and tries to add \texttt{M} to \texttt{SIn}.
+
+ 
+\begin{example}\label{ex:gen-contexts}
+  Let us show predicate \texttt{generate\_contexts/2} in action for
+  the set $\inittasks = \sf \{(DB.reg,1,1),(DB.make,1,1), 
+  Worker.work,1,1)\}$.  The first rule of \\\texttt{add\_calls/3} is
+  applied, as \texttt{0 = Instances < MaxC = 1}. Then,
+  \texttt{add\_task/3} is called with variable \texttt{Locs} and
+  \texttt{M = DB.register}, at line~\ref{pp:add-calls12}. As
+  \texttt{Locs} is a variable, only the first rule of
+  \texttt{add\_task/3} can be applied and then, a new location is
+  created (line~\ref{pp:add-task14}). Once this predicate has
+  finished, \texttt{Instances} is incremented and \texttt{add\_calls}
+  is recursively called   (line~\ref{pp:add-calls15}). Now, the second
+  rule is applied, as \texttt{0 = Min < Instances = 1},
+  and \texttt{add\_calls} is called with \texttt{M = DB.makesConnection}
+  whose number of instances is initialized to 0 (line
+  \ref{pp:add-calls22}).
+%
+  Again, at line\ref{pp:add-calls12}, \texttt{add\_call/3} is
+  called with \texttt{M = DB.makesConnection} and \texttt{Locs}
+  containing an instance of \lst{DB}. Here we get to a branching point
+  which gives rise to the two different initial contexts in
+  Example~\ref{ex:initialcontexts}. In the first branch, \texttt{SIn}
+  contains a location whose class is equal to that of the method
+  \texttt{makesConnection}, so \texttt{LocVar} is the existing
+  location and a new instance is added to its queue (lines
+  \ref{pp:add-task23} and \ref{pp:add-task24}).
+%
+  Finally, \texttt{add\_calls/3} is called with \texttt{M =
+    Worker.work} (line \ref{pp:add-calls22}), it creates a new
+  instance of class \texttt{Worker} with a task \texttt{work} (line
+  \ref{pp:add-task14}), it finishes correctly at line
+  \ref{pp:add-calls31}, and returns an initial context containing an
+  instance of \lst{DB} with tasks \lst{register} and
+  \lst{makesConnection}, and an instance of \lst{Worker} with task
+  \lst{work}.
+%
+  Now, it fails and the backtracking goes back to the branching
+  point. Here, the third rule is applied and then, the first location
+  is ignored and task \texttt{makesConnection} is added to a new
+  location at line~\ref{pp:add-task14}. It finishes in a similar
+  way. In this case, the initial context returned contains two
+  instances of \lst{DB} containing a task \lst{register} and
+  \lst{makesConnection}, respectively, and an instance of \lst{Worker}
+  with task \lst{work}. \hfill $\Box$
+\end{example}

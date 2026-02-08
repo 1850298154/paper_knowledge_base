@@ -1,0 +1,120 @@
+\section{Approach}
+
+\subsection{Differentiable Signal Temporal Logic}
+Signal Temporal Logic (STL) provides a robustness metric for a given trajectory that quantifies the level of satisfaction of a specification $\phi$ defined using the STL language.
+Prior work \citep{xiong2023colearning}  has used this feature to refine a planner's waypoints for use by a given Low-level controller.
+Motivated by their success, we define a planner that attempts to maximize the MA-STL robustness score and provides separate timed waypoints. 
+
+\subsection{GNNs for Planning in Multi-Agent Systems}
+\label{sec:gnn-plan}
+Graphical models can be useful to scale collision avoidance in multi-agent systems \citep{yu2022learning} by modeling the system in a decentralized manner. 
+For an egocentric graph observation $G_i = \langle V, E \rangle$, on an agent $i$, a planner $P_G$ yields $P_G(G_i, \phi) = \Delta p_i$ 
+being the deviation from the current goal and we can repeat this on the next state  for $K$ waypoints $\langle p_i^1, \ldots p_i^K \rangle$. 
+
+\iffalse
+
+These waypoints form a Piece-wise Linear (PWL) plan which the agents must follow.
+
+
+Since MA-STL specifications require timed waypoints to satisfy the time constraints of the STL specification, we associate a time $t_i^j$ for $1\leq j \leq K$ with each waypoint as well.
+The planner thus outputs these two components as the timed waypoint based on the current observation.
+This time must increase monotonically to be consistent and these waypoints need to satisfy the collision-avoidance property as well.
+
+For monoticity of the time we use the neural network to predict a non-negative increment on the time of the previous waypoint $\Delta t_i^j = t_i^j - t_i^{j-1} > 0$ for $j>=1$ and use this to specify the time for each waypoint.
+Non-negative activation functions such as ReLU nodes can be used to enforce this constraint.
+
+For a PWL plan to avoid collisions between agents when following an $\epsilon$-robust controller, these timed waypoints either need to be time-disjoint or space-disjoint \citep{Sun2022}. 
+We incorporate a loss capturing this objective $\mathcal{L}_{coll}$. 
+
+
+To begin, let's examine how to represent the specification that two time-stamped line segments are at least $\epsilon$ apart, serving as the foundation for encoding the inter-agent collision avoidance requirement. We consider two time-stamped line segments, $\mathtt{SEG}_1$ and $\mathtt{SEG}_2$, with endpoints$(t_{11}, p_{11})$ and $(t_{12}, p_{12})$ , and $(t_{21}, p_{21})$ and $(t_{22}, p_{22})$ respectively. We define the function $\safe()$, mapping them to an LCF (Logical Constraint Formula) as follows:
+
+\begin{align*}
+	\safe_{\mathtt{SEG}_1, \mathtt{SEG}_2, \epsilon} := & \left([t_{11}, t_{12}] \cap [t_{21}, t_{22}] = \varnothing\right) \ \vee \\
+	& \Bigg(\left|\frac{p_{11}+p_{12}}{2} - \frac{p_{21}+p_{22}}{2}\right|_2 \geq \quad \ \left|\frac{p_{11}-p_{12}}{2}\right|_2 + \left|\frac{p_{21}-p_{22}}{2}\right|_2 + \epsilon \sqrt{d}\Bigg),
+\end{align*}
+
+where d represents the workspace's dimensionality. Essentially, if the above LCF holds, one of the following two conditions is true: either the segments are disjoint in the time dimension, or in the spatial dimension. If the distance between their centers exceeds the sum of their half-lengths plus a margin $\epsilon$, this indicates spatial disjointness.
+
+Next, the specification ensuring that all agents avoid collisions with one another can be encoded as:
+
+\begin{equation*}
+	z_{\texttt{inter}} = \bigwedge_{\substack{i, j = 1\ i \neq j}}^{N} ~ \bigwedge_{\substack{k=1,\dots,K_i\ l=1,\dots,K_j}} \safe\left(S_i^{(k)}, S_j^{(l)}, 2\epsilon + s_i + s_j\right),
+\end{equation*}
+
+This equation, once again an LCF, incorporates the decision variables $\bigcup_{i=1}^{N}\bigcup_{k=0}^{K_i}{t^k_{i}, p^k_{i}}$. Recall that $s_i$ represents the size of agent i.
+To translate this LCF to a loss differentiable loss function for the neural planner, we replace $\land$ with $\min$ and $\lor$ with $\max$ as mentioned in Sec. \ref{bg-stl}.
+
+$$\mathcal{L}_{coll} = \min_{\substack{i, j = 1\ i \neq j}}^{N} ~ \min_{\substack{k=1,\dots,K_i\ l=1,\dots,K_j}} \safe\left(S_i^{(k)}, S_j^{(l)}, 2\epsilon + s_i + s_j\right),$$
+
+\fi
+
+Thus the loss for the planner is $\mathcal{L} = \mathcal{L}_{coll} + \mathcal{L_\phi}$ where
+$\mathcal{L_\phi} = -\sum_{i\in \mathcal{N}} \rho(\tau_i) $. 
+We sample trajectories $\tau$ and calculate the robustness score for each agent $i$ using $\rho_i (\tau_i)$ and maximize this w.r.t. planner parameters $\omega_p$.
+By iteratively carrying out this optimization using gradient descent on sampled trajectories, we can perform other optimizations in between iterations to 
+reduce the need of planning for collision-avoidance as shown below in Section \ref{sec:app-cam}.
+
+ 
+\subsection{Collision Avoidance in MA Systems}
+
+\label{sec:app-cam}
+
+We use the end-to-end differentiable nature of learning-based collision avoidance schemes to ensure the safety of the system 
+while updating the controller to satisfy the specification as well. Control Admissibility Models (CAMs) \citep{yu2022learning} 
+ensure safety of the MA system by restricting the action space to safe actions dependent on the behavior of other agents.
+They provide a egocentric based view of the agent and its nearby agents upon which the CAM is trained on a small group of agents (say $N=3$ agents).
+ The CAM is then deployed on a larger number agents which is then used to limit actions based on aggregation of the admissibility models
+ on multiple subsets of the agents. 
+
+This has been shown to be scalable in terms of the number of agents and fits our requirement of a differentiable approach to collision avoidance.
+Thus we choose CAMs as our primary safety mechanism during execution of MA system and incorporate our planner to provide a goal for use by the 
+controller.
+
+Since the controllers are learned iteratively, we also sample and update the $\epsilon$ term used in our loss 
+function denoting the tracking error of these controllers.
+%\subsection{Signal Temporal Logic for Multi-agent Systems}
+%\label{ap-stl}
+
+
+\subsection{Planning for MA-STL}
+
+As highlighted in Sec. \ref{bg-stl}, MA-STL can be thought of as \textit{independent} single-agent STL specifications on the agents albeit with an additional 
+constraint on avoiding collisions between the agents. While collision avoidance during planning time is expensive (Sec. 
+\ref{sec:ps-stl}), we can attempt to plan for the objectives for a subset of the agents and use this plan with a safety
+scheme during run-time.
+
+However this may detract from the overall objective, thus we update the planner iteratively by sampling the environment as detailed in Sec. \ref{sec:gnn-plan}
+with the STL robustness score. Thus we "co-learn" the safety and objective behavior which is a recurrent theme in recent work \citep{xiong2023colearning, Xiong2022}
+related to the safety of controllers in complex systems.
+
+If this plan with timed waypoints is capable of being satisfied in a $\epsilon$-robust manner for
+\textit{all} subsets of agents we planned for, then the overall MA-STL specification $\Psi$ is satisfied.
+One should note, this would not be the case if we had defined arbitrary STL specifications in the joint space of agents
+involving global coordination or synchronization of objectives (i.e. global predicate functions \citep{Eappen2022}).
+In that situation, an $\epsilon$-robust realization of a plan on different subsets of the agents would not directly translate to 
+the specification being satisfied on the entire set of agents.
+
+%\section{ALGORITHM}
+%There are two variants of our MARL algorithm:
+%\subsection{Run-time Communication needed}
+%\begin{enumerate}
+%	\item Agents need to use sensors to communicate with other agents and determine the RoA they decide to use during run-time
+%	
+%\end{enumerate}
+%
+%\begin{itemize}
+%	\item Pros: More robust, synchronized with run-time data,
+%	\item Cons: Communication may be expensive and delayed
+%\end{itemize}
+%\subsection{Run-time Communication minimized}
+%\begin{enumerate}
+%	\item Agents use knowledge of the expected plan of the other agents (along with the way-point times).
+%	\item Assumptions are made on the controller and RoA shield use during run-time which are then used to predict position of other agents at a given time.
+%	
+%\end{enumerate}
+%
+%\begin{itemize}
+%	\item Pros: Minimize communication needed between agents
+%	\item Cons: Makes assumptions on controller capabilities and agent position ignoring real-time disturbances. Agents may deviate from given plans significantly. May be expensive to handle conflicts during plan-time.
+%\end{itemize}

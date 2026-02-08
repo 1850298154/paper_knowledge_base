@@ -1,0 +1,176 @@
+\beginbass
+%
+In the rest of this section we illustrate the main features of the calculus with
+some examples. For none of them the existing multiparty session type systems are
+able to guarantee progress.
+%
+First of all, we formally define in our calculus the processes corresponding to 
+(a slightly different) \actor{buyer}, \actor{seller} and \actor{carrier} from \Cref{ex:bsc} that was only informally 
+presented. 
+
+\begin{example}[Buyer - Seller - Carrier]
+  \label{ex:bsc_multi}
+  Consider the following definitions:
+  \begin{align*}
+    \Main & \peq \pres\sn{ \pinvk\Buyer{\ep\sn\buyer} \ppar \pinvk\Seller{\ep\sn\seller} \ppar \pinvk\Carrier{\ep\sn\carrier}} \\ 
+    \Buyer(x) & \peq \act{x}\seller\oact\set{
+    			  \tadd.\act{x}\seller\oact\tadd.\pinvk\Buyer{x},
+                  \tpay.\pclose{x}
+                } \\ 
+    \Seller(x) & \peq \act{x}\buyer\iact\set{
+                  \tadd.\pinvk\Seller{x},
+                  \tpay.\act{x}\carrier\oact\tship.\pclose{x} 
+                } \\ 
+    \Carrier(x) & \peq \act{x}\seller\iact\tship.\pwait{x}\pdone
+  \end{align*}
+  Note that the buyer either sends $\tpay$ or it sends two $\tadd$ messages in a
+  row before repeating this behavior. That is, this particular buyer always adds
+  an even number of items to the shopping cart.
+  %
+  Nonetheless, the buyer periodically has a chance to send a $\tpay$ message and
+  terminate. Therefore, the execution of the program in which the buyer only
+  sends $\tadd$ is unfair according to \Cref{def:fair_run} hence this program is
+  fairly terminating. 
+  %
+  \eoe
+\end{example}
+
+\begin{example}[Purchase with negotiation]
+  \label{ex:2bsc_multi}
+  Consider a variation of \Cref{ex:bsc} in which the buyer, before making the
+  payment, negotiates with a secondary buyer for an arbitrarily long time. The
+  interaction happens in two nested sessions, an outer one involving the primary
+  buyer, the seller and the carrier, and an inner one involving only the two
+  buyers. We model the interaction as the program below, in which we collapse
+  role names to their initials.
+    \begin{align*}
+    \Main & \peq \pres\sn{ \pinvk\Buyer{\ep\sn\rbuyer} \ppar \pinvk\Seller{\ep\sn\rseller} \ppar \pinvk\Carrier{\ep\sn\rcarrier} }
+    \\ 
+    \Buyer(x) & \peq \act{x}\rseller\oact\tquery.
+                \act{x}\rseller\iact\tprice.
+                \pres{t}{ \pinvk{\Buyer_1}{x,\ep\asn{\rbuyer_1}} \ppar \pinvk{\Buyer_2}{\ep\asn{\rbuyer_2}}} 
+    \\ 
+    \Seller(x) & \peq \act{x}\rbuyer\iact\tquery.
+                \act{x}\rbuyer\oact\tprice.
+                \act{x}\rbuyer\iact\{
+                	\begin{lines}
+                		\tpay.\act{x}\rcarrier\oact\tship.\pclose{x}, \\
+                		\tcancel.\act{x}\rcarrier\oact\tcancel.\pclose{x} \}
+                	\end{lines}
+    \\     
+    \Carrier(x) & \peq \act{x}\rseller\iact\set{
+                  \tship.\act{x}\rbuyer\oact\tbox.\pclose{x},
+                  \tcancel.\pclose{x} 
+                }
+    \\
+    \Buyer_1(x,y) & \peq \act{y}{\rbuyer_2}\oact\{
+                      \begin{lines}
+                        \tsplit.\act{y}{\rbuyer_2}\iact\{
+                          \begin{lines}
+                            \tyes.\pcast{x}
+                                  \act{x}\rseller\oact\tok.
+                                  \act{x}\rcarrier\iact\tbox.
+                                  \pwait{x}
+                                  \pwait{y}
+                                  \pdone,
+                                  \\
+                            \tno.\pinvk{\Buyer_1}{x,y} \},
+                          \end{lines}
+                        \\
+                        \tgiveup.
+                          \pwait{y}
+                          \pcast{x}
+                          \act{x}\rseller\oact\tcancel.
+                          \pwait{x}
+                          \pdone \}
+                      \end{lines}
+    \\
+    \Buyer_2(y) & \peq \act{y}{\rbuyer_1}\iact\set{
+                    \tsplit.\act{y}{\rbuyer_1}\oact\set{
+                      \tyes.\pclose{y},
+                      \tno.\pinvk{\Buyer_2}{y} 
+                    },
+                    \tgiveup.\pclose{y} 
+                  }
+  \end{align*} 
+
+  The buyer queries the seller which replies with a price. At this point,
+  $\Buyer$ creates a new session $t$ and forks as a primary buyer $\Buyer_1$ and
+  a secondary buyer $\Buyer_2$. The interaction between the two sub-buyers goes
+  on until either $\Buyer_1$ gives up or $\Buyer_2$ accepts its share of the
+  price. In the former case, the primary buyer waits for the internal session to
+  terminate and $\tcancel$s the order with the seller which, in turn, aborts the
+  transaction with the carrier. In the latter case, the buyer confirms the order
+  to the seller, which then instructs the carrier to $\tship$ a $\tbox$ to the
+  buyer.
+  
+  Note that the outermost session $s$, taken in isolation, terminates in a
+  bounded number of interactions, but its progress cannot be established without
+  assuming that the innermost session $t$ terminates. In particular, if the two
+  buyers keep negotiating forever, the seller and the carrier starve.
+  %
+  However, the innermost session can terminate if $\Buyer_1$ sends $\tgiveup$ to
+  $\Buyer_2$ or if $\Buyer_2$ sends $\tyes$ to $\Buyer_1$. Thus, the run in
+  which the two buyers negotiate forever is unfair, the session $t$ fairly
+  terminates and the session $s$ terminates as well.
+  
+  On the technical side, note that the definition of $\Buyer_1$ contains two
+  casts on the variable $x$. As we will see in \cref{ex:2bsc-ts}, these casts
+  are necessary for the typeability of $\Buyer_1$ to account for the fact that
+  $x$ is used \emph{differently} in two distinct branches of the process.
+  %
+  \eoe
+\end{example}
+
+\begin{example}[Parallel merge sort]
+  \label{ex:pms_multi}
+  To illustrate an example of program that creates an unbounded number of
+  sessions we model a parallel version of the merge sort algorithm.
+  \begin{align*}
+    \Main & \peq \pres{s}{
+                    \act{\ep{s}\rmaster}\rworker\oact\treq.
+                    \act{\ep{s}\rmaster}\rworker\iact\tres.
+                    \pwait{s}
+                    \pdone \parop
+                    \pinvk\Sort{\ep{s}\rworker}
+                  } \\ 
+    \Sort(x) & \peq \act{x}\rmaster\iact\treq.
+    \\
+    & (
+                  \pres{t}{
+                    \pinvk\Merge{x,\ep{t}\rmaster} \parop
+                    \pinvk\Sort{\ep{t}{\rworker_1}} \parop
+                    \pinvk\Sort{\ep{t}{\rworker_2}}
+                  }
+                  \pchoice
+                  \act{x}\rmaster\oact\tres.\pclose{x}
+                )
+    \\ 
+    \Merge(x,y) & \peq \act{y}{\rworker_1}\oact\treq.
+                  \act{y}{\rworker_2}\oact\treq.
+                  \act{y}{\rworker_1}\iact\tres.
+                  \act{y}{\rworker_2}\iact\tres.
+                  \pwait{y}
+                  \act{x}\rmaster\oact\tres.
+                  \pclose{x}
+  \end{align*}
+
+  The program starts as a single session $s$ in which a master $\rmaster$ sends
+  the initial collection of data to the worker $\rworker$ as a $\treq$ message
+  and waits for the $\tres$ult. The worker is modeled as a process $\Sort$ that
+  decides whether to sort the data by itself (right branch of the choice in
+  $\Sort$), in which case it sends the $\tres$ult directly to the master, or to
+  partition the collection (left branch of the choice in $\Sort$). In the latter
+  case, it creates a new session $t$ in which it sends $\treq$uests to two
+  sub-workers $\rworker_1$ and $\rworker_2$, it gathers the partial $\tres$ults
+  from them and gets back to the master with the complete $\tres$ult.
+
+  Since a worker may always choose to start two sub-workers in a new session,
+  the number of sessions that may be created by this program is unbounded. At
+  the same time, each worker may also choose to complete its task without
+  creating new sessions. So, while in principle there exists a run of this
+  program that keeps creating new sessions forever, this run is unfair according
+  to \Cref{def:fair_run}.
+  %
+  \eoe
+\end{example}

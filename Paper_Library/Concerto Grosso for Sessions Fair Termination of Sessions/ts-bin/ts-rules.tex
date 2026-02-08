@@ -1,0 +1,308 @@
+\beginbass
+%
+The typing rules resemble those of a traditional session type system but differ
+in a few key aspects. First of all, they establish a tighter-than-usual
+correspondence between types and processes so that any discrepancy between
+actual and expected types is accounted for by explicit casts. This way, we make
+sure that actions leading to the termination of a session \emph{at the type
+level} are matched by corresponding actions \emph{at the process level}, a key
+property used in the soundness proof of the type system.
+In addition, the typing rules enforce the boundedness properties informally
+described in the previous section.
+%
+Action boundedness is enforced by specifying the typing rules as a generalized
+inference system and using two corules to make sure that every well-typed
+process is at finite distance from $\Done$ or a $\Close\x$.
+%
+Concerning session and cast boundedness, we annotate typing judgments with a
+\emph{rank}, that is an upper bound to the \emph{weights} of casts that must be
+performed and of sessions that must be created in order to terminate the process
+in the judgment.
+
+\begin{figure}[t]
+  \framebox[\textwidth]{
+      \begin{mathpar}
+        \displaystyle
+          \inferrule[tb-done]{\mathstrut}{
+            \wtp[n]\EmptyCtx\Done
+          } \defrule[tb-done]{}
+          \and
+          \inferrule[tb-wait]
+          {
+            \wtp[n]\Ctx{P}
+          }{
+            \wtp[n]{\Ctx, x :  \End[\In]}{\Wait\x{P}}
+          } \defrule[tb-wait]{}
+          \and
+          \inferrule[tb-close]{\mathstrut}
+          {
+            \wtp[n]{x : \End[\Out]}{\Close\x}
+          } \defrule[tb-close]{}
+          \and
+          \inferrule[tb-channel-in]{
+            \wtp[n]{\Ctx, x : S, y : T}{P}
+          }{
+            \wtp[n]{\Ctx, x :  \In\T.S}{\PInput\x{(y)}.P}
+          } \defrule[tb-channel-in]{}
+          \and
+          \inferrule[tb-channel-out]{
+            \wtp[n]{\Ctx, x : S}{P}
+          }{
+            \wtp[n]{\Ctx, x : \Out\T.S, y : T}{\POutput\x\y.P}
+          } \defrule[tb-channel-out]{}
+          \and
+          \inferrule[tb-tag]
+          {
+          	\forall i\in I:
+            \wtp[n]{\Ctx, x : S_i}{P_i}
+          }{
+            \textstyle
+            \wtp[n]{
+              \Ctx, x : \Pol\set{\l_i : S_i}_{i \in I}
+            }{
+              x\Pol\set{\l_i : P_i}_{i \in I}
+            }
+          } \defrule[tb-tag]{}
+          \and
+          \inferrule[tb-choice]{
+            \wtp[n_1]\Ctx{P}
+            \\
+            \wtp[n_2]\Ctx{Q}
+          }{
+            \wtp[n_k]\Ctx{P \pchoice_k Q}
+          }
+          ~
+          k \in \set{1,2}
+          \defrule[tb-choice]{}
+          \and
+          \inferrule[tb-cast]{
+            \wtp[n]{\Ctx, x : T}{P}
+          }{
+            \wtp[n+m]{\Ctx, x : S}{\Cast\x P}
+          }
+          ~ S \subt[m] T \defrule[tb-cast]{}
+          \and
+          \inferrule[tb-par]{
+            \wtp[m]{\Ctx, x : S}{P}
+            \\
+            \wtp[n]{\CtxD, x : T}{Q}
+          }{
+            \wtp[1+m+n]{
+              \Ctx, \CtxD
+            }{
+              \NewPar\x{P}{Q}
+            }
+          }
+          ~
+          S \compatible T \defrule[tb-par]{}
+          \and
+          \inferrule[tb-call]{
+            \wtp[n]{\seqof{x:S}}{P}
+          }{
+            \wtp[m+n]{\seqof{x:S}}{\Call{A}{\seqof\x}}
+          }
+          ~
+          \tass{A}{\seqof{S}}{n},
+          \Definition{A}{\seqof\x}{P} \defrule[tb-call]{}
+          \and
+          \infercorule[cob-tag]{
+            \wtp[n]{\Ctx, x : S_k}{P_k}
+          }{
+            \wtp[n]{
+              \Ctx, x : \Pol\set{\l_i : S_i}_{i \in I}
+            }{
+              x\Pol\set{\l_i : P_i}_{i \in I}
+            }
+          }
+          ~
+          k \in  I \defrule[cob-tag]{}
+          \and
+          \infercorule[cob-choice]{
+            \wtp[n]\Ctx{P_k}
+          }{
+            \wtp[n]\Ctx{P_1 \pchoice_k P_2}
+          } \defrule[cob-choice]{}
+      \end{mathpar}
+    }
+    \caption{Typing rules}
+    \label{fig:ts_bin}
+\end{figure}
+
+The typing rules are defined by the generalized inference system in
+\Cref{fig:ts_bin} and derive judgements of the form $\wtp[n]\Ctx{P}$, meaning
+that $P$ is well typed in the \emph{typing context} $\Ctx$ and has rank $n$.
+A typing context is a finite map from channels to session types written $x_1 :
+S_1, \dots, x_n : S_n$ or $\seqof{x : S}$. We use $\Ctx$ and $\CtxD$ to
+range over typing contexts, we write $\EmptyCtx$ for the empty context and
+$\Ctx,\CtxD$ for the union of $\Ctx$ and $\CtxD$ when they
+have disjoint domains.
+%
+We type check a program $\set{\Definition{A_i}{\seqof{x_i}}{P_i}}_{i\in I}$
+under a global set of type assignments $\set{\tass{A_i}{\seqof{S_i}}{n_i}}_{i\in
+I}$ associating each process name $A_i$ with a tuple of session types
+$\seqof{S_i}$ and a rank $n_i$. The program is well typed if
+$\wtp[n_i]{\seqof{x_i : S_i}}{P_i}$ for every $i\in I$, establishing that the
+tuple $\seqof{S_i}$ corresponds to the way the channels $\seqof{x_i}$ are used
+by $P_i$ and that $n_i$ is a feasible rank annotation for $P_i$. Hereafter, we
+omit the rank from judgments when it is not important. 
+
+Let us look at the typing (co)rules in detail.
+%
+\refrule{tb-done} is the usual axiom requiring that the terminated process leaves no unused channels behind. 
+Since $\Done$ performs no casts and creates no sessions, it can have any rank.
+%
+Rules \refrule{tb-wait} and \refrule{tb-close} concern the exchange of session
+termination signals. There is nothing remarkable here except noting once again
+that the rank of $\Close\x$ can be arbitrary.
+%
+Rules \refrule{tb-channel-in} and \refrule{tb-channel-out} are similar, but they
+concern the exchange of channels. Note that, in \refrule{tb-channel-out}, the
+type $T$ of the message $y$ is required to match \emph{exactly} that in the type
+of the channel $x$ used for the communication, whereas \citep{GayHole05} allow
+the type of $y$ to be a subtype of $T$. This is one instance of the ``tight
+correspondence'' that we mentioned earlier (see \Cref{ex:invariant_ch}).
+%
+The rule \refrule{tb-label} deals with the input/output of labels. As usual, any
+channel other than the one affected by the communication must be used in exactly
+the same way in every branch. However, the rule is stricter than that of
+\citet{GayHole05} because it requires an exact correspondence between the labels
+that can be exchanged on $x$ by the process and those in the type of $x$. The
+fact that a conclusion and premises are all annotated with the same rank $n$
+means that $n$ is an upper bound for the rank of all branches of a label
+input/output.
+%
+The corule \refrule{cob-label} does not impose additional constraints compared to
+\refrule{tb-label} and has \emph{exactly one premise}, corresponding to one
+branch of the process in the conclusion. The effect of \refrule{cob-label}, when
+interpreted inductively together with the other rules, is to ensure the
+existence of a finite typing derivation whose leaves are applications of
+\refrule{tb-done} or \refrule{tb-close}, hence action boundedness.
+
+Rule \refrule{tb-choice} is a standard typing rule for non-deterministic choices,
+requiring that both branches are well typed in exactly the same typing context.
+Notice that the rank of a choice $P_1 \pchoice_k P_2$ is determined by the branch
+indexed by the $k$ annotation, which is elected as the branch that leads to
+termination. Like \refrule{cob-label}, the associated corule
+\refrule{cob-choice} ensures that the same branch gets closer to $\Done$ or a
+$\Close\x$ to enforce action boundedness. Without this corule, it would not be
+possible to find a \emph{finite-depth} derivation tree for an action-bounded
+process such as $A$ in \Cref{ex:action_boundedness}. Coherently with
+\refrule{tb-choice}, the same branch that leads to termination is also the one
+that determines the rank of the choice as a whole.
+
+Rule \refrule{tb-cast} is Liskov's substitution principle formulated as an
+inference rule. It states that a channel $x$ of type $S$ can be safely used
+where a channel of type $T$ is expected, provided that $S \subt T$. The most
+important detail to notice here is that the rank of a cast is the \emph{weight}
+of the subtyping judgment plus that of
+the process in which the cast has effect. This way we account for this cast in
+the rank of the process so as to guarantee cast boundedness.
+%
+Rule \refrule{tb-par} concerns parallel composition and session creation. The
+rule is shaped after the cut rule of linear logic also adopted in other session
+type systems based on linear logic
+\citep{CairesPfenningToninho16,Wadler14,LindleyMorris16}. In particular, the
+parallel processes $P$ and $Q$ share no channel other than the session $x$ that
+connects them, so as to prevent mutual dependencies between sessions and
+guarantee deadlock freedom. The side condition $S \compatible T$ requires that
+the way in which $P$ and $Q$ use channel $x$ is such that the session $x$ can
+fairly terminate (see \Cref{def:compatibility}). We \emph{do not} require that $S$
+and $T$ are dual to each other because reductions (see \refrule{rb-pick}) and
+structural pre-congruence (see \refrule{sb-cast-new}) do not necessarily preserve
+session type duality. Also, duality does not always imply compatibility.
+%
+The rank of a parallel composition is one plus that of the composed processes.
+By accounting for each occurrence of parallel compositions in the rank, we
+guarantee that well-typed processes are session bounded.
+
+Finally, rule \refrule{tb-call} states that a process invocation
+$\Call{A}{\seqof\x}$ is well typed provided that the types associated with
+$\seqof\x$ match those of the global assignment $\tass{A}{\seqof{S}}{n}$. Note
+that \refrule{tb-call} is \emph{not} an axiom: its premise (re)checks that the
+body $P$ in the definition of $A$ is coherent with the global type assignment
+$\tass{A}{\seqof{S}}{n}$. With this formulation of \refrule{tb-call}, the only
+axioms are \refrule{tb-done} and \refrule{tb-close} so that the inductive
+interpretation of the typing (co)rules ensures action boundedness. Note also
+that the rank of the conclusion may be greater than the rank $n$ associated with
+$A$. This overapproximation grants more flexibility when typing different
+branches in \refrule{tb-label}.
+
+\begin{remark}[On structural pre-congruence...continuation]
+	Now we have all the ingredients to understand why the choice of a pre-congruence
+	over a congruence relation is just a design one (see \Cref{rmk:pcong}).
+	Indeed, the such choice was compulsory in \cite{CicconePadovani22}.
+	As mentioned before, in such work we relied on the characterization of fair subtyping based on
+	a generalized inference system (see \Cref{ssec:fsub_gis}) and the subsumption rule
+	\refrule{tb-cast} always increased the \emph{rank} by one. This way, \refrule{sb-cast-new} interpreted
+	in a congruence way would increase the rank of the process due to the introduced cast.
+	Using the actual notions, a reflexive application of fair subtyping has weight zero.
+	%
+	\eor
+\end{remark}
+
+Well-typed processes enjoy the expected properties, including typing
+preservation under structural pre-congruence and reduction. Most importantly,
+they fairly terminate:
+
+\begin{theorem}{Soundness}
+  \label{thm:ts_bin_sound}
+  If $\wtp[n]\EmptyCtx P$ and $P \wred Q$, then $Q \wred\pcong \pdone$.
+\end{theorem}
+
+The proof of \Cref{thm:ts_bin_sound} follows \Cref{thm:fair_termination}. 
+Moreover the proof that all the reducts of a process are \emph{weakly terminating}
+(see \Cref{lem:weak_termination_bin})
+is loosely based on the method of helpful directions
+\citep{Francez86}, namely on the property that a (well-typed) process \emph{may}
+reduce in such a way that its measure strictly decreases
+(see \Cref{lem:helpful_direction_bin}). Recall that this
+property is not true for every reduction.
+
+There are several valuable implications of \Cref{thm:ts_multi_sound} on a well-typed,
+closed process $P$:
+\begin{description}
+  \item[Deadlock freedom.] If $Q$ cannot reduce any further, then it must be
+  $\pdone$ (structurally precongruent to), namely there are no residual
+  input or output actions.
+  \item[Fair termination.] Under the fairness assumption,
+  \Cref{thm:fair_termination} assures that $P$ eventually reduces to $\pdone$.
+  This also implies that every session created by $P$ eventually terminates.
+  \item[Junk freedom.] Each message produced as $P$ executes is eventually
+  consumed. Indeed, if $Q$ contains a pending message, the fact that $Q$ may
+  reduce to $\pdone$ means that some process is able to consume the message and
+  will eventually do so under the fairness assumption.
+  \item[Progress.] If $Q$ contains a sub-process with pending input/output
+  actions, the fact that $Q$ may reduce to $\pdone$ means that these actions are
+  eventually performed.
+\end{description}
+
+\begin{remark}
+  \label{rem:internal_choice_rank}
+  The rank of a non-deterministic choice $P \pchoice Q$ can usually be chosen to
+  be the minimum among those of the branches $P$ and $Q$, so that the type
+  system can handle processes like those in \cref{ex:infinite_sessions}, which
+  \emph{may} create new sessions or perform casts but they need not do so in
+  order to terminate.
+  %
+  On the contrary, the rank of a label output $\PSend\x{\l_i:P_i}_{i\in I}$ has
+  to be an upper bound of that of all branches $P_i$.
+  %
+  The motivation for such different ways of determining the rank of these
+  process forms, despite both represent an \emph{internal choice}, lies in the
+  proof of \Cref{lem:helpful_direction_bin}.
+  %
+  In $P \pchoice Q$, both branches are typed in \emph{exactly the same} typing
+  context, meaning that the choice of one branch or the other has no substantial
+  impact on the shortest paths that terminate the sessions used by $P$ and $Q$.
+  Thus, the ``helpful'' reduction can be solely driven by the rank of the chosen
+  branch.
+  %
+  In a label output $\PSend\x{\l_i:P_i}_{i\in I}$ it could happen that all
+  branches with minimum rank increase the length of the shortest path that leads
+  to the termination of $x$. In this case, the choice of the ``helpful''
+  reduction must prioritize the termination of $x$, but then the rank of the
+  whole process has to be an upper bound of that of the branches to be sure that
+  the measure of the reduct decreases.
+  %
+  \eor
+\end{remark}

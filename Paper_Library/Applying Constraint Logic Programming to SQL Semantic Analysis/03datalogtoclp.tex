@@ -1,0 +1,310 @@
+\section{From Datalog to CLP}
+\label{sect:datalog-to-clp}
+
+Once the Datalog program corresponding to an SQL query is obtained, we can reason in the logical level about program properties of interest.
+Selecting a CLP language for expressing such properties seems to be a natural choice for dealing with unbound variables in conditions.
+Note that SQL conditions operate on data coming from their providers (relation instances, either table contents or the result of solving a reference to a view).
+However, our compile-time approach avoids inspecting such instances, thus leading to non-ground conditions in general.
+If all the conditions are expressed as a constraint problem, solvers can be used to infer some deductions.
+
+For example, the SQL condition \mytt{r.a > s.b AND s.b > r.a} is translated into its Datalog equivalent \mytt{X > Y, Y > X}.
+Since \mytt{X} and \mytt{Y} are logic variables, the condition cannot be tested by a Datalog deductive engine without resorting to retrieve data from the database instance (this would make the condition ground for concrete data in safe rules \cite{Ullman88}).
+However, it can be posted to a solver which could deduce an inconsistent state with the help of its constraint propagators.
+Similarly, a tautological condition can be identified by determining whether its complement is false, as in the example in the introduction: \mytt{salary INT CHECK salary > 2000 OR salary < 5000}.
+The condition would be translated into \mytt{X > 2000; X < 5000} and a constraint solver can deduce that its complement \mytt{X =< 2000, X >= 5000} is false. 
+Such a solver can also simplify its constraint store.
+For example, given the following condition posed in the introduction: \mytt{butane-propane=10 AND butane+propane=80}, its translation \mytt{X-Y=10, X+Y=80} forms a conjunction of linear equations for which a numeric solver can find the single solution \mytt{X=45} and \mytt{Y=35}.
+
+Therefore, our approach consists in translating the Datalog program into a CLP program in which Datalog conditions are replaced by CLP constraints.
+Moreover, since this CLP reasoning operates at compile-time, deductions are independent of database instances.
+Nonetheless, as each variable occurring in the CLP program %(which is universally quantified by default) 
+has attached the domain of all possible values for its type, each base relation (table) in the Datalog program is translated with the CLP constraints corresponding to the \mytt{CHECK} constraints.
+%so that the domain of the variable is not restricted by its concrete data provider instance and becomes universally quantified.
+This way, solving the CLP program represents an abstract solving of the original Datalog program. 
+%Summarizing the proposed stages
+
+Next subsection identifies both SQL data types and their corresponding constraint domains.
+Since there can be different solvers for compatible domains (with different deduction capabilities), in Subsection \ref{sect:cooperation} we show how they interact to improve deductions via cooperation.
+
+\subsection{Domains}
+
+Constraint solvers operate on specific constraint domains, which we map to compatible SQL data types. 
+SQL standard data types 
+%\cite{sql:2016} 
+include in particular exact numeric (\mytt{INTEGER}, \mytt{NUMERIC}, \mytt{DECIMAL}, \mytt{SMALLINT}), approximate numeric (\mytt{FLOAT}, \mytt{REAL}, \mytt{DOUBLE PRECISION}), Boolean (\mytt{BOOL}), character string (\mytt{CHAR}, \mytt{VARCHAR}), and datetime types (\mytt{DATE}, \mytt{TIME}, \mytt{TIMESTAMP}).
+
+Constraint domains are instances of the generic schema CLP($\mathscr{X}$) \cite{Jaffar:1987:CLP:41625.41635,Apt:2003:PCP:1237975}, where $\mathscr{X}$ is a constraint domain.
+Typically, the following domains can be found in existing implementations: $\mathscr{FD}$ (finite domain of integers, with both linear and non-linear constraints), $\mathscr{Q}$ (rational numbers with linear constraints), approximate numeric ($\mathscr{R}$), and Boolean ($\mathscr{B}$).
+
+
+Further constraint solvers can be developed with the aid of Constraint Handling Rules (CHR) %\cite{Frhwirth:2009:CHR:1618539}
+which eases the task of implementing specific-application constraints.
+In particular, string solvers (which have received recently a large amount of research \cite{6735366,CI15}) could be developed over character strings, and so do solvers over datetime types.
+ 
+\subsection{Solver Cooperation}
+\label{sect:cooperation}
+
+Solver cooperation \cite{CES18a,DBLP:journals/corr/abs-0904-2136,HofstedtCP:2000,DBLP:conf/advis/MonfroyC04} is a technique enabling solver interaction with the aim to early prune the search space during solving.
+This is possible because different solvers prune the search space in different ways.
+For example, on the one hand, given the constraints \mytt{X+Y=2} and \mytt{X-Y=0}, the propagators of the CLP($\mathscr{FD}$) solver are typically not able to solve the linear system, though the CLP($\mathscr{Q}$) does.
+% \mytt{X+Y=2} and \mytt{X-Y=0}: SICStus (no), SWI-Prolog(yes), GNU-Prolog (no), Ciao(?), XSB (?), Eclipse (no)
+On the other hand, considering the constraints \mytt{X*X=4}, \mytt{X>0} and \mytt{X<4}, the CLP($\mathscr{FD}$) solver is able to solve the non-linear problem, whereas CLP($\mathscr{Q}$) does not.
+Thus, provided that CLP systems enjoy different solvers, we take advantage of them and make them to cooperate.
+
+Logic programming (LP) systems include the Herbrand domain $\mathscr{H}$ that supports computations with symbolic equality and disequality constraints over values of any type. 
+In the CLP setting, the domain $\mathscr{H}$ can directly cooperate with other solvers wherever each variable is attached to a single CLP solver (in order to prevent domain clash).
+
+Each condition occurring in the Datalog program is translated into a constraint term which includes the target domain type.
+With this indication, the constraint is sent to the corresponding solver(s) at CLP evaluation time.
+If a single solver $\mathscr{X}$ is available for a given domain type, then the constraint operates on the same logic variables occurring in the translated CLP program (i.e., a direct cooperation of $\mathscr{H}$ with $\mathscr{X}$).
+Otherwise, when more than a solver is available (on several domains $\mathscr{X}_i$), a copy of each  variable in the constraint is created for each solver, and bridge constraints are imposed to make possible the bidirectional communication between them.
+
+Figure \ref{fig:solver-cooperation} illustrates our approach to solver cooperation (which differs from \cite{DBLP:journals/corr/abs-0904-2136} since we do not take projections into account).
+A bridge constraint is denoted as \mytt{X}$^{\mathscr{X}_{1}}$ \mytt{\#==}$_{\mathscr{X}_{1},\mathscr{X}_{2}}$ \mytt{X}$^{\mathscr{X}_{2}}$, which relates two variables \mytt{X}$^{\mathscr{X}_{1}}$ and \mytt{X}$^{\mathscr{X}_{2}}$ in the domains $\mathscr{X}_{1}$ and $\mathscr{X}_{2}$, respectively.
+\begin{figure}[b]
+  %\begin{center}
+%    \begin{minipage}{0.95\linewidth}
+  \fbox{
+           \includegraphics[width=0.97\linewidth]{cooperation.pdf}
+    }
+%    \end{minipage}
+  %\end{center}       
+\caption{Solver Cooperation} 
+\label{fig:solver-cooperation}
+\end{figure}
+In the figure, the constraint ctr(\mytt{X$_1^{\mathscr{H}}$}, \ldots, \mytt{X$_n^{\mathscr{H}}$}) operating on the domain $\mathscr{H}$ has $n$ variables \mytt{X}$_i^{\mathscr{H}}$ ($1 \leq i \leq n$), and there are $m$ compatible solvers for which $m$ equivalent $\mathscr{X}_{j}$ constraints ctr(\mytt{X$_1^{\mathscr{X}_{j}}$}, \ldots, \mytt{X$_n^{\mathscr{X}_{j}}$}) are posted to them.
+For each solver $\mathscr{X}_{j}$, new \mytt{X}$_i^{\mathscr{X}_{j}}$ variables are created, which form the equivalent $\mathscr{X}_{j}$ constraint.
+%Then, $n \cdot m \cdot (m-1) / 2$ bridge constraints are created of the form \mytt{X$_i^{\mathscr{X}_{j}}$ \#==$_{\mathscr{X}_{j},\mathscr{X}_{k}}$ X$_i^{\mathscr{X}_{k}}$} ($1 \leq i \leq n$, $1 \leq j \leq m$, $j<m$), relating each pair of variables \mytt{X}$_i^{\mathscr{X}_{j}}$ and \mytt{X}$_i^{\mathscr{X}_{k}}$ once for each pair of different domains $\mathscr{X}_{j}$ and $\mathscr{X}_{k}$.
+Then, $n \cdot m$ bridge constraints are created of the form \mytt{X$_i^{\mathscr{H}}$ \#==$_{\mathscr{H},\mathscr{X}_{j}}$ X$_i^{\mathscr{X}_{j}}$} ($1 \leq i \leq n$, $1 \leq j \leq m$), relating each pair of variables \mytt{X}$_i^{\mathscr{H}}$ and \mytt{X}$_i^{\mathscr{X}_{j}}$ once for each domain $\mathscr{X}_{j}$.
+%
+%
+%  FOR THE FIGURE:
+%
+%ctr(\mytt{X$_1^{\mathscr{H}}$}, \ldots, \mytt{X$_n^{\mathscr{H}}$})
+%
+%ctr(\mytt{X$_1^{\mathscr{X}_1}$}, \ldots, \mytt{X$_n^{\mathscr{X}_1}$})
+%
+%ctr(\mytt{X$_1^{\mathscr{X}_m}$}, \ldots, \mytt{X$_n^{\mathscr{X}_m}$})
+%
+%\mytt{X$_1^{\mathscr{H}}$ \#==$_{\mathscr{H},\mathscr{X}_{1}}$ X$_1^{\mathscr{X}_{1}}$}
+%
+%\mytt{X$_n^{\mathscr{H}}$ \#==$_{\mathscr{H},\mathscr{X}_{1}}$ X$_n^{\mathscr{X}_{1}}$}
+%
+%\mytt{X$_1^{\mathscr{H}}$ \#==$_{\mathscr{H},\mathscr{X}_{m}}$ X$_1^{\mathscr{X}_{m}}$}
+%
+%\mytt{X$_n^{\mathscr{H}}$ \#==$_{\mathscr{H},\mathscr{X}_{m}}$ X$_n^{\mathscr{X}_{m}}$}
+
+
+
+For example, let us consider a condition \mytt{X$_1$ > X$_2$} on the domain $\mathscr{H}$, and the compatible domains CLP($\mathscr{Q}$)
+and CLP($\mathscr{FD}$).
+The equivalent constraints in CLP($\mathscr{Q}$)
+and CLP($\mathscr{FD}$) are respectively \mytt{clpq:\{X$_1^{\mathscr{Q}}$ > X$_2^{\mathscr{Q}}$\}}, and \mytt{X$_1^{\mathscr{FD}}$ \#> X$_2^{\mathscr{FD}}$} (following the concrete syntax of Prolog systems such as SICStus Prolog and SWI-Prolog, where \mytt{clpq:\{$C$\}} is the way to post the constraint $C$ to the CLP($\mathscr{Q}$) solver, and \mytt{\#>} is the $\mathscr{FD}$ operator corresponding to \mytt{>}).
+Four bridges are built in this case: 
+\mytt{X}$_1^\mathscr{H}$ \mytt{\#==}$_{\mathscr{H},\mathscr{Q}}$ \mytt{X}$_1^\mathscr{Q}$, 
+\mytt{X}$_2^\mathscr{H}$ \mytt{\#==}$_{\mathscr{H},\mathscr{Q}}$ \mytt{X}$_2^\mathscr{Q}$,
+\mytt{X}$_1^\mathscr{H}$ \mytt{\#==}$_{\mathscr{H},\mathscr{FD}}$ \mytt{X}$_1^\mathscr{FD}$, and
+\mytt{X}$_2^\mathscr{H}$ \mytt{\#==}$_{\mathscr{H},\mathscr{FD}}$ \mytt{X}$_2^\mathscr{FD}$.
+
+\subsection{Translation}
+\label{sect:dl-to-clp-translation}
+
+In this subsection, we show the translation of a Datalog program $\Pi_{DL}$ into a CLP program $\Pi_{CLP}$ such that $\Pi_{CLP}$ represents $\Pi_{DL}$.
+We say that $\Pi_{CLP}$ represents $\Pi_{DL}$ if the meaning of $\Pi_{DL}$ is included in the meaning of $\Pi_{CLP}$ for any of its instance base relations.
+For a Datalog program $\Pi_{DL}$, its meaning (denoted as $\llbracket \Pi_{DL} \rrbracket$) is the set of ground facts inferred for each relation.
+For a CLP program, its meaning (denoted as $\llbracket \Pi_{CLP} \rrbracket$) is built from the set of all the (possibly non-ground) facts inferred for each relation: for each non-ground fact, all the type-compatible values constrained to the answer constraints are used to build the ground facts.
+Thus, $\Pi_{CLP}$ represents $\Pi_{DL}$ if $\llbracket \Pi_{DL} \rrbracket \subseteq \llbracket \Pi_{CLP} \rrbracket$.
+
+For example, the meaning of the Datalog program $\Pi_{DL} =$ \{\mytt{r(X):-X=1;X=2}\} is \{\mytt{r(1), r(2)}\} for a relation \mytt{r} that has integer type for its single argument.
+The meaning of the CLP program (omitting domain annotations) $\Pi^1_{CLP} =$ \{\mytt{r(X):-X>0,X<3}\} is the same, provided the same integer type.
+Note that, whereas non-recursive Datalog enjoys finite meanings (for finite relations), CLP can have infinite meanings as, e.g., $\Pi^2_{CLP} =$\{\mytt{r(X):-X>0}\}, whose meaning would be \{\mytt{r(1), r(2), r(3), ...}\}. 
+%Note also that this program is not a valid Datalog program because of safety (which is a property that syntactically restricts Datalog programs to ensure finite meanings \cite{Ullman88}).
+Both $\Pi^1_{CLP}$ and $\Pi^2_{CLP}$ represent the meaning of $\Pi_{DL}$, but the first one does it with a much better precision than the second one.
+The program $\Pi^3_{CLP} =$ \{\mytt{r(X):-X>0,X<2}\} ($\llbracket \Pi^3_{CLP} \rrbracket =$ \{\mytt{r(1)}\}) does not represent $\Pi_{DL}$.
+
+If a Datalog rule contains a call to a base relation (representing an SQL table), the translated CLP program omits that call to keep our approach instance-independent.
+For example, the program \{\mytt{r(X):-t(X), X>17}\}, with a call to the base relation \mytt{t}, is translated into the CLP program \{\mytt{r(X):-true, X>17}\}.
+Moreover, if the table has \mytt{CHECK} constraints, they are also added to the rule. 
+Assuming that the declaration for this table is \mytt{CREATE TABLE t(a INT CHECK a>=0 AND a<=100)}, then the translation of the rule becomes: \mytt{r(X):-true, X>=0, X=<100, X>17}.
+
+Next definitions formalize this translation from Datalog rules into CLP rules:
+
+\begin{definition} \label{def:DLtoCLP}
+The function \mytt{{\em DL\_to\_CLP}} takes a Datalog rule as input and returns a CLP rule.
+
+\medskip
+
+\mytt{{\em DL\_to\_CLP}}((\mytt{head :- goal$_1$, \ldots, goal$_n$})) = (\mytt{head :- goal$_1'$ , \ldots, goal$_n'$}) \\ \indent 
+where \mytt{{\em DLGOAL\_to\_CLP}}(\mytt{goal$_i$}) = \mytt{goal$_i'$}\hfill $\square$
+
+\end{definition}
+
+\begin{definition} \label{def:DLGOALtoCLP}
+The function \mytt{{\em DLGOAL\_to\_CLP}} takes a Datalog goal as input and returns a CLP goal.
+
+\medskip
+
+\mytt{{\em DLGOAL\_to\_CLP}}(\mytt{rel}) = \mytt{ctrs} \\ 
+\indent where \mytt{rel} is a base relation, and \mytt{ctrs} is the conjunction of user-defined constraints for \mytt{rel}
+
+\medskip
+
+\mytt{{\em DLGOAL\_to\_CLP}}(\mytt{(goal$_1$ , goal$_2$)}) = \mytt{(goal$_1'$ , goal$_2'$)} \\ 
+\indent where \mytt{{\em DLGOAL\_to\_CLP}}(\mytt{goal$_i$}) = \mytt{goal$_i'$}
+
+\medskip
+
+\mytt{{\em DLGOAL\_to\_CLP}}($meta$) = \mytt{goal$'$} \\ 
+\indent where $meta$ is either \mytt{top($n$,goal)} or \mytt{distinct(goal)}, 
+% or  \mytt{not goal}, \\ % not/1 is not handled up to now
+%\indent 
+and \mytt{{\em DLGOAL\_to\_CLP}}(\mytt{goal}) = \mytt{goal$'$}
+
+\medskip
+
+\mytt{{\em DLGOAL\_to\_CLP}}(\mytt{not(goal)}) = \mytt{true} 
+
+\medskip
+
+\mytt{{\em DLGOAL\_to\_CLP}}($exp_1 ~op~ exp_2$) = \mytt{ctr($exp_1 ~op~ exp_2$, $type$)} \\
+\indent where $op$ is a comparison operator, and $type$ is the type of the expression
+
+\medskip
+
+The constraints and types for a given user-defined relation are taken from its metadata.
+Relation types are used to annotate each logic variable in the program with its corresponding type.\hfill $\square$
+\end{definition}
+
+Note that a negated goal resulting from the translation of a relation defined by a statement such as \mytt{EXCEPT} restricts the meaning of the relation.
+Here, we leave out this restriction because we do not deal with table instances.
+Thus, the goal translation becomes simply \mytt{true}. 
+
+\begin{proposition}
+	\label{prop:translation}
+The translation of a Datalog program $\Pi_{DL}$ into a CLP program $\Pi_{CLP}$ is a correct abstraction, i.e., $\llbracket \Pi_{DL} \rrbracket \subseteq \llbracket  \mytt{{\em DL\_to\_CLP}}(\Pi_{DL}) \rrbracket$.\hfill $\square$
+\end{proposition}
+The proof of this proposition is straightforward by checking that no case of Definition \ref{def:DLGOALtoCLP} removes solutions.
+
+
+We assume a compatible mapping between SQL types and Datalog types.
+From here on, we consider a Datalog type system consisting of the data types \mytt{string}, \mytt{integer} and \mytt{float}.
+
+\begin{example}
+    
+%{\myfontcodesize
+%    \begin{verbatim}
+%    CREATE TABLE gas_products(
+%    name      VARCHAR(20) PRIMARY KEY, 
+%    butane    FLOAT CHECK butane    BETWEEN 0 AND 100, 
+%    propane   FLOAT CHECK propane   BETWEEN 0 AND 100, 
+%    olefins   FLOAT CHECK olefins   BETWEEN 0 AND 100, 
+%    diolefins FLOAT CHECK diolefins BETWEEN 0 AND 100, 
+%    CHECK     butane+propane+olefins+diolefins =  100);
+%    
+%    SELECT name FROM gas_products WHERE butane>60 AND propane>50;
+%    \end{verbatim}
+%}
+
+Let us consider again the example of gas products presented in %Subsection \ref{sect:motivation}.
+the introduction.
+The result of the translation of the first SQL query into Datalog, followed by a simplification is:
+
+{\myfontcodesize
+\begin{verbatim}
+{ (answer(N) :- gas_products(N,B,P,O,D), B>60, P>50) }
+\end{verbatim}
+}
+
+Applying \mytt{{\em DL\_to\_CLP}} to this singleton, we get:
+
+{\myfontcodesize
+\begin{verbatim}
+answer(N):-ctr(B>=0,float), ctr(B=<100,float), ctr(P>=0,float), ctr(P=<100,float),  
+           ctr(O>=0,float), ctr(O=<100,float), ctr(D>=0,float), ctr(D=<100,float),  
+           ctr(B+P+O+D=100,float), ctr(B>60,float), ctr(P>50,float).
+\end{verbatim}
+}
+
+The first 9 constraints correspond to the \mytt{CHECK} constraints in the \mytt{CREATE TABLE} statement, whereas the last 2 constraints correspond to the conjunctive condition in the SQL query.
+All the constraints have been annotated with the corresponding types declared for the table.\hfill $\square$
+
+\end{example}
+
+	
+\subsection{Reasoning about Conditions}
+\label{sect-clp-solving}
+
+There are two cases to be considered: First, a CLP program resulting from the translation of an SQL query defining an $n$-ary relation $r$. 
+In this case, the goal to test whether the query is consistent, inconsistent or simplifiable is $r(X_1,\ldots,X_n)$.
+Second, a CLP program resulting from the translation of an SQL condition $c$, as those occurring in \mytt{CHECK} constraints for a given relation $r'$.
+In this case, we build an SQL query of the form \mytt{SELECT * FROM $r'$ WHERE $c$} defining a fresh relation $r$, and we refer back to the first case.
+In addition, we assume a function $solve(\phi, \Pi_{CLP})$ that takes a goal $\phi$ to be solved in the context of a logic program $\Pi_{CLP}$ and returns either a success substitution or failure.
+This function represents the abstraction of the original Datalog program (next section briefly describes its implementation).
+Only deterministic goals are considered in the analysis.
+
+\begin{proposition}
+	Given $\mytt{{\em DL\_to\_CLP}}(\Pi_{DL})=\Pi_{CLP}$, if $solve(\phi, \Pi_{CLP})=\bot$, then $solve(\phi, \Pi_{DL})=\bot$.\hfill $\square$
+\end{proposition}
+This proposition follows Proposition \ref{prop:translation} and states that if solving a goal $\phi$ for the logic program $\Pi_{CLP}$ that is an abstraction of another program $\Pi_{DL}$ leads to failure, then solving it for $\Pi_{DL}$ also leads to failure.
+%
+Thus, any inconsistent condition for an SQL query can be simply found by testing whether $solve(\phi, \Pi_{CLP})$ fails.
+The first example in the introduction is an example of this:
+
+$\phi$ = \mytt{answer(N,D,S)} \\ \indent
+$\Pi_{CLP}$ = \{ (\mytt{answer(N,D,S) :- ctr(D='IT',string), ctr(D='HR',string)} \}
+
+\noindent which fails, therefore identifying an inconsistent condition.
+
+As well, a tautological condition can be found by complementing it and testing if $solve(\phi, \Pi_{CLP})$ fails.
+An example of this is the table creation of employees (also in the introduction). 
+For it, the following query is built and translated into a fresh relation \mytt{r} $\leftarrow$ \mytt{SELECT * FROM employees WHERE salary <= 2000 AND salary >= 5000}:
+
+$\phi$ = \mytt{r(N,D,S)} \\ \indent
+$\Pi_{CLP}$ = \{ (\mytt{r(N,D,S) :- ctr(S=<2000,integer), ctr(S>=5000,string)} \}
+
+\noindent which also fails, therefore identifying a tautological condition.
+Obviously, this procedure is not applied to true conditions, as it is the case of \mytt{WHERE}-less statements.
+
+\begin{proposition}
+Given $\mytt{{\em DL\_to\_CLP}}(\Pi_{DL})=\Pi_{CLP}$, if $solve(\phi, \Pi_{CLP})=\sigma$, and $solve(\phi, \Pi_{DL})=\theta$, then there exists $\eta$ such that $\theta=\eta\circ\sigma$.\hfill $\square$
+\end{proposition}
+This also follows Proposition \ref{prop:translation} and states that the success substitution $\sigma$ of solving $\phi$ for the logic program $\Pi_{CLP}$ is more general than $\theta$ (the one for $\Pi_{DL}$).
+Thus, a simplifiable condition can be found by checking if any of the constrained variables in the program is bound after a successful CLP evaluation.
+The last query in the introduction %Subsection \ref{sect:motivation} 
+is an example.
+Its translation is:
+
+{%\setstretch{1}
+$\phi$ = \mytt{answer(B,P)} \vspace*{-3mm}
+\begin{tabbing}
+\indent $\Pi_{CLP}$ = \{
+(\=\mytt{answer(B,P) :-} \\[-1mm]
+	\> \mytt{ctr(B>=0,float), ctr(B=<100,float),}  
+	 \mytt{ctr(P>=0,float), ctr(P=<100,float),}  \\ [-1mm]
+	\> \mytt{ctr(O>=0,float), ctr(O=<100,float),}   \mytt{ctr(D>=0,float), ctr(D=<100,float),}  \\[-1mm]
+	\> \mytt{ctr(B+P+O+D=100,float),}
+	 \mytt{ctr(B-P=10,float), ctr(B+P=80,float)}) \} 
+\end{tabbing}
+}
+
+By solving this, the program is instantiated to:
+
+{\setstretch{1}
+\begin{tabbing}
+$\Pi_{CLP}$ = \=\{
+(\mytt{answer(45,35) :-} \\[-1mm]
+    \> \mytt{ctr(45>=0,float), ctr(45=<100,float),}  
+     \mytt{ctr(35>=0,float), ctr(35=<100,float),}  \\[-1mm]
+    \> \mytt{ctr(O>=0,float), ctr(O=<100,float),}  
+     \mytt{ctr(D>=0,float), ctr(D=<100,float),}  \\[-1mm]
+    \> \mytt{ctr(45+35+O+D=100,float),}  
+     \mytt{ctr(45-35=10,float), ctr(45+35=80,float)}) \}
+\end{tabbing}
+}
+
+In this program, ground conditions can be replaced by true conditions (because it has been proven by $solve$ that they succeed). 
+Therefore, they are simplifiable and a warning can be raised.
+
+
+
+

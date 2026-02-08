@@ -1,0 +1,104 @@
+\section{Problem Setup and Preliminaries}\label{Sec_II}
+We consider the following continuous-time nonlinear system:
+\begin{equation}
+    \frac{\text{d}s(t)}{\text{d}t}
+    =f_c(s(t), u(t)),\quad t\in[0,T],
+    \label{eq: continuous_system}
+\end{equation}
+where $t$ is the time, $s(t)\in\mathbb{R}^{n_s}$ and $u(t)\in\mathbb{R}^{n_u}$ are state and control input, respectively. 
+
+The continuous-time time-optimal motion planning problem, which plans a feasible trajectory to transition the system (\ref{eq: continuous_system}) from an initial state $s_{\text{t0}}:=s(t_0)$ to a desired terminal state $s_{\text{tf}}:=s(t_f)$ under some stage constraints in the shortest time, is formulated as follows:
+\begin{equation}
+    \begin{alignedat}{2}
+        \minimize_{\substack{T, s(\cdot), u(\cdot)}} &\:\int_0^T1\text{d}t &\:\\
+        \text{subject to }\:s(0)&=s_{\text{t0}}&\:\\
+        \:\dot{s}(t)&=f_c(s(t), u(t)),&\:\text{for } t\in[0,T]\\
+        \:h(s(t),u(t))&\leq0,&\:\text{for } t\in[0,T]\\
+        \:s(T)&=s_{\text{tf}}&\:\\
+        \:0&\leq T,
+        \label{ocp: continuous_time}
+    \end{alignedat}
+\end{equation}
+in which $h: \mathbb{R}^{n_s}\times\mathbb{R}^{n_u}\to\mathbb{R}^{n_h}$ denotes the stage constraints. 
+In the context of problem (\ref{ocp: continuous_time}), the decision variable $T$ for the system (\ref{eq: continuous_system}) represents the total
+time required to transition from the initial state $s_{\text{t0}}$ to the desired terminal state $s_{\text{tf}}$.
+
+In this paper, we are interested in solving a discretized version of the problem (\ref{ocp: continuous_time}) online with a receding planning horizon in a NMPC implementation. 
+Therefore, two different approaches: the time scaling approach (\cite{7331052}), and the exponential weighting approach (\cite{8264024}), are discussed in Section \ref{Sec_II1}, and Section \ref{Sec_II2}, respectively.
+\subsection{Time Scaling Approach}\label{Sec_II1}
+We use a multiple shooting method with a fixed number $N$ of shooting intervals to discretize the continuous-time system (\ref{ocp: continuous_time}). 
+Since the total time $T$ is not known a priori, we introduce a time scaler $\tau:=Nt/T$ such that the system (\ref{ocp: continuous_time}) becomes
+\begin{equation}
+    \frac{\text{d}s(t)}{\text{d}\tau}
+    =f_c(s(t), u(t))\frac{T}{N},\quad \tau\in[0,N].
+    \label{eq: continuous_system_scaled}
+\end{equation}
+This technique — time scaling — makes the total time $T$ independent of the time scaler $\tau$ over which we integrate the continuous-time system.
+The problem (\ref{ocp: continuous_time}) discretized by the time scaling approach is formulated as follows:
+\begin{equation}
+    \begin{alignedat}{2}
+        \minimize_{\substack{T, \{s\}_{n=0}^N, \{u\}_{n=0}^{N-1}}} &\: T &\:\\
+        \text{subject to }\:s_0&=s_{\text{t0}}&\:\\
+        \:s_{n+1}&=f_{T}(s_n, u_n,\Delta T),&\:\text{for } n\in[0,N-1]\\
+        \:h(s_n,u_n)&\leq0,&\:\text{for } n\in[0,N-1]\\
+        \:s_N&=s_{\text{tf}}&\:\\
+        \:0&\leq T,
+        \label{ocp: time_scaling}
+    \end{alignedat}
+\end{equation}
+where $\Delta T:=T/N$ denotes the temporal discretization, and the function $s_{n+1}=f_{T}(s_n, u_n,\Delta T)$ denotes the discrete-time representation of the time-scaled system (\ref{eq: continuous_system_scaled}), which is obtained by numerical integration. 
+\subsection{Exponential Weighting Approach}\label{Sec_II2}
+Unlike the time scaling approach, which involves a fixed horizon length $N$ and optimizes the total time $T$, the second approach employs a discrete-time model 
+\begin{equation}
+    s_{n+1}
+    =f_d(s_{n}, u_{n}),\quad n=0,1,...,
+    \label{eq: discrete_time}
+\end{equation}
+derived by numerical integrating the continuous-time system (\ref{eq: continuous_system}) over a fixed sampling interval $t_s$, which also serves as the control sampling time.
+
+One time-optimal OCP using the discrete-time model (\ref{eq: discrete_time}) is defined as below:
+\begin{equation}
+    \begin{alignedat}{2}
+        N^*(s_{\text{t0}},s_{\text{tf}}):=\quad\quad\quad&&\\
+        \minimize_{\substack{N, \{s\}_{n=0}^N, \{u\}_{n=0}^{N-1}}} &\: N &\:\\
+        \text{subject to }\:s_0&=s_{\text{t0}}&\:\\
+        \:s_{n+1}&=f_{d}(s_n, u_n),&\:\text{for } n\in[0,N-1]\\
+        \:h(s_n,u_n)&\leq0,&\:\text{for } n\in[0,N-1]\\
+        \:s_N&=s_{\text{tf}}&\:\\
+        \:N&\in\mathbb{N}_+,
+        \label{ocp: vairable_N}
+    \end{alignedat}
+\end{equation}
+which is a mixed-integer programming problem.
+It finds the minimal $N^*(s_{\text{t0}},s_{\text{tf}})\in\mathbb{N}_+$ to transition the discrete-time model (\ref{eq: discrete_time}) from the initial state $s_{\text{t0}}$ to the desired terminal state $s_{\text{tf}}$. 
+
+Since the horizon length $N$ in the problem (\ref{ocp: vairable_N}) is a decision variable that is not fixed throughout the NMPC implementation, this can constantly change the size of the OCP to be solved, and is therefore inconvenient in real-time execution.
+A more convenient reformulation of the time-optimal OCP uses a fixed $N$ that is larger than $N^*(s_{\text{t0}},s_{\text{tf}})$, and minimizes the weighted L1-norm of the difference between the state at each shooting point $s_n$ and the desired terminal state $s_{\text{tf}}$ with exponentially increased weighting factors.
+This OCP proposed in \cite{8264024} is presented as follows:
+\begin{equation}
+    \begin{alignedat}{2}
+        \minimize_{\substack{\{s\}_{n=0}^N, \{u\}_{n=0}^{N-1}}} &\: \sum_{n=0}^{N-1}\gamma^n\|s_n-s_{\text{tf}}\|_1 &\:\\
+        \text{subject to }\:s_0&=s_{\text{t0}}&\:\\
+        \:s_{n+1}&=f_{d}(s_n, u_n),&\:\text{for } n\in[0,N-1]\\
+        \:h(s_n,u_n)&\leq0,&\:\text{for } n\in[0,N-1]\\
+        \:s_N&=s_{\text{tf}},
+        \label{ocp: exponential_weight}
+    \end{alignedat}
+\end{equation}
+where $\gamma\in\mathbb{R}>1$ is a fixed pre-defined parameter. 
+Note that choosing the L1-norm of the state difference induces sparsity, that is yielding that some components of the objective are exactly zero. 
+Consequently, at a later stage than $N^*(s_{\text{t0}},s_{\text{tf}})$, the equality $s_{n+1}=s_n$ holds so that the state $s_n$ is stabilized to the desired terminal state $s_{\text{tf}}$, and the solution will be time-optimal.
+\subsection{Discussion}
+Both approaches to formulate the time-optimal motion planning problem are approximations of the continuous-time problem (\ref{ocp: continuous_time}).
+These approximations are made under the condition that the control inputs are piecewise constant parameterized, and the time grid remains evenly spaced over the total horizon with a fixed number of control steps.
+The time scaling approach is more directly linked to the problem (\ref{ocp: continuous_time}) as it minimizes the total time $T$. 
+Even in scenarios where reaching a distant desired terminal state $s_{\text{tf}}$ requires a considerable amount of time $T$, the computational overhead remains manageable.
+However, large total time $T$ with a fixed horizon length $N$ may result in a coarse time grid, introducing a safety concern as the stage constraints are only activated at the shooting points, and the time-optimal solution often lies at the edge of these constraints.
+In a NMPC implementation, for example, the problem (\ref{ocp: time_scaling}) needs to be solved repeatedly. 
+\cite{BOS20234877} interpolates the time-optimal solutions of the problem (\ref{ocp: time_scaling}) with the control sampling time $t_s$ to apply the optimal control to the system. 
+Yet, the interpolation introduces errors that may lead to infeasibility, e.g., the updated $s_{\text{t0}}$ for replanning is inside the obstacle.
+
+
+In contrast, the exponential weighting approach derives a better and safer approximation by using a fixed but small sampling interval $t_s$.
+No interpolation is needed in a NMPC implementation when applying the optimal control to the system.
+Yet, when aiming to reach a distant desired terminal state $s_{\text{tf}}$, a significantly larger horizon length $N$ needs to be selected, leading to excessively increased computational complexity and numerical ill-conditions due to exponentially increased weights.

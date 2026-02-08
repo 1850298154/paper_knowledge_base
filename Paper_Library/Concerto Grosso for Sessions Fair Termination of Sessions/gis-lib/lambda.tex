@@ -1,0 +1,238 @@
+\beginalto
+%
+\begin{figure}[t]
+\framebox[\textwidth]{
+\begin{mathpar}
+	\begin{array}{rcll}
+		\produzione{\te}{\val \mid\x\mid\AppExp{\te_1}{\te_2}\mid\ldots}{term}\\
+		\produzione{\val}{\LambdaExp{\x}{\te}\mid\ldots}{value}\\
+		\produzione{\infval}{\val\mid\infty}{result}
+	\end{array}
+	\and
+	\infercorule[coa]{\mathstrut}{\eval{e}{\infty}}\defrule[coa]{}
+	\and
+	\inferrule[val]{\mathstrut}{\eval{\val}{\val}}\defrule[val]{}
+	\and
+	\inferrule[app]
+		{\eval{\te_1}{\LambdaExp{\x}{\te}}\quad\eval{\te_2}{{\val}}\quad\eval{\lamsubst{\te}{\x}{{\val}}}{\infval}}
+		{\eval{\te_1\ \te_2}{\infval}}\defrule[app]{}
+	\and
+	\inferrule[l-div]
+		{\eval{\te_1}{\infty}}
+		{\eval{\te_1\ \te_2}{\infty}}\defrule[l-div]{}
+	\and
+	\inferrule[r-div]
+		{\eval{\te_1}{{\val}}\quad\eval{\te_2}{\infty}}
+		{\eval{\te_1\ \te_2}{\infty}}\defrule[r-div]{}
+\end{mathpar}
+}
+\caption{$\lambda$-calculus: syntax and big-step semantics}
+\label{fig:lambda}
+\end{figure}
+%
+In \Cref{ssec:lib_examples} we formalized some basic examples to explain how
+the library can be used. In this section we describe a more significant example of instantiation: 
+an inference system with corules providing a big-step semantics of lambda-calculus including divergence 
+among the possible results \cite{AnconaDZ@oopsla17}, reported in \Cref{fig:lambda}.   
+In this example, corules play a key role: indeed , considering, e.g., the divergent term 
+$\Omega=\AppExp{(\LambdaExp{\x}{\x$ $\x})}{(\LambdaExp{\x}{\x$ $\x})}$, in the standard inductive big-step 
+semantics no result can be derived (an infinite proof tree is needed), as for a stuck term; 
+in the purely coinductive interpretation, any judgment $\eval{\Omega}{\infval}$ would be obtained \cite{LeroyG09}. 
+Since each node of the infinite proof tree for a judgment should also have a finite proof 
+tree using the corules, the coaxiom \refrule{coa} forces to obtain only $\infty$ as result, 
+see \cite{AnconaDZ@oopsla17} for a more detailed explanation.
+\footnote{Other examples of big-step semantic definitions with 
+more sophisticated corules are given in \cite{AnconaDZ@ecoop18,AnconaDRZ20}.}
+
+In rule \refrule{app}, $\infval$ is used for the result, so the rule also covers the case
+when the evaluation of the body of the lambda abstraction diverges.  
+As usual, $\lamsubst{\te}{\x}{\val}$ denotes capture-avoiding substitution. 
+Rules \refrule{l-div} and \refrule{r-div} cover the cases when either $\te_1$ or $\te_2$ diverges,
+assuming  a left-to-right evaluation strategy.
+%
+Terms, values, and results are inductively defined, hence encoded by Agda datatypes. 
+As customary in implementations of lambda-calculus, we use the De Bruijn notation: 
+notably, \lstinline{Term n} is the set of terms with \lstinline{n} free variables. 
+
+\begin{lstlisting}
+data Term (n : $\N$) : Set where
+  var : Fin n $\rightarrow$ Term n
+  lambda : Term (suc n) $\rightarrow$ Term n
+  app : Term n $\rightarrow$ Term n $\rightarrow$ Term n
+
+data Value : Set where 
+  lambda : Term 1 $\rightarrow$ Value
+
+term : Value $\rightarrow$ Term 0
+term (lambda x) = lambda x
+
+data Value$^\infty$ : Set where
+  res : Value $\rightarrow$ Value$^\infty$
+  $\infty$ : Value$^\infty$
+\end{lstlisting}
+
+The universe consists of big-step judgments (pairs consisting of a term and a result). 
+The two inference systems of rules and corules are encoded below.
+%
+\begin{lstlisting}
+U : Set
+U = Term 0 $\times$ Value$^\infty$
+
+data BigStepRN : Set where val app l-div r-div : BigStepRN
+data BigStepCoRN : Set where COA : BigStepCoRN
+
+BigStepIS : IS U
+BigStepIS .Names = BigStepRN
+BigStepIS .rules val = from val$\textrm{-}$r
+BigStepIS .rules app = from app$\textrm{-}$r
+BigStepIS .rules L$\textrm{-}$DIV = from l$\textrm{-}$div$\textrm{-}$r
+BigStepIS .rules R$\textrm{-}$DIV = from r$\textrm{-}$div$\textrm{-}$r
+
+BigStepCoIS : IS U
+BigStepCoIS .Names  = BigStepCoRN
+BigStepCoIS .rules COA = from coa$\textrm{-}$r
+\end{lstlisting}
+
+where \lstinline{BigStepRN} are the rule names, and each rule name has an associated element of \lstinline{FinMetaRule U}. 
+For instance, \lstinline{app$\textrm{-}$r} is given below. 
+The auxiliary function \lstinline{subst}, omitted, implements capture-avoiding substitution. 
+
+\begin{lstlisting}
+app$\textrm{-}$r : FinMetaRule U
+app$\textrm{-}$r .Ctx = Term 0 $\times$ Term 1 $\times$ Term 0 $\times$ Value $\times$ Value$^\infty$
+app$\textrm{-}$r .comp (t1 , t , t2 , v , v$^\infty$) =
+ (t1 , res (lambda t)) :: (t2 , res v) :: 
+ (subst t (term v) , v$^\infty$) :: [] ,
+  -------------------------
+  (app t1 t2 , v$^\infty$) 
+\end{lstlisting}
+
+The big-step semantics can be obtained as the interpretation of the generalized inference system,
+as shown below. We use the flavour with thunks.
+ 
+\begin{lstlisting}
+_$\Downarrow$_ : Term 0 $\rightarrow$ Value$^\infty$ $\rightarrow$ Size $\rightarrow$ Set
+(t $\Downarrow$ v$^\infty$) i = SFCoInd$\llbracket$ BigStepIS , BigStepCoIS $\rrbracket$ (t , v$^\infty$) i
+
+_$\Downarrow_\textrm{i}$_ : Term 0 $\rightarrow$ Value$^\infty$ $\rightarrow$ Set
+t $\Downarrow_\textrm{i}$ v$^\infty$ = Ind$\llbracket$ BigStepIS $\cup$ BigStepCoIS $\rrbracket$ (t , v$^\infty$)
+\end{lstlisting}
+
+The second predicate  (\textrm{i} stands for ``inductive'')  models that a judgment has a finite proof tree in the 
+inference system consisting of rules and coaxiom, and will be used in proofs. 
+
+\begin{figure}[t]
+\framebox[\textwidth]{
+\begin{mathpar}
+		\inferrule[$\beta$]{\mathstrut}{\SmallStep{\AppExp{(\LambdaExp{\x}{\te})}{\val}}{\lamsubst{\te}{\x}{\val}}}
+		\and
+		\inferrule[l-app]{\te_1\ev\te'_1}{\AppExp{\te_1}{\te_2}\ev\AppExp{\te'_1}{\te_2}}
+		\and
+		\inferrule[r-app]{\te_2\ev\te'_2}{\AppExp{\val}{\te_2}\ev\AppExp{\val}{\te'_2}}
+\end{mathpar}
+}
+\caption{$\lambda$-calculus: small-step semantics}
+\label{fig:lambda_ss}
+\end{figure}
+
+Small-step semantics, reported in \Cref{fig:lambda_ss}, can also be obtained appropriately instantiating the library. 
+In this case, the universe consists of small-step judgments, which are pairs of terms. 
+There is only one inference system, where \lstinline{SmallStepRN} are the rule names, 
+and each rule name has an associated element of \lstinline{FinMetaRule U}. 
+
+\begin{lstlisting}
+U : Set
+U = Term 0 $\times$ Term 0
+
+data SmallStepRN : Set where $\beta$ L$\textrm{-}$app R$\textrm{-}$app : SmallStepRN
+  
+SmallStepIS : IS U
+SmallStepIS .Names = SmallStepRN
+SmallStepIS .rules $\beta$ = from $\beta\textrm{-}$r
+SmallStepIS .rules L$\textrm{-}$app = from l$\textrm{-}$app$\textrm{-}$r
+SmallStepIS .rules R$\textrm{-}$app = from r$\textrm{-}$app$\textrm{-}$r
+\end{lstlisting}
+
+For instance, $\beta\textrm{-}$r is given below.
+
+\begin{lstlisting}
+$\beta\textrm{-}$r : FinMetaRule U
+$\beta\textrm{-}$r .Ctx = Term 1 $\times$ Value
+$\beta\textrm{-}$r .comp (t , v) =
+  [] ,
+  -------------------------
+  (app (lambda t) (term v) , subst t (term v))
+\end{lstlisting}
+
+The one-step relation $\Rightarrow$ is obtained as the inductive interpretation of the (standard) inference system.  
+Then, finite computations are modeled by its reflexive and transitive closure $\Rightarrow^\star$, 
+defined using \lstinline{Star} in the Agda library,  as shown below.
+
+\begin{lstlisting}
+_$\Rightarrow$_ : Term 0 $\rightarrow$ Term 0 $\rightarrow$ Set
+t $\Rightarrow$ t' = Ind$\llbracket$ SmallStepIS $\rrbracket$ (t , t')
+
+_$\Rightarrow^\star$_ : Term 0 $\rightarrow$ Term 0 $\rightarrow$ Set
+_$\Rightarrow^\star$_ = Star _$\Rightarrow$_
+\end{lstlisting}
+
+Infinite computations, instead, are modeled by the relation $\Rightarrow^\infty$, 
+coinductively defined by the meta-rule 
+\[
+\inferrule{\te'\Rightarrow^\infty}{\te\Rightarrow^\infty}{\te\Rightarrow\te'}
+\]
+that we encoded in Agda by using thunks.  
+
+\begin{lstlisting}
+data _$\Rightarrow^\infty$ : Term 0 $\rightarrow$ Size $\rightarrow$ Set where
+  step : $\forall$ {t t' i} $\rightarrow$ t $\Rightarrow$ t' $\rightarrow$ Thunk (t' $\Rightarrow^\infty$) i $\rightarrow$ t $\Rightarrow^\infty$ i
+\end{lstlisting}
+
+The proof of equivalence between big-step and small-step semantics is structured as follows, 
+where $\Spec=\{\Pair{\te}{\val}\mid\te\Rightarrow^\star\val\}\cup\{\Pair{\te}{\infty}\mid\te\Rightarrow^\infty\}$. 
+\begin{description}
+\item[Soundness]\
+\begin{description}
+
+\item[$\eval{\te}{\val}$ implies $\te\Rightarrow^\star\val$] We use \lstinline{fcoind$\texttt{-}$to$\texttt{-}$ind} (see \Cref{fig:fcoind-to-ind}), 
+and then reason by induction on the judgment $\te{\Downarrow_\textrm{i}}\val$. 
+That is, we show that $\te\Rightarrow^\star\val$ is closed w.r.t.\ the inference system consisting of rules and corules. 
+As already pointed out for the \lstinline{maxElem} example, the use of \lstinline{fcoind$\textrm{-}$to$\textrm{-}$ind} 
+in the proof corresponds to the fact that, without the coaxiom \refrule{coa}, unsound judgments would be derived, 
+e.g., $\eval{\Omega}{\val}$ for $\val\in\Val$. 
+
+\item[$\eval{\te}{\infty}$ implies $\te\Rightarrow^\infty$]  This implication, instead, would hold even in the purely coinductive case.  
+It can be proved from \emph{progress} and \emph{subject reduction} properties:
+\begin{description} 
+\item[Progress] $\eval{\te}{\infty}$ implies that there exists $\te'$ such that $\te\Rightarrow\te'$.
+\item[Subject reduction] $\eval{\te}{\infty}$ and $\te\Rightarrow\te'$ implies $\eval{\te'}{\infty}$.
+\end{description}
+\end{description}
+\item[Completeness] By bounded coinduction (see \Cref{prop:bcp}).
+\begin{description}
+\item[Boundedness]\
+\begin{description} 
+\item[$\te\Rightarrow^\star\val$ implies $\te{\Downarrow_\textrm{i}}\val$] By induction on the number of steps.
+\item[$\te\Rightarrow^\infty$ implies $\te{\Downarrow_\textrm{i}}\infty$] Trivial, since the coaxiom \lstinline{coa} can be applied.
+\end{description}
+\item[Consistency]  We have to show that, for each $\Pair{\te}{\infval}\in\Spec$,  $\Pair{\te}{\infval}$ 
+is the consequence of a big-step rule where the premises are in $\Spec$ as well.
+We distinguish two cases.
+\begin{description}
+\item[$\te\Rightarrow^\star\val$] By induction on the number of steps. If it is $0$, then $\te$ is a value, 
+hence we can use rule \refrule{val}. Otherwise, $\te$ is an application, and we can use rule \refrule{app}.
+\item[$\te\Rightarrow^\infty$] The term $\te$ is an application $\AppExp{\te_1}{\te_2}.$ We distinguish the following cases:
+\begin{itemize}
+\item $\te_1$ diverges, hence we can use rule \refrule{l-div}
+\item $\te_1$ converges and $\te_2$ diverges, hence we can use rule \refrule{r-div}
+\item both $\te_1$ and $\te_2$ converge, hence we can use rule \refrule{app}.
+\end{itemize}
+Note that in this proof by cases we need to use the \emph{excluded middle} principle, 
+which is defined in the standard library, and  postulated  in our proof. 
+\end{description}
+\end{description}
+\end{description}
+
+
+
+

@@ -1,0 +1,852 @@
+% \section{Technical Appendices and Supplementary Material}
+
+
+
+
+
+
+
+\section{Algorithmic Details of SYMPHONY}\label{alg:symphony}
+% \subsection{Theoretical Proofs}
+% \label{appendix:proofs}
+% \begin{theorem}
+% \label{thm:ensemble-error}
+% Consider a sequential decision task with $T$ steps and a set of $m$ LLMs $\{M_1, M_2, \dots, M_m\}$. At each step $t$, let $a_t^*$ be the correct action. Assume that for every step $t$, there exists at least one model $M_i$ such that $M_i(s_t) = a_t^*$. Then, for any probability distribution $\{p_1, \dots, p_m\}$ with $p_i > 0$ and $\sum_i p_i = 1$, the ensemble model that samples $M_i \sim p_i$ at each step has strictly lower expected total error than any individual model in the ensemble:
+% \[
+% \mathbb{E}[E_{\mathrm{ens}}] < \min_{j \in [m]} E_j
+% \]
+% \end{theorem}
+
+% \begin{proof}
+% Let $e_{i,t} \in \{0,1\}$ be the indicator of whether model $M_i$ makes an error at time $t$, i.e.,
+% \[
+% e_{i,t} = 
+% \begin{cases}
+% 1 & \text{if } M_i(s_t) \ne a_t^* \\
+% 0 & \text{otherwise}
+% \end{cases}
+% \]
+% Then the total error of model $M_j$ is
+% \[
+% E_j = \sum_{t=1}^T e_{j,t}
+% \]
+% The ensemble model samples $M_i \sim p_i$ at each step, and its expected total error is
+% \[
+% \mathbb{E}[E_{\mathrm{ens}}] = \sum_{t=1}^T \sum_{i=1}^m p_i \cdot e_{i,t}
+% \]
+% By the assumption of correct coverage, for every $t$, there exists at least one $i$ such that $e_{i,t} = 0$, and since $p_i > 0$, we have:
+% \[
+% \sum_{i=1}^m p_i \cdot e_{i,t} < 1
+% \]
+% Now consider any model $M_j$. If there exists any $t$ such that $e_{j,t} = 1$ but $\sum_{i=1}^m p_i \cdot e_{i,t} < 1$, then:
+% \[
+% \sum_{t=1}^T \sum_{i=1}^m p_i \cdot e_{i,t} < \sum_{t=1}^T e_{j,t}
+% \Rightarrow \mathbb{E}[E_{\mathrm{ens}}] < E_j
+% \]
+% Since such $t$ must exist unless $M_j$ is correct at all steps (which contradicts the existence of error in practice), the inequality is strict.
+% \end{proof}
+
+
+% \subsection{Pseudocode of SYMPHONY}
+% \label{appendix:pseudocode}
+The Pseudocode for SYMPHONY can be found at Algorithm \ref{alg:main}.
+
+\begin{algorithm}
+\caption{SYMPHONY($s_0,\mathcal{M}, n, D, K, \alpha $)}
+\label{alg:main}
+\begin{algorithmic}[1]
+\Require Initial agent pool \(\mathcal{M} = \{M_1, \dots, M_m\}\), number of generated actions $n$, depth limit $D$, number of roll - outs $K$, exploration weight $\alpha$
+\State Initialize action space $A$,  interaction history $H$
+\State Initialize cumulative utility estimate \(\bar{Q}(M_i) = 0\), selection count \(N_i = 0\) for each agent \(M_i \in \mathcal{M}\), total scheduling decisions \(N_{total} = 0\)
+\State Initialize the search tree with root node \(s_0\) 
+\For{$k \leftarrow 0, \ldots, K - 1$}
+    \For{$d \leftarrow 0, \ldots, D - 1$}
+        \If{$s_t$ is not terminal}
+            \For{$i \leftarrow 1, \ldots, n$}
+                \State Select a modulated score node \(s_t\) for expansion  \Comment{Selection via Eq.~\ref{eq:uct}}
+
+                \State $M^{k}_a \leftarrow  \arg \max_{M_m \in \mathcal{M}} UCB(M_m)$ \Comment{Agent Scheduling via Eq.~\ref{eq:ucb}}
+
+                \State Update \(M^{k}_a\): \(N^a \leftarrow N^a + 1\), \(N_{total}\leftarrow N_{total} + 1\)
+
+                \State Sample $a_t^{(i)} \sim M^{(k)}_a(P_{\text{expansion}}(s_t^{(i)}, h_{t - 1}^{(i)}))$ \Comment{Expansion}
+                
+
+                \State Get $o_t^{(i)}$ from environment, $s_{t+1}^{(i)} \leftarrow o_t^{(i)}$
+
+
+
+                \State $M^{k}_e \leftarrow  \arg \max_{M_m \in \mathcal{M}} UCB(M_m)$ 
+
+                \State \(Z(s_{t}^{(i)}), C(s_{t}^{(i)}) \sim  M^{(k)}_e(P_{\text{evaluation}}(s_{t+1}^{(i)}, h_{t}^{(i)}))\)
+                
+                \State  \(E(C(s_{t+1}^{(i)})) = -C(s_{t+1}^{(i)})\ln C(s_{t+1}^{(i)}) - (1 - C(s_{t +1}^{(i)}))\ln(1 - C(s_{t+1}^{(i)}))\)
+                
+                \State  \(R(s_{t+1}^{(i)}) = Z(s_{t+1}^{(i)}) \cdot (1 - E(C(s_{t+1}^{(i)})))\)
+                \Comment{Entropy-Modulated Evaluation}
+
+                \State $S_{M^{(k)}_i} =  \{ s_{t+1}  \sim  \mathcal{T}(s_t, M^{(k)}_i (s_t, h_{t-1}) )  \} $
+
+
+                
+                \State Update \(M^{k}_e\): \(N^e \leftarrow N^e + 1\), \(N \leftarrow N + 1\), $Q(M^{k}_e) \leftarrow \ { \sum_{s_t \in S_{M^{k}_e}}}R(s_{t}) $
+
+                \State \(h_t^{(i)} \leftarrow (h_{t-1}^{(i)}, s_t^{(i)}, a_t^{(i)}) \in H\)
+                
+                \State Add $s_t^{(i)}$ to children
+            \EndFor
+
+            \State $R \gets \Call{Simulate}{s_t,k, D-\text{d}}$ \Comment{Simulation} 
+            \If{$R$ indicates success}
+            \State return
+            \EndIf
+            
+            
+        \EndIf
+        % 修改这块的反思，按照method
+        \If{$s_t$ is terminal or $d == D-1$}
+            \State Get $o$ from environment
+            \If{$o$ not success}
+                \State $\tau_{fail} \leftarrow(s_0,a_0,\cdot\cdot\cdot,s_T)$
+               
+                \State \(\mathcal{R}^k \leftarrow M^{(k)}_m(P_{\text{reflection}}(\tau_{fail}))\) \Comment{Scheduled agent generates reflection}
+
+                
+                % \State Broadcast reflection \(\mathcal{R}\) to the agent pool \(\mathcal{M}\) 
+                
+                \For{each agent \(M^{(k)}_j \in \mathcal{M}\)}
+                    \State Update agent memory \(\mathcal{M}^{(k+1)}_j = \text{Update}(\mathcal{M}^{(k)}_j, \mathcal{R})\)\Comment{Memory Sharing}
+                \EndFor
+                \State \textbf{Backpropagate} reward $R$ up the visited path  
+    \Comment{Update $Q$ and $N$ per Eq.~\ref{eq:back}}      
+            \EndIf
+        \EndIf
+    \EndFor
+\EndFor
+\Procedure{Simulate}{$s,k, d$}
+  \State $R\leftarrow 0$
+  \For{$i = 1$ \textbf{to} $d$}
+    \If{$s$ is terminal} \textbf{break} \EndIf
+    \State Select agent \(M^{(k)}_{sim}\) and Sample action \(a\): observe $s\leftarrow\text{Env.step}(a)$
+
+    \State $r\leftarrow R(s)$, \quad $R\leftarrow R + r$
+  \EndFor
+  \State \Return $R$
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+
+\section{Theoretical Analysis} \label{appendix:proofs}
+
+\begin{theorem}[Strict Improvement of Agent Pool Sampling]
+Consider an agent pool that samples multiple agents with non-zero probabilities.
+If it satisfies (i) \textbf{correct coverage}, meaning that at each step at least one agent outputs the correct action, and 
+(ii) \textbf{non-triviality}, meaning that no single agent is correct on all steps,
+then the ensemble achieves a strictly lower expected error than any single deterministic agent.
+\end{theorem}
+
+
+\begin{proof}
+Let $\{M_1, \dots, M_m\}$ denote the agents, and let $a_t^*$ be the
+ground-truth action at step $t$.  Let $e_{i,t} \in \{0,1\}$ be the indicator of whether agent $M_i$ makes an error at time $t$, i.e.,
+\[
+e_{i,t} = 
+\begin{cases}
+1 & \text{if } M_i(s_t) \ne a_t^* \\
+0 & \text{otherwise}
+\end{cases}
+\]
+Then, the total error of agent $M_j$ is 
+$E_j = \sum_{t=1}^T e_{j,t}$, 
+while the expected total error of the ensemble, i.e. sampling each $M_i$
+with probability $p_i > 0$, is
+\[
+\mathbb{E}[E_{\mathrm{ens}}] = 
+\sum_{t=1}^T \sum_{i=1}^m p_i \, e_{i,t}.
+\]
+
+By the assumption of correct coverage, for every $t$, there exists at least one $i$ such that $e_{i,t} = 0$, and since $p_i > 0$, we have:
+\[
+\sum_{i=1}^m p_i \cdot e_{i,t} < 1
+\]
+Now consider any model $M_j$. If there exists any $t$ such that $e_{j,t} = 1$ but $\sum_{i=1}^m p_i \cdot e_{i,t} < 1$, then:
+\[
+\sum_{t=1}^T \sum_{i=1}^m p_i \cdot e_{i,t} < \sum_{t=1}^T e_{j,t}
+\Rightarrow \mathbb{E}[E_{\mathrm{ens}}] < E_j
+\]
+By the assumption of non-triviality, such $t$ must exist, the inequality is strict.
+
+
+\end{proof}
+
+% \begin{algorithm}
+% \caption{SYMPHONY($s_0, \mathcal{M}, \alpha, \lambda$)}
+% \label{alg:symphony2}
+% \begin{algorithmic}[1]
+% \Require Initial state \(s_0\), agent pool \(\mathcal{M} = \{M_1, \dots, M_m\}\), exploration - exploitation trade - off hyperparameter \(\alpha\), entropy modulation parameter \(\lambda\)
+% \State Initialize cumulative utility estimate \(\bar{Q}(M_i) = 0\), selection count \(N_i = 0\) for each agent \(M_i \in \mathcal{M}\), total scheduling decisions \(N = 0\)
+% \State Initialize the search tree with root node \(s_0\)
+% \While{Termination condition not met}
+%     \State Select a high - entropy frontier node \(s_t\) for expansion (based on MCTS traversal strategy)
+%     \State Select agent \(M_i^* \in \mathcal{M}\) according to the formula \(\mathrm{UCB}(M_i) = \bar{Q}(M_i) + \alpha \cdot \sqrt{\frac{\ln N}{N_i + 1}}\)
+%     \State Generate action \(a_t = M_i^*(P_{\text{expansion}}(s_t, h_{t - 1}))\), where \(h_{t - 1}\) is the interaction history
+%     \State Obtain new state \(s_{t + 1}\), add \(s_{t + 1}\) to the search tree
+%     \State Evaluate \(V(s_{t + 1}), C(s_{t + 1}) = M_j(P_{\text{evaluation}}(s_{t + 1}, h_t))\), where \(M_j\) is the evaluating agent, \(h_t = (h_{t - 1}, s_t, a_t)\)
+%     \State Calculate entropy \(H(C(s_{t + 1})) = -C(s_{t + 1})\ln C(s_{t + 1}) - (1 - C(s_{t + 1}))\ln(1 - C(s_{t + 1}))\)
+%     \State Modulate score \(Q(s_{t + 1}) = V(s_{t + 1}) \cdot (1 - H(C(s_{t + 1})))\)
+%     \State Update statistics for agent \(M_i^*\): \(N_i^* = N_i^* + 1\), \(N = N + 1\), update \(\bar{Q}(M_i^*)\) (e.g., \(\bar{Q}(M_i^*) = \frac{(N_i^* - 1)\bar{Q}(M_i^*) + Q(s_{t + 1})}{N_i^*}\))
+%     \If{$s_{t + 1}$ is a terminal state}
+%         \If{failure}
+%             \State Generate reflection \(\mathcal{R} = M_k(P_{\text{reflection}}(s_{t + 1}, h_t))\), where \(M_k\) is the agent selected by UCB
+%             \State Broadcast reflection \(\mathcal{R}\) to the agent pool \(\mathcal{M}\)
+%             \For{each agent \(M_j \in \mathcal{M}\)}
+%                 \State Update agent memory \(\mathcal{M}_j = \text{Update}(\mathcal{M}_j, \mathcal{R})\)
+%             \EndFor
+%         \EndIf
+%     \EndIf
+% \EndWhile
+% \State Return the optimal action sequence (based on the evaluation results of the search tree)
+% \end{algorithmic}
+% \end{algorithm}
+
+
+% \documentclass{article}
+% \usepackage{algorithm}
+% \usepackage{algpseudocode}
+
+% \begin{document}
+
+% \begin{algorithm}
+% \caption{SYMPHONY($s_0, \mathcal{M}, \alpha, \lambda, H$)}
+% \label{alg:symphony}
+% \begin{algorithmic}[1]
+% \Require 
+%     \quad Initial state \(s_0\) (Input: Starting state of the decision-making process)
+%     \quad Agent pool \(\mathcal{M} = \{M_1, \dots, M_m\}\) (Input: Collection of diverse LLM-based agents)
+%     \quad Exploration-exploitation hyperparameter \(\alpha\) (Input: Balances agent exploration and exploitation)
+%     \quad Entropy modulation parameter \(\lambda\) (Input: Adjusts confidence scoring in EMCS)
+%     \quad Interaction history set \(H\) (Input: Set of all possible interaction histories \(h_t = (s_0,a_0,\dots,s_t,a_t)\))
+% \Ensure 
+%     \quad Optimal action sequence \(\tau^* = (a_0, a_1, \dots, a_T)\) (Output: Best action trajectory via SYMPHONY's MCTS)
+% \State Initialize for each agent \(M_i \in \mathcal{M}\): cumulative utility \(\bar{Q}(M_i) = 0\), selection count \(N_i = 0\)
+% \State Initialize total scheduling decisions \(N = 0\), search tree with root node \(s_0\)
+% \State Initialize interaction history \(h_{-1} = \emptyset\) (empty history at step 0)
+% \While{Termination condition not met (e.g., max iterations or success)}
+%     \State Select high-entropy frontier node \(s_t\) for expansion (MCTS traversal)
+%     \State Select agent \(M_i^* \in \mathcal{M}\) via UCB: \(\mathrm{UCB}(M_i) = \bar{Q}(M_i) + \alpha \cdot \sqrt{\frac{\ln N}{N_i + 1}}\)
+%     \State Sample action \(a_t \sim M_i^*\left(P_{\text{expansion}}\left(s_t, h_{t-1}\right)\right)\) where \(h_{t-1} \in H\) (interaction history up to step \(t-1\))
+%     \State Execute \(a_t\) to transition to \(s_{t+1}\), add \(s_{t+1}\) to search tree
+%     \State Update interaction history: \(h_t = (h_{t-1}, s_t, a_t) \in H\)
+%     \State Select evaluation agent \(M_j \in \mathcal{M}\) (via UCB or fixed policy)
+%     \State Evaluate node: \(V(s_{t+1}), C(s_{t+1}) = M_j\left(P_{\text{evaluation}}\left(s_{t+1}, h_t\right)\right)\)
+%     \State Compute entropy: \(H(C(s_{t+1})) = -C(s_{t+1})\ln C(s_{t+1}) - (1 - C(s_{t+1}))\ln(1 - C(s_{t+1}))\)
+%     \State Modulate score: \(Q(s_{t+1}) = V(s_{t+1}) \cdot (1 - H(C(s_{t+1})))\)
+%     \State Update agent statistics: \(N_i^* = N_i^* + 1\), \(N = N + 1\), \(\bar{Q}(M_i^*) = \frac{(N_i^* - 1)\bar{Q}(M_i^*) + Q(s_{t+1})}{N_i^*}\)
+%     \If{\(s_{t+1}\) is terminal}
+%         \If{Trajectory fails (\(s_{t+1} \in \mathcal{T}_{\text{fail}}\))}
+%             \State Select reflection agent \(M_k \in \mathcal{M}\) via UCB
+%             \State Generate reflection: \(\mathcal{R} = M_k\left(P_{\text{reflection}}\left(s_{t+1}, h_t\right)\right)\)
+%             \State Broadcast \(\mathcal{R}\) to \(\mathcal{M}\), update each agent's memory: \(\mathcal{M}_j = \text{Update}(\mathcal{M}_j, \mathcal{R})\)
+%         \EndIf
+%         \State Break inner loop and backpropagate \(Q(s_{t+1})\) to root
+%     \EndIf
+% \EndWhile
+% \State Extract optimal action sequence \(\tau^*\) from search tree's highest-\(Q\) path
+% \State \Return \(\tau^*\)
+% \end{algorithmic}
+% \end{algorithm}
+
+
+
+
+
+\section{Monte Carlo Tree Search (MCTS)}% MCTS四个阶段，介绍UCT公式，不要讲我们自己的工作，只讲公认的知识
+\label{appendix:mcts}
+Monte Carlo Tree Search (MCTS) \cite{coulom2006MCTS} is a planning algorithm that balances exploration (trying under-sampled actions) and exploitation (preferring high-reward actions) through iterative tree search. When integrated with LLM-based agents, MCTS leverages the language model’s prior knowledge to guide efficient exploration in sequential decision making.
+
+We continue to use the notation introduced in §\ref{system}—namely, the state space \(S\), action set \(A\), reward function \(R\), policy \(\pi\), and empirical estimates \(Q(s)\), visit counts \(N(s)\), \(N(p)\), as well as the rollout policy \(\pi_{rollout}\) and exploration constant \(c\). MCTS incrementally grows a partial search tree rooted at \(s_0\) by repeating the following four steps until a budget (e.g.\ number of rollouts) is exhausted:
+
+\paragraph{Selection.} 
+Starting from the root, descend the tree by choosing at each visited node \(s\) the action:
+\begin{equation}\label{eq:uct}
+UCT(s) = \arg\max_{s \in  S}\Bigl[ \bar{Q}(s) + c\sqrt{\frac{\ln N(p)}{N(s)}} \Bigr]
+\end{equation}
+Here \( \bar{Q}(s)\)  is the current average return for \(s\), \(N(s)\) the visit count of \(s\),and \(p\) is the parent node of \(s\), and \(c >0 \) balances exploration vs. exploitation.
+
+\paragraph{Expansion.}
+Upon reaching a leaf node \(s_L\) with untried actions, expand by adding one (or more) child node(s) corresponding to an unexplored action \(a \in A\).
+
+\paragraph{Simulation(Rollout).}From the new node \(s_L\) , execute a trajectory of length \(T\) under the lightweight policy \(\pi_{rollout}\), accumulating the discounted sum to estimate the value of \(s_L\)
+\begin{equation}
+R_{\mathrm{sim}} = \sum_{t=0}^{T} \gamma^{t} R(s_{t}, a_{t}), \quad a_{t} \sim \pi_{\mathrm{rollout}}(\cdot \mid s_{t})
+\end{equation}
+
+\paragraph{Backpropagation.}
+Propagate \(R_{sim}\) up the path \((s_0,a_0),\cdot\cdot\cdot,(s_T,a_T)\), updating each edge \(s,a\) encountered:
+\begin{equation}\label{eq:back}
+N(s) \leftarrow  N(s) + 1, \\   Q(s)  \leftarrow Q(s) + \frac{R_{\mathrm{sim}} - Q(s)}{N(s)}\end{equation}
+Under the standard assumptions that every action is eventually explored infinitely often—i.e. \(
+\lim_{N(s) \to \infty} N(s,a) = \infty
+\)
+for all \(a\)—the UCT update guarantees that \(Q(s) \rightarrow Q^{*} (s)\)
+almost surely. In \ref{system}, we demonstrate how replacing the uniform or heuristic components in Selection and Simulation with LLM-derived priors and rollout policies can dramatically improve sample efficiency by guiding search toward semantically promising regions of the tree.
+
+
+\section{Hyperparameter Settings} 
+\label{appendix:parameter_setting}
+To ensure the reproducibility of our results, we detail the hyperparameter settings that led to the best performance across all tasks. Unless otherwise specified, the following parameters are shared across all experiments: the number of rollouts per node is set to $n = 4$; the exploration constant in UCT is set to $c = 2$, following the configuration in LATS~\cite{zhou2024language}; the UCB scheduling parameter is $\alpha = 20$; the temperature for action-sampling agents is set to 0.2 to better follow the input instructions, while the evaluation agents use a temperature of 0 to ensure deterministic value estimation. Under the SYMPHONY-S setting, since it involves three models, the system can be comfortably run on three 24GB RTX 4090 GPUs, with sufficient memory headroom.
+\begin{itemize}
+    \item \textbf{HotpotQA}: We use $K = 10$ candidate actions per step and adopt 3 few-shot examples.
+    \item \textbf{WebShop}: We also set $K = 10$, but use a single few-shot example tailored to the task format.
+    \item \textbf{MBPP}: We follow the setup in LATS and employ $K = 8$ with a zero-shot prompting strategy.
+\end{itemize}
+
+These settings were selected based on empirical validation and strike a balance between performance and computational efficiency.
+
+
+
+
+\section{Token Cost Comparison}
+\label{appendix:cost}
+A potential limitation of tree-structured reasoning is the increased token consumption it incurs.
+we systematically evaluate the computational cost of SYMPHONY in comparison to previous methods \cite{yao2023tree, hao2023reasoning, zhou2024language, gan2025master} , following the evaluation protocol used in the comparison between LATS \cite{zhou2024language} and MASTER \cite{gan2025master} . Specifically, we measure the average number of tokens consumed per question on the HotpotQA dataset. Token usage data for ToT \cite{yao2023tree} and RAP \cite{hao2023reasoning} is obtained from the reproduction results reported by LATS.
+
+
+As shown in the table \ref{tab:token}, even though the proposed method shares the same theoretical sample complexity, in practice,  our method achieves the best task performance while incurring the lowest token cost, effectively addressing the computational overhead typically associated with tree-based reasoning.
+
+
+\begin{table}[ht]
+\centering
+\caption{Comparison of average token consumption per question and task performance on HotpotQA. SYMPHONY achieves the highest task accuracy while incurring the lowest token cost, effectively mitigating the computational overhead of tree-structured reasoning.}
+\label{tab:token} % 修正label命名一致性
+\begin{tabular}{l|ccccc}
+\toprule
+\textbf{Method} & \textbf{Token Consumption $\downarrow$ }  & \textbf{Performance $\uparrow$ }    \\
+\midrule
+ToT\cite{yao2023tree}    & 210,215   & 0.49 \\
+RAP\cite{hao2023reasoning}  & 176,500  & 0.54\\ 
+LATS\cite{zhou2024language} & 173,290  & 0.63\\
+MASTER\cite{gan2025master}  & 10,937   & 0.76\\
+
+\midrule
+\textbf{SYMPHONY-L}   & \textbf{7,906} & \textbf{0.79} \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.4em} % 微调表格与说明间距
+\parbox{0.9\linewidth}{ % 添加parbox包装说明文字
+\footnotesize }
+\end{table} 
+
+% 36985 + 16168 + 12834 + 111455 + 112030 + 64236 +  5768 + 17419 + 23682 =400577  100个hotpotqa的completion_tokens
+%
+%实验结果最终表明，我们实现了降本增效的出发点，减低参数消耗资源的同时，达到了巨大的表现增加。
+
+
+
+% 1、 MCTS中的结点数、轨迹数为何设置小？：通过LATS的实验发现，它在MCTS中的应用，扩展结点数为5，轨迹数为50取得了最好的结果，但这也是它的致命缺点，这会导致非常大的资源消耗和费用，而我们从最开始的本意就是要降本增效，并且我们复现LATS的过程中观察到，很多轨迹数都是在做重复、无意义的探索，因此我们在LATS设置的n=5，k=50的HoptPotQA、Webshop任务上，选用更小的设置。而在MBPP任务上，LATS是sample 5 solutions during expansion for 8 iterations，因此我们直接参照它的参数设置。表格：把ToT、RAP，LATS在n=5，k=50的HotpotQA、LATS在n = 10、n=3的纳入。我们的使用n=3，n=2，n=4
+% 1、 参数研究（n，k）
+% 2、 模型池的模型数量更换，数量多了才好：小模型的1,2，3模型实验。。
+% 3、 UCB中参数确定  -》 越大 随机性更好 效果更好、、 
+% 4、 方法层次的逐一去掉：①去掉模型池，UCB则无意义，则退化回到类似LATS的效果   ②去掉UCB，换成每个模型逐一都用  ③去掉反思
+%  去掉反思更新信息，成功率下降
+% 去掉合并重复结点，尽管不影响任务的成功率，但会造成大量资源上涨
+
+
+% 1、 异构池消融
+% 2、 ucb的\alpha确定，曲线图
+% 3、 参数确定，为何扩展n个结点（给出2,3,4，因为lats是5最好，我们就是要比它省），为何评估分数的参数确定为这个（参考一下master怎么搞的）。 为何k=10，同样是要比lats少，所以不搞大，试了5,10,15
+% 4、 各模块去掉之后的分数：relfexion、评估公式、
+
+\section{Analysis of Architectural Robustness}
+\label{appendix:robustness}
+To demonstrate the robustness of our framework, we conduct complementary extension experiments along two axes: (1) a detailed analysis of node expansion quality within heterogeneous ensembles, and (2) an evaluation of the framework’s modular reliability in both single-agent and reasoning-capable model settings.
+
+\subsection{Expansion Quality in Heterogeneous Ensembles}
+Explicitly labeling individual expansions as beneficial or detrimental is challenging in the absence of task-specific heuristics. Therefore, we adopt the overall task success rate as a practical proxy, where beneficial expansions are those that contribute to successful task completion.
+
+To further validate this, we conducted an additional experiment on WebShop, combining GPT-4 with two weaker models, Llama-3.1-8B-Instruct and Mistral-7B-Instruct-v0.3, and compared the results against the single-agent baseline SYMPHONY (GPT-4). As shown in Table \ref{tab:node_expansions}, despite the lower individual performance of the collaborating models, the heterogeneous ensemble outperformed standalone GPT-4, confirming SYMPHONY’s robustness to model heterogeneity and the effectiveness of its coordination mechanisms.
+
+We also performed a paired-sample t-test to assess the statistical significance of the observed improvements. The ensemble variant exhibited a statistically significant gain in the Score metric compared to the GPT-4-only baseline (two-tailed p = 0.0106; one-tailed p = 0.0053), indicating that SYMPHONY consistently produces higher-quality trajectories characterized by more informative intermediate actions and stronger partial progress. This further confirms that a heterogeneous model pool can facilitate beneficial node expansions.
+
+\begin{table}[ht]
+\centering
+\caption{Comparison of beneficial node expansions on WebShop. Metrics report the average Score and Success Rate (SR). Mistral refers to Mistral-7B-Instruct-v0.3, and Llama refers to Llama-3.1-8B-Instruct.}
+\label{tab:node_expansions} % 修正label命名一致性
+\begin{tabular}{l|cc}
+\toprule
+\textbf{Method} & \textbf{Score $\uparrow$ }  & \textbf{SR $\uparrow$ }    \\
+\midrule
+SYMPHONY(GPT-4)    & 0.80   & 0.60 \\
+SYMPHONY(GPT-4+Mistral+Llama)  & 0.83  & 0.62\\ 
+\bottomrule
+\end{tabular}
+
+\vspace{0.4em} % 微调表格与说明间距
+\parbox{0.9\linewidth}{ % 添加parbox包装说明文字
+\footnotesize }
+\end{table} 
+
+\subsection{Single-Agent and Reasoning Model Reliability}
+To validate that components such as pool-wise memory sharing and entropy-modulated node evaluation can be effectively applied in single-agent settings, and to examine how SYMPHONY interacts with modern reasoning-capable models that internally perform operations such as chain-of-thought(CoT), reflection, and backtracking, we included both a strong single-agent baseline and reasoning-capable models in our experiments.
+
+As shown in Table \ref{tab:single_reason}, under identical experimental settings, SYMPHONY(GPT-4), with GPT-4 serving as the sole agent responsible for both node expansion and evaluation, significantly outperforms standalone GPT-4 as well as prior single-agent baselines. This confirms the effectiveness of the other components within our framework. SYMPHONY(Claude), which integrates Claude-3.5-Sonnet-20240620\cite{anthropic2024claude} as a single agent within our framework, also surpasses both the standalone Claude model and SYMPHONY(GPT-4), confirming that our framework is fully compatible with state-of-the-art reasoning models and does not interfere with their internal inference processes.
+
+These results indicate that the SYMPHONY framework not only adapts effectively to single-agent configurations but also supports powerful reasoning models, further demonstrating the robustness of our architecture.
+
+
+\begin{table}[ht]
+\centering
+\caption{Performance of single-model and reasoning models adapted within our framework across three tasks.}
+\label{tab:single_reason}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{l|ccccc}
+\toprule
+\textbf{Method} & \makecell{\textbf{HotpotQA} \\ \textbf{(EM)}} & \makecell{\textbf{WebShop} \\ \textbf{(Score)}} & \makecell{\textbf{WebShop} \\ \textbf{(SR)}} & \makecell{\textbf{MBPP-Python} \\ \textbf{(pass@1)}} & \makecell{\textbf{MBPP-Rust} \\ \textbf{(pass@1)}} \\
+\midrule
+Claude-3.5-Sonnet & 0.51 & 0.71 & 0.41 & 0.894 & 0.903 \\
+SYMPHONY(Claude) & 0.76 & 0.82 & 0.61 & 0.947 & 0.951 \\
+SYMPHONY (GPT-4) & 0.76 & 0.80 & 0.60 & 0.912 & 0.924 \\
+SYMPHONY-S & 0.59 & 0.82 & 0.56 & 0.927 & 0.946 \\ 
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+
+
+
+
+\section{Model Selection Strategy}
+\label{appendix:alpha}
+% 曲线图展示随着α的变化，任务指标的高低变化
+
+% 为验证动态模型池中探索系数（α）对蒙特卡洛树搜索性能的影响，我们通过调整UCB公式中的\alpha参数，去探究不同强度的探索（Exploration）与利用（Exploitation）权衡。我们在由三个小模型组成的模型池来进行实验。
+
+% 实验结果最终表明，当\alpha较小时，即偏向于最大化利用奖励高的模型，实验得到的分数是向单一模型的表现进行演化，即模型池的调度行为呈现显著的策略收敛趋势，早期偶然获得高奖励的模型（可能因环境噪声或局部最优）被过度利用，导致模型池退化为“伪单一模型系统”，系统陷入单模型的局部最优；当α居中时，对于探索与奖励持平的状态，无法适配多模型协同的动态环境，既无法充分挖掘优势模型的潜力，又不能有效规避次优模型的干扰。
+% 当\alpha较大时，系统展现出随机性驱动的效率跃升，表明系统自发避免了长期依赖单一模型，三模型协作在关键节点触发互补决策
+To evaluate the impact of the exploration coefficient in the dynamic agent pool on the search performance of the SYMPHONY framework, we investigate how varying the \(\alpha\) parameter in the UCB-based scheduling formula influences the trade-off between exploration and exploitation. Specifically, we conduct experiments using SYMPHONY-S across three benchmark datasets.
+
+The experimental results demonstrate that when \(\alpha\) is small - favoring the exploitation of high-performance agents - the system's performance gradually converges toward that of a single dominant agent. In this setting, the scheduler exhibits a strong bias toward early-rewarding agents, which may have benefited from environmental noise or local optima. This leads to overexploitation, effectively degrading the agent pool into a pseudo-single-agent system, and causes the framework to fall into suboptimal local minima. When \(\alpha\) is set to a moderate value, the balance between exploration and exploitation becomes insufficiently responsive to the dynamic nature of multi-model collaboration. The scheduler neither fully capitalizes on the strengths of superior models nor effectively mitigates interference from weaker ones. In contrast, with a larger \(\alpha\), the system benefits from exploration-driven diversity, showing significant gains in efficiency. This behavior suggests a spontaneous avoidance of long-term over-reliance on any single model. The three-model pool is able to trigger complementary decisions at critical nodes, enabling more robust collaborative planning. Based on these findings, we select \(\alpha = 20\) as the optimal configuration.
+
+\begin{figure}[h]
+		\centering
+		\includegraphics[width=0.8\textwidth]{fig/alpha_performance_curve_nature_style4.pdf}
+        \vspace{-10pt}
+		\caption{Comparison of model invocation frequency and final performance on HotpotQA, highlighting the cost-effectiveness of each method.}
+\end{figure}
+
+
+
+
+\section{Search Parameter Ablation}
+\label{appendix:parameter}
+In MCTS, the parameters \(n\)  (the number of child nodes expanded at each step) and \(K\)  (the number of trajectories) are key determinants of the search strategy and computational efficiency. This work is driven by the goal of reducing the high simulation cost inherent in MCTS-based frameworks—an issue prominently seen in RAP \cite{hao2023reasoning} and LATS \cite{zhou2024language} . Compared to RAP, LATS demonstrates better cost-effectiveness, making it a practical baseline for low-resource adaptations.
+
+The parameter \(K\) defines the number of trajectories used to search for solutions. Larger \(K\)  values improve the accuracy of value estimation but significantly increase both computational time and memory usage. LATS conducts ablation studies with  \(K \in \left \{   10, 30, 50  \right \} \), observing the best performance at \(K=50\) and the worst at \(K=10\). To evaluate our method under constrained resources, we adopt the smallest tested setting, \(K=10\). The parameter $n$ controls the branching factor, i.e., the number of child nodes expanded per step. Higher n values allow broader exploration but incur linear increases in rollout and backpropagation costs. LATS reports experiments with  \(n \in \left \{   3, 5, 10  \right \} \), with \(n=5\) yielding the strongest performance. To explore the trade-off under tighter constraints, we limit our experiments to \(n \in \left \{   2, 3, 4  \right \} \). We exclude \(n=1\), as it reduces the search to a single-path traversal, defeating the objective of multi-path reasoning.
+
+Experimental results (Table \ref{tab:abalation_study_parameter}) ultimately confirm the effectiveness of our cost-efficient design: we achieve substantial performance gains while significantly reducing the resource demands of the MCTS-based search process. Notably, our approach refrains from scaling up parameter counts to pursue marginal improvements, as such gains would come at the expense of considerable computational overhead.
+
+\begin{table}
+\centering
+\caption{Parameter study on Number of Branches. }
+\label{tab:abalation_study_parameter}
+\begin{tabular}{@{}lccc@{}}
+    \toprule
+Number of Branches &HotpotQA(EM)$\uparrow$
+&WebShop(SR)$\uparrow$
+&MBPP(pass@1)$\uparrow$\\
+    \midrule
+2  & 0.34 & 0.35 & 0.684\\
+3  & 0.47 & 0.46 & 0.869\\
+4(All datasets used)  
+& 0.59 & 0.56 & 0.927 \\
+    % \midrule
+    % \textbf{Ours:LLMs-S} & \textbf{0.59} \\
+    % \textbf{Ours:LLMs-L} & \textbf{0.79} \\
+    \bottomrule
+\end{tabular}
+\vspace{0.5em}
+\parbox{\linewidth}{
+\footnotesize
+}
+\end{table}
+
+\section{Alternative Diversity Enhancements}
+\label{appendix:diversity}
+To validate the necessity of our dynamically scheduled heterogeneous agent pool, we empirically evaluated two commonly used diversity-enhancement strategies, adversarial prompting and temperature scaling. We found that neither achieved comparable task performance.
+
+For adversarial prompting, we inserted an explicit instruction at each node to discourage similarity with preceding nodes, encouraging divergent strategies through prompts such as: ''The current response must not replicate previous nodes and should demonstrate exploratory thinking`` For temperature scaling, we varied the sampling temperature within the typical range of \([0,2]\), covering outputs from deterministic to highly stochastic, while keeping all other generation parameters constant. We use SYMPHONY-S, a heterogeneous agent pool composed of three locally deployable language models, set the temperature to 0.2, as the baseline configuration. Based on this setup, we systematically adjust the aforementioned diversity methods and evaluate their performance across three benchmark task sets.
+
+Results showed that adversarial prompting, which enforces diversity by design, actually degraded task performance, suggesting that forcing dissimilarity can conflict with task coherence. Temperature adjustments had minimal effect on outcome quality, with the best performance observed at lower temperatures. This indicates that diversity introduced by adjusting individual model outputs does not match the structural diversity achieved through heterogeneous agent coordination. Moreover, in complex decision-making tasks, strict adherence to input instructions is essential, making low-temperature decoding more suitable. Overall, temperature alone proved insufficient for sustaining meaningful diversity under dynamic, multi-turn conditions.
+
+\begin{figure}[h]
+		\centering
+		\includegraphics[width=0.8\textwidth]{fig/many_diversity.pdf}
+        % \vspace{}
+		\caption{Performance comparison of diversity strategies across tasks. }
+\end{figure}
+
+\section{Limitations}\label{appendix:limit}
+Despite its effectiveness across a range of planning and reasoning tasks, SYMPHONY has several limitations. First, the current framework assumes access to structured environments with reliable feedback signals—such as oracle evaluation or deterministic execution traces—which may not extend to more open-ended, dynamic, or noisy real-world settings. Generalizing SYMPHONY to less predictable environments will require more robust uncertainty modeling and adaptive feedback handling.
+
+Second, the framework relies on manually tuned hyperparameters (e.g., trajectory count, expansion width, agent composition), which may require task-specific adjustment to balance performance and cost. This reliance limits out-of-the-box generalization and highlights the need for automated, task-adaptive hyperparameter optimization strategies.
+
+Finally, while SYMPHONY promotes diversity through multi-agent coordination, it does not explicitly address fairness, bias mitigation, or robustness against adversarial inputs. As multi-agent LLM systems gain traction in high-impact applications, incorporating safeguards for ethical reliability and adversarial resilience will be critical in ensuring trustworthy deployment.
+
+
+\section{Broader Impacts}\label{appendix:impacts}
+This work introduces SYMPHONY, a multi-agent planning framework that enhances reasoning and decision-making efficiency in large language model (LLM)-based systems. The proposed framework has the potential for broad positive societal impact. By improving the efficiency and robustness of complex task-solving using LLMs, SYMPHONY can benefit a range of domains including education, scientific research, healthcare, and digital services. In particular, its ability to achieve competitive performance using open-source models and resource-aware deployment configurations makes it accessible for low-resource settings, thereby promoting the democratization of advanced AI capabilities.
+
+However, this work also raises several potential risks. The integration of multiple LLM agents with autonomous planning capabilities may introduce challenges in controllability, transparency, and unintended behavior propagation. Misuse in high-stakes decision-making scenarios—such as legal or financial automation—could amplify existing biases or errors encoded in the underlying models. Moreover, reliance on API-accessible proprietary models (as in SYMPHONY-L) may reinforce concentration of power among a small number of AI providers, raising concerns about accessibility, fairness, and data governance.
+
+
+
+
+
+% 所有实验，都必须扩充到三个数据集
+% relfexion evaluation的拆解。n值：2,3,4的评估
+%新增diversity：每层节点的异样占比：全都不一样，存在两个一样，存在三个一样，存在四个全一样
+%算法伪代码描述。
+
+\section{Case Study}
+\label{appendix:case}
+\subsection{HotpotQA}
+% \lstinputlisting{hotpotqa.txt}
+Solve a question answering task with interleaving Thought, Action, Observation steps. Thought can reason about the current situation, and Action can be three types: \newline
+(1) Search[entity], which searches the exact entity on Wikipedia and returns the first paragraph if it exists. If not, it will return some similar entities to search.\newline
+(2) Lookup[keyword], which returns the next sentence containing keyword in the current passage.\newline
+(3) Finish[answer], which returns the answer and finishes the task.\newline
+Question: Human Error" is the season finale of the third season of a tv show that aired on what network?
+
+
+\textbf{Agent\textsubscript{$\scriptscriptstyle M_1$}}\newline
+Thought 1: I need to search "Human Error" season finale to find out which TV show it belongs to, then determine the network it aired on.\newline
+Action 1: Search["Human Error" season finale]\newline
+Observation 1: Could not find "Human Error" season finale. Similar: ['House season 3', 'Endgame (Star Trek: Voyager) (redirect from Star Trek: Voyager finale)', 'List of House episodes (section Season 1 (2004–05))', 'Chonlathorn Kongyingyong', 'Omar Avila'].
+
+
+\textbf{Agent\textsubscript{$\scriptscriptstyle M_2$}}\newline
+Evaluation: The agent correctly identifies the need to disambiguate the episode title by first determining the TV show associated with "Human Error." However, the current search query is overly narrow and fails to yield relevant results, returning loosely related pages. This suggests a need to refine the search strategy—perhaps by including additional keywords like "TV show" or "House" (if known), or directly querying for episode lists that include "Human Error" as a title. While the reasoning direction is sound, the execution falls short in terms of information retrieval.\newline
+Value Estimate: 0.40\newline
+Confidence Score: 0.55
+
+
+\textbf{Agent\textsubscript{$\scriptscriptstyle M_1$}}\newline
+Thought 2: The previous search for "Human Error" season finale did not yield the desired results, likely because the exact phrasing was not found. I should instead search for "Human Error" TV episode to identify the show it belongs to.\newline
+Action 2: Search["Human Error" TV episode]\newline
+Observation 2: Could not find "Human Error" TV episode. Similar: ['House season 3 (redirect from Human Error (House episode))', 'Human Error (Star Trek: Voyager)', 'Daniela Farinacci', 'Leeanna Walsman', 'List of House episodes'].
+
+
+\textbf{Agent\textsubscript{$\scriptscriptstyle M_0$}}\newline
+Evaluation: This reformulated query shows improved specificity over the previous one by targeting "TV episode" rather than "season finale," and the results include relevant candidates such as House and Star Trek: Voyager. These matches suggest that the agent is now on the right track to identifying the correct show. However, disambiguation is still needed to determine which of the two shows had an episode titled "Human Error" as its season finale.\newline
+Value Estimate: 0.65\newline
+Confidence Score: 0.70
+
+
+
+\textbf{Agent\textsubscript{$\scriptscriptstyle M_0$}}\newline
+Thought 3: The search for "Human Error" TV episode suggests that it is an episode from the show "House." I should now confirm this and then find out on which network "House" aired.\newline
+Action 3: Search[Human Error (House episode)]\newline
+Observation 3: The third season of House (also called House, M.D.) aired on FOX from September 5, 2006[1] to May 29, 2007.[1] Early in the season, House temporarily regains the use of his leg due to ketamine treatment after he was shot in the season two finale.[2] Later in the season, he leaves a stubborn patient in an exam room with a thermometer in his rectum.[3] Because House is unwilling to apologize, the patient, who turns out to be a police detective, starts an investigation around House's Vicodin addiction.[4]. David Morse joined the cast for seven episodes as the detective Michael Tritter.[5] He was cast for the role after working with House creator David Shore on CBS' Hack.[6]. Jane Adams, Erich Anderson, Omar Avila, Jurnee Smollett-Bell, Geoffrey Blake, Tanner Blaze, Ben Bledsoe, Marc Blucas, Mika Boorem, Kacie Borrowman, David Bowe, Paula Cale, Helen Carey, Greg Cipes, Monique Gabriela Curnen, Dabier, Meredith Eaton, Mary Elizabeth Ellis, Shonda Farr, Arabella Field, Colleen Flynn, Lyndsy Fonseca, Thomas Mikal Ford, Patrick Fugit, Carla Gallo, Christopher Gartin, Jason Winston George, Skyler Gisondo, Meta Golding, Meagan Good, Eve Gordon, Joel Grey, Tracy Howe, Carter Jenkins, Dustin Joiner, Heather Kafka, Krista Kalmus, Tory Kittles, Clare Kramer, Deborah Lacey, Nick Lane, John Larroquette, Brian Leckner, Sheryl Lee, Geoffrey Lewis, Braeden Lemasters, Tess Lina, Jodi Long, Donald Sage Mackey, Bailee Madison, Wendy Makkena, Stephan Markle, Dave Matthews, Shyann McClure, Michael Medico, Joel David Moore, Zeb Newman, Jenny O'Hara, Slade Pearce, Piper Perabo, Adina Porter, Kathleen Quinlan, Annie Quinn, Anne Ramsay, Mercedes Renard, Jake Richardson, Tyson Ritter, Jenny Robertson, Alan Rosenberg, Vyto Ruginis, Jessy Schram, Dustin Seavey, Alyssa Shafer, Kurtwood Smith, Tony Spiridakis, Josh Stamberg, Cassi Thomson, Cooper Thornton, Beverly Todd, Mandy June Turpin, Raviv Ullman, Pruitt Taylor Vince, Jascha Washington, Damien Dante Wayans, Katheryn Winnick and Jamison Yang.. Season three's most-viewed episode was "One Day, One Room", which was watched by almost 27.4 million viewers.[7] An average 19.4 million viewers watched season three of House, making it the seventh most-watched show of the 2006–2007 television season.[8]. Jennifer Morrison and Joel Grey submitted the episode "Informed Consent" for consideration in the categories of Outstanding Supporting Actress in a Drama Series and Outstanding Guest Actor in a Drama Series respectively at the 59th Primetime Emmy Awards.[9] Neither was nominated..
+
+
+\textbf{Agent\textsubscript{$\scriptscriptstyle M_2$}}\newline
+Evaluation: The agent’s current action successfully confirms that “Human Error” is indeed an episode from House, and provides the key information that House aired on FOX. This marks a critical turning point in the reasoning trajectory, as it directly addresses both parts of the original instruction. The query demonstrates precise targeting and resolves prior ambiguity. Though the observation is verbose, the relevant evidence is clearly retrievable, supporting a confident next step toward answer extraction.\newline
+Value Estimate: 0.92\newline
+Confidence Score: 0.85
+
+
+\textbf{Agent\textsubscript{$\scriptscriptstyle M_1$}}\newline
+Thought 4: The observation confirms that "Human Error" is an episode of the TV show "House." Now, I need to find out on which network "House" aired.\newline
+Action 4: Search[House (TV show) network]'
+
+
+\textbf{Agent\textsubscript{$\scriptscriptstyle M_1$}}\newline
+Evaluation: The agent takes a natural follow-up step to verify the broadcasting network of House, transitioning smoothly from content validation to final answer retrieval. Given that the previous observation already included the relevant network information (FOX), this action is slightly redundant. However, it may still reinforce answer certainty, especially in ambiguous or noisy retrieval environments. The move reflects cautious reasoning but could be optimized for efficiency.\newline
+Value Estimate: 0.78\newline
+Confidence Score: 0.70
+
+
+\textbf{Agent\textsubscript{$\scriptscriptstyle M_0$}}\newline
+Thought 4: The search confirmed that "Human Error" is an episode from the TV show "House." Now, I need to find out which network "House" aired on to answer the question.\newline
+Action 4: Finish[FOX]'
+
+
+
+\textbf{Agent\textsubscript{$\scriptscriptstyle M_2$}}\newline
+Evaluation: The agent effectively synthesizes information gathered across previous steps and delivers a final answer consistent with the original question. By selecting Finish[FOX], it correctly identifies the network on which House aired, demonstrating accurate extraction, integration of episodic details, and goal alignment. This reflects a strong end-to-end reasoning trajectory with minimal unnecessary exploration..\newline
+Value Estimate: 0.95\newline
+Confidence Score: 0.92
+
+% \textbf{Reflection Example:}\newline
+% I appeared to have retrieved the correct information about The Oberoi Family and the location of it's head office, and provided a corresponding answer. However this answer does not exactly match the ground truth answer so I should try a different wording, such as Delhi.
+\subsection{WebShop}
+% \lstinputlisting{webshop.txt}
+Solve shopping tasks by alternating between Observation and Action steps. The observations provided by the environment help infer the current situation. Actions are divided into two types:\newline
+(1) search[entity]: Search for the exact entity on the product website. If it exists, return products that match the entity's requirements.\newline
+(2) click[keywords]: Click on keywords listed inthe latest description returned to the page. \newline
+Instruction: i would like a 3 ounce bottle of bright citrus deodorant for sensitive skin, and price lower than 50.00 dollars 
+
+
+\textbf{Agent\textsubscript{$\scriptscriptstyle M_1$}}\newline
+Action: search[3 ounce bright citrus deodorant sensitive skin]\newline
+Observation: \newline
+[Back to Search] \newline
+Page 1 (Total results: 50) \newline
+[Next >] \newline
+[B078GWRC1J] Bright Citrus Deodorant by Earth Mama | Natural and Safe for Sensitive Skin, Pregnancy and Breastfeeding, Contains Organic Calendula 3-Ounce 
+\$10.99 \newline
+[B078GTKVXY] 
+Ginger Fresh Deodorant by Earth Mama | Natural and Safe for Sensitive Skin, Pregnancy and Breastfeeding, Contains Organic Calendula 3-Ounce 
+\$10.99 \newline
+[B08KBVJ4XN] 
+Barrel and Oak - Aluminum-Free Deodorant, Deodorant for Men, Essential Oil-Based Scent, 24-Hour Odor Protection, Cedar \& Patchouli Blend, Gentle on Sensitive Skin (Mountain Sage, 2.7 oz, 2-Pack) 
+\$15.95 
+
+
+\textbf{Agent\textsubscript{$\scriptscriptstyle M_2$}}\newline
+Evaluation: The search action aligns well with the user's instruction, effectively capturing all key constraints—“3 ounce,” “bright citrus,” “deodorant,” and “sensitive skin.” The top result, Bright Citrus Deodorant by Earth Mama, is a direct match in terms of scent, size, and suitability for sensitive skin, and it is priced well below the \$50 limit. Additional results, while slightly divergent in scent or packaging, also remain within the acceptable range and provide relevant alternatives. This suggests that the current node is promising for achieving the user’s goal with minimal correction required in future steps.\newline
+Value Estimate: 0.92\newline
+Confidence Score: 0.88
+
+
+
+\textbf{Agent\textsubscript{$\scriptscriptstyle M_0$}}\newline
+Action: think[B078GWRC1J] The product’s description aligns well with the user’s specified requirements, indicating a strong match in terms of both features and preferences. This suggests that the current reasoning trajectory is effective. The agent proceeds by clicking on the item to access detailed information and verify its suitability before making a final decision.
+Observation:\newline
+[Back to Search] \newline
+Page 1 (Total results: 50) \newline
+[Next >] \newline
+[B078GWRC1J] Bright Citrus Deodorant by Earth Mama | Natural and Safe for Sensitive Skin, Pregnancy and Breastfeeding, Contains Organic Calendula 3-Ounce 
+\$10.99 \newline
+[B078GTKVXY] 
+Ginger Fresh Deodorant by Earth Mama | Natural and Safe for Sensitive Skin, Pregnancy and Breastfeeding, Contains Organic Calendula 3-Ounce 
+\$10.99 \newline
+[B08KBVJ4XN] 
+Barrel and Oak - Aluminum-Free Deodorant, Deodorant for Men, Essential Oil-Based Scent, 24-Hour Odor Protection, Cedar \& Patchouli Blend, Gentle on Sensitive Skin (Mountain Sage, 2.7 oz, 2-Pack) 
+\$15.95 
+
+
+\textbf{Agent\textsubscript{$\scriptscriptstyle M_1$}}\newline
+Evaluation: The agent’s decision to engage in reflective reasoning (think[B078GWRC1J]) demonstrates goal-aware deliberation. It identifies that the top-listed item matches the user's constraints on scent, size, skin sensitivity, and price. The action prioritizes validation over haste by choosing to inspect the product further, which is a prudent step given that detailed attributes—such as ingredients or user reviews—often influence final suitability. This intermediate reflection helps prevent premature commitment and strengthens decision robustness.\newline
+Value Estimate: 0.95\newline
+Confidence Score: 0.91
+
+
+\textbf{Agent\textsubscript{$\scriptscriptstyle M_0$}}\newline
+Action: click[B078GWRC1J]\newline
+Observation: \newline
+[Back to Search] \newline
+[< Prev] \newline
+scent [assorted scents][bright citrus][calming lavender][ginger fresh][simply non-scents]
+size [travel set (4-pack)][3 ounce (pack of 1)][3-ounce (2-pack)]
+Bright Citrus Deodorant by Earth Mama | Natural and Safe for Sensitive Skin, Pregnancy and Breastfeeding, Contains Organic Calendula 3-Ounce 
+Price: \$10.99 \newline
+Rating: N.A. \newline
+[Description] \newline
+[Features] \newline
+[Reviews] \newline
+[Buy Now]\newline
+
+
+\textbf{Agent\textsubscript{$\scriptscriptstyle M_1$}}\newline
+Evaluation: The agent’s decision to click[B078GWRC1J] is both timely and effective. After identifying a strong candidate in the search results, this action transitions the agent into product-level inspection—an essential move for verifying detailed specifications before commitment. The observation confirms multiple scent and size options, with the “bright citrus” 3-ounce variant clearly available at \$10.99, well within budget. The agent now has access to rich product metadata (e.g., description, features), which supports final validation or comparison if needed. This action reflects a coherent and informed progression in the planning trajectory.\newline
+Value Estimate: 0.93\newline
+Confidence Score: 0.90
+
+
+\textbf{Agent\textsubscript{$\scriptscriptstyle M_0$}}\newline
+Action: click[bright citrus]\newline
+Observation: You have clicked bright citrus. 
+
+
+\textbf{Agent\textsubscript{$\scriptscriptstyle M_0$}}\newline
+Evaluation: The action click[bright citrus] shows the agent verifying or reinforcing the selected product variant—specifically the scent preference. While this step may seem redundant given that the desired scent was already visible, it ensures explicit confirmation before finalizing the purchase. This cautious move reflects a preference for certainty in decision-making, though it could slightly delay progress if overused.\newline
+Value Estimate: 0.80\newline
+Confidence Score: 0.72
+
+
+\textbf{Agent\textsubscript{$\scriptscriptstyle M_2$}}\newline
+Action: click[3 ounce (pack of 1)]\newline
+Observation: You have clicked 3 ounce (pack of 1). 
+
+
+\textbf{Agent\textsubscript{$\scriptscriptstyle M_2$}}\newline
+Evaluation: The action click[3 ounce (pack of 1)] confirms the exact size requirement specified in the instruction. This is a critical verification step, as selecting the wrong size (e.g., multi-pack or travel set) would violate the user’s constraints. While the size was already visible, this explicit confirmation ensures the agent is on track to meet all specified conditions before purchase.\newline
+Value Estimate: 0.85\newline
+Confidence Score: 0.78
+
+
+\textbf{Agent\textsubscript{$\scriptscriptstyle M_1$}}\newline
+Action: click[Buy Now]
+
+
+\textbf{Agent\textsubscript{$\scriptscriptstyle M_0$}}\newline
+Evaluation: The action click[Buy Now] represents the final execution step, completing the task with a product that satisfies all user constraints—scent, size, skin sensitivity compatibility, and budget. Given the prior confirmations and detailed alignment with the instruction, this decision reflects a confident, goal-aligned conclusion to the reasoning trajectory.\newline
+Value Estimate: 0.95\newline
+Confidence Score: 0.90
+
+% \textbf{Reflection Example:}\newline
+% The failure in the previous trial occurred because the action to directly click “Buy Now” was executed without first ensuring that the selected item met all the specified criteria, such as being a long clip-in hair extension, natural looking, and priced under \$40.00. The initial action bypassed the necessary steps of verifying these details.
+
+\subsection{MBPP}
+You are an AI Python assistant. You will be given your previous implementation of a function, a series of unit tests results, and your self-reflection on your previous implementation. Write your full implementation (restate the function signature).
+
+Given a list of integers nums and an integer target, find the longest contiguous subarray such that the sum of its elements is less than or equal to target. If multiple such subarrays exist with the same maximum length, return the one that appears first. Return the subarray itself (not just its length or indices).
+
+
+\textbf{Agent\textsubscript{$\scriptscriptstyle M_0$}}\newline
+Thought 1: To find the longest contiguous subarray whose sum is less than or equal to the target, I can use a sliding window approach. I’ll expand the window to the right, and when the sum exceeds the target, I’ll shrink it from the left. I’ll keep track of the maximum length window found and return the corresponding subarray.\newline
+Action 1: 
+\begin{lstlisting}
+def longest_subarray_with_sum_limit(nums: List[int], target: int) -> List[int]:
+    n = len(nums)
+    left, right = 0, 0
+    max_length = 0
+    current_sum = 0
+    result = []
+    while right < n:
+        current_sum += nums[right]
+        while current_sum > target:
+            current_sum -= nums[left]
+            left += 1
+        if right - left + 1 >= max_length:
+            max_length = right - left + 1
+            result = nums[left:right+1]
+        right += 1
+    return result
+\end{lstlisting}
+Observation:\newline
+[unit test results]:
+\begin{lstlisting}
+Tests passing:
+assert longest_subarray_with_sum_limit([1, 2, 3, 4, 5], 8) == [1, 2, 3]
+assert longest_subarray_with_sum_limit([1, 2, 3, 4, 5], 15) == [1, 2, 3, 4, 5]
+assert longest_subarray_with_sum_limit([1, -1, 2, -2, 3, -3], 2) == [1, -1, 2, -2, 3]
+assert longest_subarray_with_sum_limit([], 10) == []
+assert longest_subarray_with_sum_limit([], 0) == []
+assert longest_subarray_with_sum_limit([], -5) == []  
+Tests failing:
+assert longest_subarray_with_sum_limit([5, 6, 7, 8, 9], 4) == [] # output: [5]
+\end{lstlisting}
+
+\textbf{Agent\textsubscript{$\scriptscriptstyle M_2$}}\newline
+Evaluation: The implementation failed the where no subarray fulfills the condition. The issue in the implementation is due to the use of >= instead of > in the condition to update the result. Because of this, it returns a subarray even when the sum is greater than the target, as it still updates the result when the current subarray length is equal to the previous longest subarray length. To overcome this error, we should change the condition to only update the result when the current subarray length is strictly greater than the previous longest subarray length. This can be done by replacing >= with > in the condition.\newline
+Value Estimate: 0.85\newline
+Confidence Score: 0.90
+
+
+\textbf{Agent\textsubscript{$\scriptscriptstyle M_1$}}\newline
+Thought 2: To optimize the search for the longest subarray with sum $\leq $ target, I can pre-expand the window greedily as long as the sum remains within the limit. Then, I’ll proceed with the standard sliding window approach: adding elements to the right, and shrinking from the left when the sum exceeds the target. I’ll track and update the longest valid subarray found.\newline
+Action 2: 
+\begin{lstlisting}
+def longest_subarray_with_sum_limit(nums: List[int], target: int) -> List[int]:
+    n = len(nums)
+    left, right = 0, 0
+    max_length = 0
+    current_sum = 0
+    result = []
+    while current_sum + nums[right] <= target:
+        current_sum += nums[right]
+        right += 1
+    while right < n:
+        current_sum += nums[right]
+        while current_sum > target:
+            current_sum -= nums[left]
+            left += 1
+        if right - left + 1 > max_length:
+            max_length = right - left + 1
+            result = nums[left:right+1]
+        right += 1
+    return result
+\end{lstlisting}
+Observation:\newline
+[unit test results]:
+\begin{lstlisting}
+Tests passing:
+assert longest_subarray_with_sum_limit([], 10) == []
+assert longest_subarray_with_sum_limit([], 0) == []
+assert longest_subarray_with_sum_limit([], -5) == []
+Tests failing:
+assert longest_subarray_with_sum_limit([1, 2, 3, 4, 5], 8) == [1, 2, 3] # output: 
+list index out of range
+assert longest_subarray_with_sum_limit([1, 2, 3, 4, 5], 15) == [1, 2, 3, 4, 5] # output: 
+list index out of range
+assert longest_subarray_with_sum_limit([5, 6, 7, 8, 9], 4) == [] # output: 
+list index out of range
+assert longest_subarray_with_sum_limit([1, -1, 2, -2, 3, -3], 2) == [1, -1, 2, -2, 3] # output: 
+list index out of range
+\end{lstlisting}
+
+\textbf{Agent\textsubscript{$\scriptscriptstyle M_1$}}\newline
+Evaluation: The implementation failed 4 out of the 7 test cases due to an IndexError. The issue stems from the while loop while current\_sum + nums[right] <= target:, which directly accesses nums[right] without checking if right is within the bounds of the list. This results in a runtime error when right goes beyond the list length. To overcome this error, we need to add a bounds check for the right variable in the mentioned while loop. We can modify the loop condition to while right < len(nums) and current\_sum + nums[right] <= target:. This change will ensure that we only access elements within the bounds of the list, thus avoiding the IndexError.\newline
+Value Estimate: 0.80\newline
+Confidence Score: 0.85
+
+
+\textbf{Agent\textsubscript{$\scriptscriptstyle M_2$}}\newline
+Thought 3: Negative numbers break the standard sliding-window pattern, so I switch to a prefix-sum scan that works for any sign.
+For each start index I reuse prefix sums to test only subarrays that can beat the current best length; this is O(n²) in the worst case but small and safe for the given tests, and it guarantees the earliest longest match.\newline
+Action 3: 
+
+\begin{lstlisting}
+def longest_subarray_with_sum_limit(nums: List[int], target: int) -> List[int]:
+    """
+    Return the earliest longest contiguous sub-array whose sum is <= target.
+    If no such sub-array exists, return an empty list.
+    """
+    n = len(nums)
+    if n == 0:
+        return []
+
+    # Pre-compute prefix sums: pref[i] = sum(nums[:i])
+    pref = [0] * (n + 1)
+    for i in range(n):
+        pref[i + 1] = pref[i] + nums[i]
+
+    best_len = 0
+    best_start = 0
+
+    for start in range(n):
+        # Only try end positions that can beat current best_len
+        for end in range(start + best_len, n):
+            if pref[end + 1] - pref[start] <= target:
+                cur_len = end - start + 1
+                if cur_len > best_len:
+                    best_len = cur_len
+                    best_start = start
+
+    return nums[best_start : best_start + best_len]
+\end{lstlisting}
+
+Observation: \newline
+[unit test results]:
+\begin{lstlisting}
+Tests passing:
+assert longest_subarray_with_sum_limit([], 10) == []
+assert longest_subarray_with_sum_limit([], 0) == []
+assert longest_subarray_with_sum_limit([], -5) == []
+assert longest_subarray_with_sum_limit([1, 2, 3, 4, 5], 8) == [1, 2, 3]
+assert longest_subarray_with_sum_limit([1, 2, 3, 4, 5], 15) == [1, 2, 3, 4, 5]
+assert longest_subarray_with_sum_limit([5, 6, 7, 8, 9], 4) == []
+assert longest_subarray_with_sum_limit([1, -1, 2, -2, 3, -3], 2) == [1, -1, 2, -2, 3]
+Tests failing:
+\end{lstlisting}
+
+
+\textbf{Agent\textsubscript{$\scriptscriptstyle M_0$}}\newline
+Evaluation: The implementation employs a sliding window (two-pointer) technique to efficiently identify the longest contiguous subarray whose sum does not exceed the given target. It successfully handles edge cases such as empty input, all elements exceeding the target, and arrays with negative numbers—passing all provided test cases. The algorithm maintains a moving sum and shrinks the window as necessary, ensuring no out-of-bound errors or infinite loops. The structure is clean and robust. One limitation is that if there are multiple subarrays of the same maximum length, it may not always return the earliest one. However, since the task does not explicitly require this, the current approach is considered correct and effective. \newline
+Value Estimate: 0.95\newline
+Confidence Score: 0.97
+
+\textbf{Reflection Example:}\newline
+I appeared to have retrieved the correct information about The Oberoi Family and the location of it's head office, and provided a corresponding answer. However this answer does not exactly match the ground truth answer so I should try a different wording, such as Delhi.
+
+The failure in the previous trial occurred because the action to directly click “Buy Now” was executed without first ensuring that the selected item met all the specified criteria, such as being a long clip-in hair extension, natural looking, and priced under \$40.00. The initial action bypassed the necessary steps of verifying these details.
+
+In a previous attempt, I checked if a string was a palindrome by comparing it to its reverse, but failed to normalize the string (ignoring case and non-alphanumeric characters). This caused errors for inputs like "A man, a plan, a canal: Panama". Proper preprocessing with lowercase conversion and filtering non-alphanumeric symbols would have avoided this issue.
+
+
+

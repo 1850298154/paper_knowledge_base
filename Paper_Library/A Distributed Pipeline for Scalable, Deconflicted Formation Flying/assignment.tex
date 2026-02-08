@@ -1,0 +1,112 @@
+
+\section{\edit{Distributed} Task Assignment} \label{sec:assign}
+
+
+The goal of task assignment is to uniquely allocate each UAV to a point in the desired formation.
+A natural objective for this task is to minimize the overall distance from the UAVs to their assignments in the desired formation.
+We are interested in the final 3D geometric shape rather than the exact location and yaw of the end formation.
+To this effect, we allow a rotation $R$ around the $z$-axis, and translation $t$ of the desired formation coordinates that minimize the overall distance from the UAVs to the rotated and translated desired formation.
+More precisely, our objective is to find the assignment map $\sigma$ that solves
+\begin{equation}\label{eq:assign_prob}
+\begin{aligned}
+\underset{\substack{R\in\mathcal{R}_z,\;t\in\br^3\\\sigma\in\mathrm{S}_n}}{\text{minimize}} && \sum_{i=1}^{n} \| q_i - (R \, p_{\sigma(i)}+t) \|^2,
+\end{aligned}
+\end{equation}
+where $q_i$ denotes the UAV positions, 
+$\mathrm{S}_n$ is the symmetric group of all permutations from the set $\{1,\dots, n\}$ to itself,
+and $\mathcal{R}_z$ is the set of rotation matrices around the $z$-axis. Recall that the 
+$z$-axes of UAV body frames are assumed to be aligned, as per Section~\ref{sec:motionplanning}.
+
+
+\edit{Three challenges arise in finding a distributed solution for~\eqref{eq:assign_prob}.
+First, the objective of \eqref{eq:assign_prob} includes the positions of all UAVs, whereas each UAV only obtains the positions of its neighbors.
+Second, the UAV body frames are not aligned and the UAVs only know the transformations between their body frames and their neighbors.  
+Lastly, \eqref{eq:assign_prob} is a non-convex mixed integer program, for which finding the global optimizer becomes intractable for large $n$.} 
+As computational efficiency and scalability are of utmost concern for UAV platforms, 
+we settle with obtaining a suboptimal answer via a coordinate descent approach and an auction assignment strategy.
+This approach is inspired by \cite{macdonald2011multi}, which in contrast uses a centralized Hungarian algorithm for assignment.
+Every iteration of our algorithm consists of an \textit{alignment} stage and an \textit{assignment} stage, where the assignment is fixed as we solve for an alignment, and vice versa.
+
+
+\subsection{Alignment}
+
+Given an assignment $\sigma^*$ (e.g., identity assignment ${\sigma^*(i)=i}$ for every new formation, or prior assignment computed for the same formation), UAV $i$ solves a \edit{distributed} formulation of \eqref{eq:assign_prob} given by
+\begin{equation}\label{eq:assign_prob_fix_sigma}
+\begin{aligned}
+\underset{\substack{R_i\in \mathcal{R}_z,\;t_i\in\br^3}}{\text{minimize}} && \sum_{j\in\mathcal{N}'_i} \| q_j - (R_i \, p_{\sigma^*(j)} + t_i) \|^2,
+\end{aligned}
+\end{equation}
+where ${\mathcal{N}}'_i \eqdef \mathcal{N}_i\cup \{i\}$, and positions $q_j$ are in UAV $i$'s start frame.
+In \eqref{eq:assign_prob_fix_sigma}, UAV $i$ aims to align the desired formation to minimize the distance to its own and neighbors' positions based on the given assignment $\sigma^*$.   
+Fig.~\ref{fig:alignment} gives an illustrative example of this stage.
+Problem \eqref{eq:assign_prob_fix_sigma} is the well-known point cloud alignment problem, for which the optimal solution $\left(R^*_i,t^*_i\right)$ 
+is obtained from Arun's method~\cite{arun1987least}  using the projection of $q_j$ and $p_{\sigma^*(j)}$ on the {$x$-$y$ plane} for the rotation. %
+
+
+
+\begin{figure} [t!]
+	\centering
+	\includegraphics[width=\columnwidth]{Figs/alignment4.pdf}    
+		\caption{
+		Illustrative 2D alignment example with four vehicles from UAV~1's perspective.
+        UAV $4$ is not shown because it does not communicate with UAV $1$.
+		\textbf{(left)}~New formation graph, UAV $1$ and its neighbors before the alignment.
+		\textbf{(right)}~Aligned formation 
+		based on UAV $1$, its neighbors and their corresponding formation points. 
+		The formation point associated to UAV 4 is faded to indicate that UAV 1 does not have information about it.
+		}	
+	\label{fig:alignment}
+\end{figure}
+
+
+
+
+
+
+\subsection{Assignment}
+
+In this stage, the UAVs aim to collaboratively find an assignment based on the results obtained from their alignment stage. The assignment problem is formulated as
+\begin{equation}\label{eq:assign_prob_fix_Rt}
+\begin{aligned}
+\underset{\substack{\sigma\in\mathrm{S}_n}}{\text{minimize}} && \sum_{i=1}^{n} \| q_i - (R_i^* \, p_{\sigma(i)}+t_i^*) \|^2.
+\end{aligned}
+\end{equation}
+Problem~\eqref{eq:assign_prob_fix_Rt} is a linear sum assignment problem that can be solved optimally by methods such as the distributed Hungarian algorithm~\cite{giordani2010distributed, chopra2017distributed}, which converges in $\text{O}(n^3)$ iterations. 
+Due to onboard resource constraints, we trade optimality for computational efficiency by using our prior work, the consensus-based auction algorithm (CBAA)~\cite{choi2009consensus}. 
+CBAA is guaranteed to converge in at most $n d$ iterations, where $d$ is the diameter of the formation graph, $\mathcal{G}$.
+
+
+
+
+To bring \eqref{eq:assign_prob_fix_Rt} into the standard form for applying CBAA, let binary variables $x_{ij}$ represent the assignment $\sigma$, where ${x_{ij} = 1}$ if ${\sigma(i) = j}$ and $0$ otherwise.
+Further, let ${c_{ij} \eqdef 1\,/\,\| q_i-(R_i^* \, p_j + t_i^*) \|^2}$ denote the positive score for assigning UAV $i$ to formation point $j$. In practice, a small positive number can be added to the denominator of $c_{ij}$ to avoid division by zero.
+It is straightforward to show that~\eqref{eq:assign_prob_fix_Rt} can be expressed as the integer program
+\begin{equation}\label{eq:cbaa_problem}
+\begin{aligned}
+\underset{x_{ij} \in \{0,1\}}{\text{maximize}} &
+&&\sum_{i,j=1}^{n} c_{ij} \,x_{ij}, \\
+\text{subject to}
+&&& \textstyle\sum_{i=1}^{n} x_{ij} = 1, \; \forall_{j} \\
+&&& \textstyle\sum_{j=1}^{n} x_{ij} = 1,  \; \forall_{i} 
+\end{aligned}
+\end{equation}
+where the constraints on $x_{ij}$ enforce conflict-free and one-to-one assignment captured by $\sigma \in S_n$ in~\eqref{eq:assign_prob_fix_Rt}, and maximizing~\eqref{eq:cbaa_problem} is equivalent to minimizing the overall distance from the UAVs to the rotated and translated formation in~\eqref{eq:assign_prob_fix_Rt}.
+
+
+
+
+
+    
+
+
+
+In executing CBAA, UAV $i$ stores and updates its own assignment and a list of winning bids (initialized as zeros) for all formation points. Each iteration of CBAA consists of an auction phase and a consensus phase. 
+In the auction phase, UAV $i$ determines which formation point it would like to be assigned to in three steps: (1) check if any formation point $p_j$ produces a score $c_{ij}$ higher than its current winning bid; (2) of those formation points, set $x_{ij}=1$ for the $p_j$ that produces the highest score; (3) update the bid for the winning $p_{j}$ with new score $c_{ij}$.
+In the consensus phase, vehicles converge on a common winning bid list. UAV $i$ exchanges its winning bid list with its neighbors and updates its list with the highest values from its own and all received lists. It sets $x_{ij}=0$ if the new winning bid for $p_j$ is higher than $c_{ij}$, implying that a different vehicle has been assigned to $p_j$.
+
+Since CBAA is distributed, no central authority exists to affirm convergence.
+Therefore, we enforce a synchronous execution to terminate the algorithm in $n d$ iterations, which is the maximum number of iterations required to guarantee convergence. 
+The final assignment is recovered by letting $\sigma^*(i)=j$ for each $x_{ij}=1$.
+CBAA guarantees a conflict-free assignment even though UAVs \edittwo{do not have a common reference frame} and may have inconsistent position estimates or different $R^*_i$ and $t^*_i$ for alignment.
+\edittwo{We emphasize that although $c_{ij}$ is calculated by each UAV using only local knowledge, CBAA assigns UAVs to formation points without conflict.}
+Further, it retains at least $50\%$ of the optimal performance; that is, given the optimal overall score $C^*$ of \eqref{eq:cbaa_problem} and the $C$ resulted from CBAA, $C/C^* \geq 0.5$. 

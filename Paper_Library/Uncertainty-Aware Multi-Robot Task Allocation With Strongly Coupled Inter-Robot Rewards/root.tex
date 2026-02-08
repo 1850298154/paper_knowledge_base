@@ -1,0 +1,622 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%2345678901234567890123456789012345678901234567890123456789012345678901234567890
+%        1         2         3         4         5         6         7         8
+
+\documentclass[letterpaper, 10 pt, conference]{ieeeconf}  % Comment this line out if you need a4paper
+
+%\documentclass[a4paper, 10pt, conference]{ieeeconf}      % Use this line for a4 paper
+
+\IEEEoverridecommandlockouts                              % This command is only needed if 
+                                                          % you want to use the \thanks command
+\overrideIEEEmargins                                      % Needed to meet printer requirements.
+
+%In case you encounter the following error:
+%Error 1010 The PDF file may be corrupt (unable to open PDF file) OR
+%Error 1000 An error occurred while parsing a contents stream. Unable to analyze the PDF file.
+%This is a known problem with pdfLaTeX conversion filter. The file cannot be opened with acrobat reader
+%Please use one of the alternatives below to circumvent this error by uncommenting one or the other
+%\pdfobjcompresslevel=0
+%\pdfminorversion=4
+
+% See the \addtolength command later in the file to balance the column lengths
+% on the last page of the document
+
+% The following packages can be found on http:\\www.ctan.org
+\usepackage{graphicx} % for pdf, bitmapped graphics files
+\usepackage[absolute,overlay]{textpos}
+\usepackage{xcolor} % for \textcolor
+\usepackage{float}
+\usepackage{pifont} % for checkmark and x
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{multirow}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+
+
+\newcommand{\cmark}{\textcolor{green}{\ding{51}}} % check mark
+\newcommand{\xmark}{\textcolor{red}{\ding{55}}}   % x mark
+
+%\usepackage{epsfig} % for postscript graphics files
+%\usepackage{mathptmx} % assumes new font selection scheme installed
+%\usepackage{times} % assumes new font selection scheme installed
+%\usepackage{amsmath} % assumes amsmath package installed
+%\usepackage{amssymb}  % assumes amsmath package installed
+
+\title{\LARGE \bf
+% Uncertainty-Aware Sequential Greedy Algorithm
+Uncertainty-Aware Multi-Robot Task Allocation \\ With Strongly Coupled Inter-Robot Rewards
+}
+
+% \author{Author Names Omitted for Anonymous Review}
+
+\author{Ben Rossano$^{1,3}$, Jaein Lim$^2$, Jonathan P. How$^1$% <-this % stops a space
+\thanks{$^{1}$B. Rossano and J.P. How are with the Aerospace Controls Lab, Massachusetts Institute of Technology, Cambridge, MA, USA {\tt\small \{brossano, jhow\}@mit.edu}}%
+\thanks{$^{2}$J. Lim is with the Charles Stark Draper Laboratory, Cambridge, MA, USA {\tt\small {jlim}@draper.com}}%
+\thanks{$^3$ B. Rossano is a Draper Scholar with the Charles Stark Draper Laboratory, Cambridge, MA. The authors would like to thank the Draper Scholars program for supporting this work.}
+}
+
+
+\usepackage[noadjust,sort,compress]{cite}
+
+% --- unblock hyperref so citation numbers can be linked ---
+\makeatletter
+\let\NAT@parse\undefined
+\makeatother
+
+\usepackage[colorlinks=true,linkcolor=black,citecolor=black,urlcolor=blue]{hyperref}
+%\usepackage[nameinlink]{cleveref}
+
+%\crefname{equation}{}{}
+%\Crefname{equation}{}{}
+%\crefname{problem}{Problem}{Problems}
+%\Crefname{problem}{Problem}{Problems}
+%\crefname{figure}{.}{Figs.}
+%\Crefname{figure}{Fig.}{Figs.}
+
+\makeatletter
+\let\orglabel\label
+\renewcommand{\label}[1]{\orglabel{#1}\hypertarget{#1}{}}
+\makeatother
+
+\begin{document}
+
+
+
+\maketitle
+\thispagestyle{empty}
+\pagestyle{empty}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{abstract}
+% This paper addresses the problem of task allocation for a team of heterogeneous robots in environments with uncertain task requirements. We model these requirements as probability distributions over capabilities and use this model to allocate tasks such that robots with complementary skills naturally position near uncertain tasks, proactively mitigating task failures without wasting resources. We introduce a market-based algorithm to solve this strongly coupled assignment problem, offering a polynomial-time solution in decentralized settings with strict communication assumptions. Comparative experiments against benchmark algorithms demonstrate the effectiveness of our approach and highlight the challenges of incorporating coupled rewards in a decentralized formulation.
+
+This paper proposes a task allocation algorithm for teams of heterogeneous robots in environments with uncertain task requirements. We model these requirements as probability distributions over capabilities and use this model to allocate tasks such that robots with complementary skills naturally position near uncertain tasks, proactively mitigating task failures without wasting resources. We introduce a market-based approach that optimizes the joint team objective while explicitly capturing coupled rewards between robots, offering a polynomial-time solution in decentralized settings with strict communication assumptions. Comparative experiments against benchmark algorithms demonstrate the effectiveness of our approach and highlight the challenges of incorporating coupled rewards in a decentralized formulation.
+% \textcolor{red}{say XX \% better than SOTA etc - use actual numbers in abstract.}
+\end{abstract}
+\vspace{-0.05cm}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Introduction}
+Heterogeneous multi-robot systems can achieve higher levels of efficiency and effectiveness than individual robots can by leveraging task parallelization and diverse sets of capabilities \cite{doi:10.1177/0278364904045564}. At the core of these systems lies multi-robot task allocation (MRTA), the process of determining how to distribute tasks across the team. Many critical missions, such as search and rescue \cite{7084641} and disaster relief \cite{jones_time-extended_2011}, require allocating tasks to robots in unknown environments. In these missions, robots may encounter disturbances that either prevent task completion or delay progress. 
+Such disturbances often arise from underlying uncertainty in the environment or the robots themselves. Making effective decisions in the face of uncertainty remains an open challenge in MRTA problems.
+
+% Leveraging multiple robots, teams offer quicker mission completion through task parallelization and the ability to complete complex missions through diverse sets of capabilities. 
+% consider a multi-robot disaster relief mission with a team of small reconnaissance robots capable of identifying hazardous areas and large support robots capable of clearing debris and restoring infrastructure. For instance, a reconnaissance robot may not be completely certain to find a traversable route to search its assigned area without debris-removal assistance from a support robot, given past mission data and noisy satellite imagery.  
+% In reality, however, the true distributions often depend on complex, environment-dependent factors that may only be partially known in advance.
+One approach to addressing uncertainty is to model mission parameters (e.g., task durations/requirements or agent speeds/sensing capabilities) as random variables and reformulate the problem as a probabilistic optimization \cite{Ponda2012Thesis}. A natural question then arises: how are stochastic mission parameters determined? Many methods assume that these parameters are given as a priori knowledge about the mission \cite{nunes_taxonomy_2017}. For example, in a time-sensitive disaster relief mission with high-value search tasks and lower-value infrastructure repair tasks, there may exist a known probability that search robots encounter untraversable terrain. This renders search tasks infeasible without assistance from larger support robots, which are otherwise assigned to infrastructure repair tasks. Allocation thus becomes a strategic challenge: planners must position support robots so that they can assist the search robots if necessary before task deadlines expire, while still maximizing the completion of infrastructure repair tasks.
+
+A priori knowledge about disturbances may not always be available, highlighting a key distinction in MRTA problem formulations: robustness versus resilience. Robustness is achieved by \textit{proactively} computing pre-execution plans to anticipate modeled disturbances \cite{chaari_scheduling_2014}. Many existing methods achieve robustness through redundancy \cite{9381653} or idle pre-positioning \cite{chen_multi-robot_2009}, which can lead to an inefficient use of resources.
+%
+% Maybe line about how redundnacy requires enough robots if enough uncertain tasks and that prepositioning, even with many uncertain tasks, forces a robot to sit there wastring resourcews
+%
+% For instance, the probability that a UAV can service a task in 10 mph winds may come from hardware specifications or past mission data. Algorithms that consider pre-execution uncertainty are referred to as \textit{robust}. In MRTA, robustness is achieved by \textit{proactively} modifying the initial plan to anticipate modeled disturbances [?]. However, most existing methods provide robustness through redundancy or pre-positioning, which often results in overly conservative solutions. 
+%
+On the other hand, resilience is the ability of a multi-robot system to adapt to unmodeled disturbances \cite{resilient-flocking}. Unlike robustness, resilience is achieved by \textit{reactively} modifying plans in response to unanticipated conditions. Existing work under the resilient MRTA framework has primarily focused on detecting unmodeled disturbances and replanning with updated information only after task completion has been declared infeasible \cite{mayya_resilient_2021}, \cite{sheng_towards_2026}. 
+
+
+% However, many real applications don t experience instantaneous failure when encountering soemthign unexpected. In fact, there may be a delay from the discovery of a disturbance to the point at which the task is deemd infeasible. Thus, existing methods than onlu replan this approach arguably reduces resilience down to traditional replanning, raising the question of whether resilience is merely a reformulation of existing planning strategies or a distinct capability in MRTA.
+
+% In practice, such reactive replanning can lead to suboptimal decisions under uncertainty and can increase the system complexity.
+
+
+This paper offers a novel perspective on resilience by emphasizing that reactive planning can still incorporate anticipatory actions. The key insight is that when an unmodeled disturbance is discovered, there is often a delay before the affected task is formally declared infeasible. Rather than treating this delay as wasted time, it can be leveraged to proactively reconfigure resources. For example, in the disaster relief scenario, when a search robot encounters untraversable terrain, it may take time to confirm infeasibility (e.g., the robot may first explore alternative routes). During this period, repositioning a support robot toward a nearby task enables faster intervention if the task ultimately fails, whereas existing reactive planners risk missing the deadline. Capturing this kind of proactive response requires a new way of quantifying uncertainty, since a priori mission parameters cannot account for unmodeled disturbances.
+
+To encourage strategic allocations, we adjust task utilities to reflect not only intrinsic task value but also the potential benefit of supporting high-value, uncertain tasks (HVUTs). This adjustment incentivizes robots with support capabilities to remain productive on nearby tasks while simultaneously positioning themselves to assist HVUTs if needed. The resulting MRTA formulation is particularly challenging because of strong inter-robot dependencies: while all support robots benefit from positioning near HVUTs, only one will ultimately be reassigned if assistance is needed. Efficient allocation therefore requires capturing this coupling to avoid over-incentivizing robots to cluster around the same HVUTs. To address this, our algorithm introduces a market-based mechanism that resolves these dependencies, providing a polynomial-time solution suitable for decentralized settings with strict communication constraints. Furthermore, we evaluate how the solution quality changes as communication assumptions are relaxed under varying degrees of inter-robot coupling, illustrating the tradeoffs of formulating this problem in a decentralized setting.  
+Our work can be summarized by three primary contributions:
+\begin{itemize}
+    \item We propose a model for task capability uncertainty that provides a unified framework for solving the multi-robot task allocation problem with both in-distribution and out-of-distribution disturbances.
+    \item We present a market-based algorithm to allocate tasks to robots in the face of these disturbances by strategically prioritizing tasks to maximize the expected mission rewards.
+    \item We demonstrate the utility of our algorithm through a comparative analysis against several benchmark algorithms, demonstrating how the mission performance changes with different assumptions.
+\end{itemize}
+
+ 
+% In this paper, we argue that desired resilient behavior can be derived from robustness adn that solutions to both types of problems can be modeled in one algorihtm. We introduce a task uncertianty model that is capable of expressing task requirement uncertainty that is associated with disturbances. We specifically look at uncertainty in  is more related to robustness that isn't just the . Speicically, we argue that often times, there is a gap between when an unmodeled disturbance is discovered and when 
+
+
+%  In particular, we look at uncertainty in the type of robot required to complete a task. In the example above,  when the UAV identifies a building, there is now uncertainty in the UAV’s ability to successful search the entire area it was assigned. Thus, there is also now some probability that a different type of robot is required to complete the task (a UGV with a manipulator). In many cases, there is a delay between the first onset of uncertainty and the point at which a task is deemed incompatible with the currently assigned agent. Current solutions monitor this gap, often by comparing the expected task progress to the actual task progress, [gennaro] but don’t act until the incompatible point has been reached. Thus, the strategy is simply to plan deterministically until things go wrong and then re-plan. These approach fails to capture the value that this uncertainty gap
+
+
+
+
+% Many different approaches have been taken for defining what task completion looks like. Some algorithms are capable of handling complex task specs by formulating them as CBFs ([1]), whereas other algorithms abstract lower-level task details and define tasks with a simple coordinate and duration. 
+
+% Come back to task completion uncertainty and introduce how these can be charactereized as task type uncertinaty. 
+
+
+% This presents a challenge for typical market-based methods. These methods rely on 
+
+% We take inspiration from two stage programs,  sampling-based methods, and market-based consensus methods. This all comes together to form the uncertainty aware sequential algorithm. 
+
+% Intro Contributions: 
+% - after wrapping up uncertainty convo, with distinctino of robust vs resilient being made, we argue that this algorithm acts as both robust and resilient. If uncertainty knowledge is known at the start of the mission, this can be used to determine if a better allocation exists to maximize the expected mission score. If uncertainty knowledge is discovered in real-tine during the mission, we can decide in real-time if it is better to reposition any agents to prepare for potential failure as opposed to waiting until failure has occurred.
+% - Need to first make distinction between high value tasks and low value tasks. Dont necessarily fully explain (this can go in problem formulation), but address the fact that this is really only value when there are certain critical tasks. Lay out options for uncertainty in critical tasks. Either can plan determinitcaly and wait for failure, can redundantly assign extra agent (MAKE ALGORIHTM LIKE THIS TO USE FOR BENCHMARKING), or do our version of strategically determining if another closer tasks are better given the probability of failure. 
+
+
+
+\section{Background and Related Works}
+
+In this section, we briefly review relevant background material and prior literature in multi-robot task allocation (MRTA). Numerous surveys have provided comprehensive categorizations of different approaches and their tradeoffs \cite{doi:10.1177/0278364904045564, nunes_taxonomy_2017, chaari_scheduling_2014, doi:10.1177/0278364913496484}, \cite{prorok_beyond_2021}. Rather than attempting to be exhaustive, we focus on the following MRTA properties: decentralization, cross-schedule dependencies, robustness, resilient, and complex tasks. Table \ref{tab:multiagent_comparison} presents these properties alongside several pertinent works that motivate our approach.
+
+
+
+\subsection{Background}
+\textbf{Decentralized approaches} distribute decision-making across a network of robots, avoiding single points of failure and increasing robustness against inconsistencies in situational awareness (SA) \cite{doi:10.1177/0278364904045564}. Despite these advantages, decentralized algorithms require more advanced communication protocols. Johnson et al. distinguish the two primary types of communication assumptions: global information consistency assumptions (GICAs) and local information consistency assumptions (LICAs) \cite{doi:10.2514/1.I010461}. Under GICAs, all relevant information must be consistent across the robots, while LICAs allow for discrepancies between the robots' information sets. In market-based methods, GICA algorithms require either a centralized auctioneer or additional message passing during a single round of consensus \cite{quinton_market_2023}, whereas LICA algorithms only require robots to exchange information with nearby neighbors. A key caveat of LICA algorithms is their reliance on diminishing marginal gain (DMG), or a submodular score function, which requires that the marginal gain of adding a task to an existing set of tasks decreases as the set grows (see \cite{choi_consensus-based_2009} for more on DMG). A bid-warping strategy is proposed in \cite{doi:10.2514/1.I010461} to ``submodularize" non-submodular functions, enabling a broader class of functions to fit into this framework; however, this approach may perform poorly when the underlying score functions are highly non-submodular.
+
+\textbf{Cross-schedule dependencies (XDs)} are a class of MRTA problems in which the utility of a task assigned to a robot depends not only on its own schedule but also on the schedules of other robots \cite{doi:10.1177/0278364913496484}. These may show up as inter-robot constraints, which impose hard feasibility rules on allocations, or as inter-robot reward functions, which shape preferences among feasible allocations. In both cases, the score function becomes highly non-submodular, making XD problems difficult to solve in a decentralized setting. However, inter-robot reward functions are generally more difficult to optimize than inter-robot constraints, since they expand the solution space. That is, the reward for completing a task may increase in numerous ways relative to a baseline reward depending on what other robots are doing. In contrast, inter-robot constraints are binary (either the constraint is met or not) which can be modeled as a simple reward toggle.
+
+\textbf{Complex tasks} enable a richer representation of tasks (e.g., coalition formation, coverage control) compared to the simple model (e.g., waypoint, duration). These tasks may have multiple feasible decompositions and may require coordination among multiple robots \cite{doi:10.1177/0278364913496484}. 
+
+\begin{table}[t]
+\caption{Related State-of-the-art Multi-Robot Task Allocation Algorithms. Note: $^{*}$Requires GICA \cite{doi:10.2514/1.I010461}}
+\label{tab:multiagent_comparison}
+\centering
+\renewcommand{\arraystretch}{1}
+\resizebox{0.95\linewidth}{!}{%
+\begin{tabular}{lccccc}
+\hline
+\textbf{Method} & \textbf{Decentralized} & \textbf{XDs} & \textbf{Robust} & \textbf{Resilient} & \textbf{Complex Tasks} \\ \hline
+%
+Notomista \cite{notomista_resilient_2021}& \xmark & \cmark & \xmark & \cmark & \cmark\\
+Neville \cite{neville_d-itags_2022}      & \xmark & \cmark & \xmark & \cmark & \cmark\\
+Fu \cite{fu_robust_2022}       & \xmark & \cmark & \cmark & \xmark & \cmark\\
+Ponda \cite{Ponda2012Thesis}       & \cmark & \xmark & \cmark & \xmark & \xmark\\
+Whitten \cite{whitten_decentralized_2011}    & \cmark & \cmark & \xmark & \xmark & \cmark\\
+Street \cite{street_right_2024}      & \hspace{0.1cm}\cmark$^*$ & \xmark & \cmark & \cmark & \xmark\\
+Proposed & \hspace{0.1cm}\cmark$^*$ & \cmark & \cmark & \cmark & \xmark\\
+\hline
+\end{tabular} }
+\vspace{-0.4cm}
+\end{table}
+
+\subsection{Related Works}
+
+Notomista et al.~\cite{notomista_resilient_2021} propose a mixed-integer program (MIP) that jointly solves task allocation and execution, using control barrier functions to define set-based complex tasks. Furthermore, they measure the impact of unmodeled disturbances by comparing expected versus actual task progress, but reallocations only occur once task infeasibility is declared---missing the opportunity for a proactive response during earlier stages of task degradation. Similarly, Neville et al.~\cite{neville_d-itags_2022} address complex tasks with unexpected failures using a mixed heuristic search and MIP framework, providing resilience through targeted repairs of existing solutions rather than full-scale reallocations. However, failures are assumed to occur instantaneously, as in traditional replanning approaches. For problems with a priori robot/task capability uncertainty, Fu et al.~\cite{fu_robust_2022} develop a robust stochastic programming framework to minimize the risk of task incompletion through redundancy. This approach is proactive, but relies on over-assigning robots which can be inefficient. While these methods all explicitly encode cross-schedule dependencies, their reliance on a MIP formulation restricts applicability to centralized settings. 
+
+% TODO: need to come up with better category than inter-agent objective. Techincally all cost functions like these are inter-agent, and coupled (ie, one agent doing a task means the other agents cant get assigned) but this is different than the scores of different tsaks affecting eachother. This coupling is only conflict free constraint. 
+
+% resilient maybe add: The authors also acknowledge the real-time infeasibility of their approach and propose a hybrid alternative that decouples allocation from execution. 
+% robust maybe add: redundant methods work worse in cases in which unceratinty is describing something that happens later into the task. No longer becomes an initial capbility assignment thing
+
+Ponda~\cite{Ponda2012Thesis} introduces Robust CBBA, a stochastic extension of the Consensus-Based Bundle Algorithm (CBBA) \cite{choi_consensus-based_2009} to support probabilistic mission parameters in a decentralized setting. This method preserves LICA, but it relies on local approximations of global objectives without explicitly modeling cross-schedule dependencies. Additionally, it provides robustness by avoiding high uncertainty tasks, but when these tasks also carry higher rewards, this method effectively behaves like an uncertainty-unaware algorithm. Whitten et al. \cite{whitten_decentralized_2011} extend CBBA to address coupled constraints between tasks, such as assignment exclusivity and temporal ordering. They employ bid warping to account for these non-submodularities, but the dynamic value of tasks (depending on constraint satisfaction) can still cause assignment divergence. Thus, they limit the number of times robots can bid on certain tasks, ultimately forcing assignments to stabilize. By coupling simple tasks, this method can achieve complex multi-robot assignments. However, it assumes that tasks succeed deterministically, failing to capture inherent real-world uncertainty.
+
+Street et al.~\cite{street_right_2024} propose a framework for minimizing response times to dynamically announced tasks under announcement time and location uncertainty. Their approach generates plans that include pre-position locations, placing robots near or at likely task locations, but they assume that no initial tasks exist. As a result, this approach only applies to a narrow class of problems and cannot model a more general dynamic task problem in which agents must balance immediate task value and potential future rewards.
+
+Our proposed method addresses many of the aforementioned limitations, building upon contributions from prior approaches to generate intelligent allocations for scenarios with highly non-submodular and cross-schedule dependent reward functions. To the best of our knowledge, this is the first approach to explicitly model such strongly coupled dependencies in a decentralized setting.
+
+% As illustrated in lit review, no one has really looked at coupled task reward functions (different from constraints) in a decentralized setting, especially in the way we are. The primary reason for this is how challenging it is to model coupled dependenices in scenarios when agents are only receiving information from neighbors and not the entire team. Thus, we present a set of algorithms and benchmarks to help evaluate the performance and tradeoffs, especially of GICA vs LICA. We also evaluate the tradeoffs of fully redundant vs the alternative to go to nsarby tasks. We illustrate that this capability is especially valuable in scenarios in which tasks may not be expected the fail on arrival, but at some point into the task (which is more wasteful for redundant assignments).
+
+% \subsection{Coordination Architecture}
+% \textbf{Centralized Methods}. Multi-robot systems operating within a centralized architecture rely on a single leader to generate plans for the entire team and broadcast them to each individual robot. In principle, these methods can achieve globally optimal solutions, but generally at the cost of scalability and robustness. A prominent class of centralized methods us integer or mixed-integer programs (IPs/MIPs), optimizing an objective under explicit task–robot constraints (e.g., [Darrah], [Atay]). These approaches guarantee global optimality but suffer from exponential growth in complexity, limiting their use to small-scale or offline planning. A more specialized alternative is the Hungarian algorithm [hung], which provides a polynomial-time solution for the classical one-to-one assignment problem. While efficient for a narrow set of problems, it struggles to generalize to more complex settings (e.g., time-extended assignments or nonlinear objectives), though several extensions have sought to address these limitations [ext]. Beyond exact solvers, heuristic and metaheuristic algorithms, such as genetic algorithm [], ant colony optimization [], and particle swarm optimization [], aim to provide more tractable solutions. These approaches do not guarantee optimality but are considerably more efficient than exact solvers, making them well suited for larger or real-time problems. talk about communication constraints (mission range, excissive communicatoin, and single point failure)
+
+
+% \textbf{Decentralized Methods}. Multi-robot systems operating within a decentralized architecture distribute decision-making across robots, avoiding single points of failure and scaling better to larger teams. A trivial approach, known as implicit coordination [luke] is to instantiate the centralized planner on each agent. this mitigates the communication limitations of a single centralized planner, but makes a strong assumption that all agents have consistent situational awareness (SA). Inconsistencies in SA, typically caused by imperfect communication, can cause conflicting assignments given that each agent has different information. Market-based methods are a most prominent class of algorithms that solves this issue, relying on iterative auctioning and consensus until consistency is reached. The Consensus-Based Bundle Algorithm (CBBA) remains a foundational approach, offering convergence guarantees and a suboptimality bound for the time-extended assignment problem. Extensions? [PI algo] introduces a concept called significance to closer align with the global objective and demonstrates better results than CBBA when deadlines are present, though no theoretical guarantees are provided. Decentralized policy-based methods are another approach to decentralized MRTA, where robots learn local decision policies. This decreases the demand for communication, but requires upfront training costs and may not generalize well to all environments. Maybe mention POMDP, etc. 
+
+
+% \subsection{Disturbance Handling}
+
+% \textbf{Proactive Approaches.} These approaches take uncertainty into account when generating an initial plan. Given a set of known potential disturbances, proactive approaches try to anticipate failure scenarios and adjust plans to minimize the impact of these failures. 
+
+% Importantly, task failure in such settings does not necessarily imply that a task is permanently unserviceable. Instead, disturbances may alter the task definition by shifting the set of capabilities needed for completion.  Heterogenoity as we'd expect a differnt robot to be able to satifies these new requrmnts. One strategy for measuring the effects of these disturbances is to represent task completion as a Bernoulli random variable, yielding a simple binary outcome of success or failure [?]. Alternatively, other works employ continuous distributions to characterize uncertainty in task durations and agent capabilities [sameera].
+
+\allowdisplaybreaks
+
+\section{MRTA Under Uncertainty Formulation}
+Consider an environment containing a network of $N_r$ robots and a set of $N_t$ tasks. We denote the set of robots as $\mathcal{I} \triangleq \{1,\ldots,N_r\}$ and the set of tasks as $\mathcal{J} \triangleq \{1,\ldots,N_t\}$. 
+The goal of the multi-robot task allocation problem with uncertainty is to find a conflict-free assignment of robots to tasks that maximizes some stochastic global objective function. We assume that tasks only require a single robot and each robot can be assigned a maximum of $L_t$ tasks. We note that our method can be integrated with \cite{whitten_decentralized_2011} to achieve complex task representations. Using expected value as our stochastic metric, the task allocation problem can be written as the following integer program:
+\begin{equation}
+\begin{aligned}
+\max_{\mathbf{x}} \quad & 
+\mathbb{E}_{\theta} \left[ 
+\sum_{i=1}^{N_r} \left(\sum_{j=1}^{N_t} 
+c_{ij}\!\left(\mathbf{x}, \mathbf{p}, \theta \right) \mathbf{x}_{ij} \right)\right] \\
+\text{s.t.} \quad 
+& \sum_{j=1}^{N_t} \mathbf{x}_{ij} \leq L_t, \quad \ \forall i \in \mathcal{I}, \\
+& \sum_{i=1}^{N_r} \mathbf{x}_{ij} \leq 1, \quad \ \ \ \forall j \in \mathcal{J}, \\
+& \mathbf{x}_{ij} \in \{0,1\}, \quad \ \ \ \forall (i,j) \in \mathcal{I} \times \mathcal{J}, \\
+\end{aligned}
+\end{equation}
+where $\mathbf{x}$ is a binary allocation matrix ($\mathbf{x}_{ij} =1$ if robot $i$ is assigned to task $j$), $\mathbf{p}$ is a matrix representing all robot paths, $\theta$ is a vector of uncertainty parameters, and $c_{ij}$ is the reward function for robot $i$ completing task $j$. Note that $c_{ij}$ depends on all assignments and paths, not just those of robot $i$, which captures inter-agent dependencies.
+
+\subsection{Uncertainty Model}
+We model task capability uncertainty as a Bernoulli random variable, yielding a simple binary representation. This can be parameterized by $\theta \triangleq \{(\mathcal{P}_1, \mathcal{T}_1),\ldots,(\mathcal{P}_{N_t}, \mathcal{T}_{N_t})\}$, where $\mathcal{P}_j$ is the probability that task $j$ requires an additional capability (e.g., debris removal) and $\mathcal{T}_{j}$ is the duration into the task that this is expected to be discovered. In the robust framework, we assume that $\theta$ and the additional capability required are known prior to mission execution. 
+
+In the resilient framework, task capability uncertainty is determined by the impact of disturbances in real time. We adapt robot-task specialization, as defined in \cite{notomista_resilient_2021}, into task feasibility $f:R_{\geq0}\rightarrow[0,1]$ to quantify uncertainty once a disturbance is detected. The key idea is to iteratively measure changes in the expected and actual task progress over time and incorporate these updates as a priori knowledge when exploring reallocation solutions. We denote the expected and actual task progress at discrete time $t_k$ by $\phi_{\text{exp}_j}(t_k)$ and $\phi_{\text{act}_j}(t_k)$, respectively. For a task $j$ being executed, the expected progress is defined as:
+\begin{equation}
+    \phi_{\text{exp}_j}(t_k) = \phi_{\text{act}_j}(t_{k-1})+\phi_{\text{step}_j},
+\end{equation}
+where $\phi_{\text{step}_j}$ is a known expected change in progress during a discrete time step. This enables us to compare the expected progress with the actual progress at time $t_k$:
+\begin{equation}
+    \Delta\phi(t_k)= \phi_{\text{exp}_j}(t_k) - \phi_{\text{act}_j}(t_k),
+\end{equation}
+assuming that robots are capable of identifying their current actual progress (see \cite{notomista_resilient_2021} for examples). We can then model how task feasibility decays over time, which ultimately informs our uncertainty estimate. Starting from an initial feasibility value of $f_j=1$, our uncertainty model is defined incrementally as:
+\begin{align}
+    f_{j}(t_{k+1}) &= f_{j}(t_k)-\beta\Delta\phi(t_k), \\
+    \mathcal{P}_j &=  1 - \gamma f_{j}(t_{k+1}), \\
+    \mathcal{T}_j &= f_{j}(t_{k+1})/\beta,
+\end{align}
+where $\beta$ is a decay parameter that dictates how quickly feasibility decreases in reponse to a disturbance, and $\gamma$ determines how strongly feasibility influences the uncertainty measure $\mathcal{P}_j$. Note, we bound $f_j$ to ensure that it does not go below zero. Intuitively, task uncertainty can be interpreted as the inverse of feasibility, which allows us to capture resilience in a traditionally robust formulation. Furthermore, we assume that feasibility decays linearly, enabling a simple approximation of the remaining time steps until $f_j=0$, which triggers a support robot to become reassigned.
+
+\subsection{Auxiliary Tasks}
+In scenarios where high-value, uncertain tasks (HVUTs) have high capability uncertainty and early deadlines, over-committing support robots may be an effective strategy to maximize the expected mission reward. Therefore, we introduce auxiliary support tasks at the locations of all HVUTs. These tasks have no intrinsic task value, but robots assigned to them receive rewards for expected future support, similar to the actual tasks. Assigned robots must wait at the HVUT location until $\mathcal{T}_j$, at which point it is determined whether support is required. If this time occurs before the support robot arrives, we assume this robot is notified immediately and proceeds to the next task in its path.
+
+\section{Proposed Approach}
+
+We utilize several fundamental concepts of market-based methods to reformulate the strongly coupled objective function presented in Eq. (1) into a decentralized framework. First, we define $\mathbf{y}_i$ and $\mathbf{z}_i$ as robot $i$'s winning bid list and winners list, respectively, where $\mathbf{y}_{ij}$ is the most up-to-date estimate of the highest bid on task $j$ from any member of the team, and $\mathbf{z}_{ij}$ is the corresponding estimate of which robot is assigned to task $j$. Furthermore, each robot maintains two types of task lists: the bundle $\mathbf{b}_i$ and the path $\mathbf{p}_i$. Tasks in the bundle are listed in the order that they were added, while tasks in the path are listed in the order that they intend to get executed. Lastly, we introduce two new lists: (i) $\mathbf{d}_i$, where $\mathbf{d}_{ik}$ is robot $i$’s closest distance to high-value, uncertain task $k\in\mathcal{H}$ at its expected discovery time, and (ii) $\mathbf{r}_i$, where $\mathbf{r}_{ik} \in \{0,1\}$ denotes whether robot $i$ is assigned to the support of task $k$. We define $\mathcal{H}\subset\mathcal{J}$ as the set of all HVUTs. Note that the robot with the closest support distance is not always the robot assigned to support, since it is generally infeasible for a single robot to support multiple failed tasks simultaneously. The lists $\mathbf{d}_i$ and $\mathbf{r}_{i}$ enable the algorithm to proactively consider future allocations under the assumption that HVUT failure will trigger an immediate reassignment of the nearest available support robot. 
+
+\subsection{Rewards and Scoring}
+Let $R_i(\mathbf{p}, \mathbf{d}_i, \mathbf{r}_i)$ define the total reward robot $i$ receives for completing the tasks in $\mathbf{p}_i$ with any additional reward for supporting HVUTs. This reward is defined for a given realization of $\theta$, where $\mathbf{r}_{i}$ is determined from a sample of task failures (see Algorithm \ref{alg:sampling}):
+% \begin{equation}
+% S_i(\mathbf{p}_i, \mathbf{d}_i) = \sum \left(\lambda_j^{\tau_i^j(\mathbf{p}_i)} \, \bar{v}_j\right) + \text{support reward}
+% \end{equation}
+% \begin{align}
+% R_i(\mathbf{p}, \mathbf{d}_i, \mathbf{r}_i) 
+% &= 
+%     \sum_{j \in \mathbf{p}_i} 
+%          \rho_j(\mathbf{r}_i)\lambda_j^{\tau_i^j(\mathbf{p}_i)} \, \bar{v}_j \ \\
+% &\quad + \sum_{k \in \mathcal{H}} 
+%     \mathbf{1}\!\left[i = \mathbf{r}_{ik}\right] \,
+%     \lambda_k^{\tau_i^k(\mathbf{p}, \mathbf{d}_{ik})} \, \bar{v}_k 
+% \notag
+% \end{align}
+\begin{equation}
+\begin{aligned}
+R_i(\mathbf{p}, \mathbf{d}_i, \mathbf{r}_i) 
+&= 
+    \sum_{j \in \mathbf{p}_i} 
+         \rho_j(\mathbf{r}_i)\lambda_j^{\tau_i^j(\mathbf{p}_i)} \, \bar{v}_j \ \\
+&\quad + \sum_{k \in \mathcal{H}} 
+    \mathbb{I}(\mathbf{r}_{ik} = 1) \,
+    \lambda_k^{\tau_i^k(\mathbf{p}, \mathbf{d}_{ik})} \, \bar{v}_k \\[0.3em]
+ \text{s.t.} \hspace{0.5cm} & \quad \  \tau_i^j \leq \mathcal{D}_j, \quad \forall j \in \mathcal{J}.
+\end{aligned}
+\end{equation}
+% $\hspace{1.6cm} \text{s.t.} \hspace{1cm} &\tau_i^j \leq \mathcal{D}_j \quad \forall j \in \mathcal{J}$.
+% \vspace{1em} \\
+The first term captures the reward for executing each task in $\mathbf{p}_i$, where $0 < \lambda_j < 1$ is a discount factor, $\tau_i^j(\mathbf{p}_i)$ is the arrival time of robot $i$ at task $j$ in the sequence, $\bar{v}_j$ is task $j$'s initial value, and $\rho_j(\mathbf{r}_i)\in\{0,1\}$ is a toggle to remove task $j$'s completion reward if robot $i$'s support is needed during the execution of task $j$. The second term accounts for support rewards, awarded only if robot $i$ is chosen to support task $k$, with arrival time determined by task $k$'s start time and the travel distance $\mathbf{d}_{ik}$. Lastly, $\mathcal{D}_j$ is the deadline of task $j$. If robot $i$ arrives after $\mathcal{D}_j$, no reward is given for task $j$.  
+
+With inter-robot dependent reward functions, the gap between the local and global rewards of robots becomes more pronounced. Namely, locally greedy bidding can lead to poor outcomes because robots optimize their own reward without accounting for the losses imposed on others. For instance, a task that appears best for one robot may actually reduce the overall objective if it prevents another robot from achieving a higher-value assignment elsewhere. This mismatch between the local and global rewards can also cause cyclic divergence---as robots repeatedly update their bids in response to the changing support rewards, the assignments can oscillate indefinitely. Thus, locally greedy bidding strategies must introduce a mechanism to freeze the bids when cycles emerge, though this comes at the cost of solution quality.
+
+These limitations motivate the need for a joint reward function capable of reflecting how the decisions of one robot influence the rewards of other robots. To this end, we introduce a score function $S_i$ that models the \textit{joint} reward of the entire team based on robot $i$’s most up-to-date estimates of $\mathbf{p}, \mathbf{d},$ and $\mathbf{r}$:
+\begin{equation}
+S_i(\mathbf{p}, \mathbf{d}, \mathbf{r}) = \sum_{a \in \mathcal{I}}  R_a(\mathbf{p},\mathbf{d}_a, \mathbf{r}_a).
+\end{equation}
+$S_i$ enables task bids to be evaluated as the joint marginal gain of the team for proposing a single new task assignment. 
+% We then use $S_i$ to compute the joint marginal gain of 
+% With an inter-robot dependent reward function, the gap between the local and global rewards of robots becomes more pronounced. Consider the example in Fig 2. Suppose Robot 2 selects Task 2 because it offers the strongest balance of guaranteed value and future support reward for the HVUT. Robot 3 cannot outbid Robot 2 for the best task, so it greedily selects Task 4, which gives it the highest reward among the remaining tasks due to the extra support reward. This reward is locally best, but it ignores the fact that the global objective would have been better served by Robot 2 supporting at Task 2 while Robot 3 pursued a different task. In other words, the gain from Robot 3 supporting the HVUT at Task 4 is smaller than the combined loss of Robot 2’s support reward at Task 2 plus the additional value Robot 2 could have earned elsewhere at a task with more guaranteed value---in this case Task 3.
+
+% \begin{figure}[t]
+%     \centering
+%     \includegraphics[width=0.48\textwidth, height=0.25\textheight, keepaspectratio]{Screenshot from 2025-09-01 17-00-17.png}
+%     \caption{Example scenario where local-only bidding can result in cyclic divergence or over-greedy behavior. The arrows represent the best allocation for only the \textit{first} bundle position.
+%     }
+%     \label{fig:wp}
+%     \vspace{-0.6cm}
+% \end{figure}
+
+% Moreover, in a traditional market-based setting, this behavior can lead to cyclic divergence, where robots repeatedly alternate between proposed assignments. Returning to the example, given that Task 2 has lost its support reward value, Robot 2's best task is now Task 4, and it can outbid Robot 3 (Robot 2 can arrive before Robot 3 can). Thus, Robot 2 now wins Task 4, forcing Robot 3 to search for another task. Two outcomes can follow: (i) if a task even closer to the HVUT exists (not depicted in Fig. 2), Robot 3 may bid on it, causing the same behavior, or (ii) if no such task exists, Robot 3 will select whichever task maximizes its guaranteed reward (Task 3). In both cases, Robot 2 ends up committed to a task with lower reward due to the greediness of local rewards. If Robot 2 attempts to rebuild its bundle with the updated information, it will again prefer Task 2, restarting the entire cycle. This process can continue indefinitely, preventing convergence. The only way to guarantee convergence is to lock in these suboptimal assignments when cycles emerge.
+
+\subsection{Single-Item Auction}
+The core of our algorithm is presented in Algorithm \ref{alg:seq-bundle} as a hybrid approach that combines elements of CBBA \cite{choi_consensus-based_2009} and the Sequential Single-Item (SSI) Auction method \cite{koenig_power_nodate}. In particular, we conduct auctions in which only the highest bid wins, as in SSI Auctions. However, tasks are not permanently removed from the available task list. This enables rebidding, which is crucial in our formulation given that bid values change dynamically as other robots’ assignments evolve. 
+
+Since we directly optimize over the global objective, the highest bid among all robots must correspond to the best proposed addition to the allocation, greedily steering the system toward the global optimum. However, because rewards are coupled, accepting multiple bids in a round, even if each bid is individually positive, does not guarantee the same improvement as selecting only the highest bid. To illustrate, let $\mathbf{p}^A$ denote the path after inserting the task with the highest bid, $\mathbf{p}^B$ the path after inserting the task with the second-highest bid, and $\mathbf{p}^{AB}$ the path after inserting both tasks. If these tasks exhibit negative synergies, then accepting both would move the allocation away from the optimum. Furthermore, even with positive synergies, $\mathbf{p}^{AB}$ may not be the best two-task insertion given $\mathbf{p}^A$. There may exist another task that could yield a greater improvement when added after $\mathbf{p}^A$. For these reasons, we restrict each round to accepting only the single highest bid, which guarantees that the joint reward will monotonically converge. 
+
+% (i.e., score of $\mathbf{p}^{AB}$ is less than score of $\mathbf{p}^A$ + score of $\mathbf{p}^B$)
+\setlength{\textfloatsep}{10pt plus 1pt minus 2pt}
+\begin{algorithm}[t]
+\caption{Iterative Bundle Building Design}
+\label{alg:seq-bundle}
+\begin{algorithmic}[1]
+\small
+\Procedure{SolveAssignment}{$\theta$}
+    % \State $y_i(t) \gets y_i(t-1)$ \Comment{Task winners}
+    % \State $z_i(t) \gets z_i(t-1)$ \Comment{Winning bids}
+    % \State $b_i(t) \gets b_i(t-1)$ \Comment{Bundle of agent $i$}
+    % \State $p_i(t) \gets p_i(t-1)$ \Comment{Path of agent $i$}
+    \State $\mathbf{y}, \mathbf{z}, \mathbf{b}, \mathbf{p}, \mathbf{d} \gets \emptyset, \emptyset, \emptyset, \emptyset, \emptyset$
+    \State $k \gets 1$ \Comment{current bundle position}
+    \While{$k < L_t$}
+        \For{$i \in \mathcal{I}$}
+            \State $c_{ij} \gets \max_{n \le k} \textsc{GetBid}(\mathbf{p}, \mathbf{d},j, n, \theta), \hspace{0.07cm} \forall j \in \mathcal{J} \setminus \mathbf{b}_i$
+            \State $h_{ij} = \mathbb{I}(c_{ij} > \mathbf{y}_{ij}), \ \forall j \in \mathcal{J}$
+            \State $j^* \gets \arg\max_j c_{ij} \cdot h_{ij}$
+            \State Update $\mathbf{y}_{ij^*}, \mathbf{z}_{ij^*}, \mathbf{b}_i, \mathbf{p}_i, \mathbf{d}_i$
+            % \State Compute $c_{ij^*}, n^*$ using Algorithm~\ref{alg:sampledscore}
+            % \State Update $y_{ij^*}, z_{ij^*}$ if $c_{ij^*} > y_{ij^*}$
+        \EndFor
+        \State Exchange bids through consensus
+        \State Update $\mathbf{y}, \mathbf{z}, \mathbf{b}, \mathbf{p}, \mathbf{d}$
+        \If{$\mathbf{p}^{\text{prev}}  = \mathbf{p}$ for 2 iterations}
+            \State $k \gets k + 1$ 
+        \EndIf
+    \EndWhile
+    \State \Return $\mathbf{p}$
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+
+\subsection{Iterative Bundle Building}
+Given that tasks can be rebid on, unlike in a traditional SSI algorithm, it is not always clear whether to reset the bundle and rebid on a previously decided task or to continue building the bundle. One idea is to compare the joint marginal gain of resetting earlier bids versus progressing forward. However, because bids can change as other robots add tasks to their own paths, it becomes ambiguous when it is appropriate to move forward. Moreover, if bundle resets are allowed, the assignments can enter cyclic behavior, since new tasks can affect the scores of previously added tasks. As a result, we iteratively build bundles one position at a time, requiring stable assignments before continuing to the next position. 
+
+
+\subsection{Task Swapping}
+Locking tasks at previous bundle positions may lead to myopic allocations, as the team ignores how future tasks impact earlier decisions. To mitigate this, we propose a task swapping mechanism that enables rebidding on tasks from earlier bundle positions without requiring a full bundle reset. Specifically, if a robot bids on a task that has already been won at a previous bundle position, the robot may still compete for this task by swapping it with the robot’s current best task at the ongoing bundle position. If no such task exists (e.g., at the start of a new bundle position), then the robot losing its task simply removes that task from its path. Otherwise, it is substituted at the \textit{path} position where the rebid task was previously located. The following examples demonstrate task swapping when Robot 1 (first row) is bidding on a previously settled task, Task 3, in Robot 2's path (second row):
+
+\[
+\mathbf{p}^{\text{prev}} = \begin{bmatrix}
+2 & 4 \\
+1 & 3 & 5
+\end{bmatrix}
+\xrightarrow{\text{swap}}
+\mathbf{p} = \begin{bmatrix}
+2 & 4 & 3 \\
+1 & 5
+\end{bmatrix} \\
+\]
+\begin{center}
+    No Previous Task
+\end{center}
+
+\[
+\mathbf{p}^{\text{prev}} = \begin{bmatrix}
+2 & 4 & 6 \\
+1 & 3 & 5
+\end{bmatrix}
+\xrightarrow{\text{swap}}
+\mathbf{p} = \begin{bmatrix}
+2 & 4 & 3 \\
+1 & 6 & 5
+\end{bmatrix}
+\]
+\begin{center}
+    Previous Task
+\end{center}
+Since Robot 1's bid on Task 3 reflects the joint marginal gain, including the effects of Robot 2's modified path, we treat it the same as any other bid. However, during consensus, we must be careful to identify any swaps (see Section IV-G).
+
+
+\subsection{Computing Bids}
+
+We compute bids by evaluating the joint marginal gain across the team when inserting a candidate task. Specifically, Algorithm \ref{alg:sampling} describes the procedure for calculating the bid associated with inserting task $j$ into the $n^{\text{th}}$ position of robot $i$’s path using failure sample generator $f(\theta)$. This bid reflects the expected global improvement in the mission objective, allowing the algorithm to optimize directly with respect to the team-level reward rather than relying on local approximations.
+We distinguish two approaches for obtaining samples from $f(\theta)$:
+
+\textbf{Exact enumeration.} If the number of uncertain tasks is small, we enumerate all possible outcomes and compute the support breakdown for each scenario. This yields the true $\mathbf{r}$, since it can fully capture cases where a single robot is the closest to multiple HVUTs. For each outcome, support robots are greedily assigned based on their proximity to each HVUT at the designated discovery times, beginning with the earliest. The drawback is that this method scales exponentially with the number of HVUTs ($2^{|\mathcal{H}|}$ outcomes).
+
+\textbf{Sampling-based approximation.} To improve scalability, we also propose a sampling-based method in which outcomes are drawn from the joint task uncertainty distribution. When a single robot is closest to multiple HVUTs, we approximate the reward by assigning full support reward to the earliest task requiring support in that sample and a discounted reward to subsequent tasks that the same robot would have supported. However, the choice of discount factor requires careful tuning: too much discount encourages robots to avoid covering multiple HVUTs, while too little discount may cause overcommitment to such regions.
+% , since robots may receive close-to-full support rewards in samples where multiple HVATs fail.
+
+
+\subsection{Communication Assumptions}
+Using bids that are a summation over all robot rewards presents a challenge in a LICA framework, as it introduces another layer of interdependence. Specifically, inconsistencies can arise when robots have different estimates of other robots' paths, leading to divergence. Moreover, a robot cannot know whether it is optimizing with respect to the true global objective or an outdated one, since bid information may not have fully propagated, which can yield poor assignments. For these reasons, we adopt a GICA framework and require that robots receive information from all other robots during a single round of consensus. To achieve this in partially connected networks, we enforce that robots receiving new information from a neighbor rebroadcast this information to all other neighbors for a maximum of $N_D$ iterations, where $N_D$ is the network diameter. By requiring only robots with updated information to rebroadcast, we reduce redundant communication compared to all robots rebroadcasting $N_D$ times. Furthermore, while LICA algorithms generally require consistent assignments for $2N_D$ iterations before convergence, GICA algorithms effectively emulate a fully-connected network at each iteration. As a result, only two iterations of consistency are needed before advancing to the next bundle position (Algorithm \ref{alg:seq-bundle}, Line 13).
+
+\begin{algorithm}[t]
+\caption{Bid Calculation Using Joint Marginal Gain}
+\label{alg:sampling}
+\begin{algorithmic}[1]
+\small
+\Procedure{GetBid}{$\mathbf{p}, \mathbf{d},j,n, \theta$}
+    \State $\mathbf{p'} \gets \{\mathbf{p}_0,\ldots,\mathbf{p}_i \oplus_n \{j\},\ldots,\mathbf{p}_{N_r}\}$ 
+    \State Swap tasks if necessary
+    \State Update $\mathbf{d}_{ik}$ based on $\mathbf{p}'_i$ and $\mathcal{T}_k, \quad \forall k \in \mathcal{H}$
+    \State $\{\theta_1,\ldots,\theta_{N_s}\} \sim f(\theta)$
+    \State $\{w_1,\ldots,w_{N_s}\} \sim f(\theta)$
+    \For{$s \in \{1,\ldots, N_s$\}}
+        \State Update $\mathbf{r}$ based on $\mathbf{d}$ and $\theta_s$
+        \State $c_{ij}^{(s)} \gets S_i(\mathbf{p'}, \mathbf{d}, \mathbf{r})-S_i(\mathbf{p}, \mathbf{d}^{\text{prev}}, \mathbf{r}^{\text{prev}})$
+    \EndFor
+    \State $c_{ij} \gets \sum_{s=1}^{N_{s}} w_s \, c_{ij}^{(s)}$
+    \State \Return $c_{ij}$
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Consensus}
+After each robot determines its bid, it must exchange information with its neighbors to determine the team's highest bid. We perform consensus as in \cite[Table~1]{choi_consensus-based_2009}, though considering message reception times is not required because of GICA. During each exchange, robots share four lists: $\mathbf{z}_i, \mathbf{y}_i, \mathbf{d}_i,$ and $\mathbf{p}_{\text{ind}}$. $\mathbf{p}_{\text{ind}}\in\{1,\ldots,N_t\}^{N_t}$ is a compressed path-indices list, where each element specifies the position of the corresponding task in its winner's current path. This indexing allows each robot to correctly place the winning task in its maintained path after consensus. 
+
+After all bids are received and the highest bid is identified, one of two outcomes occurs for each agent: (i) If the agent wins the largest bid, it takes no action, since its lists are already up to date. (ii) If the agent loses, it reverts its lists to the previously settled state and inserts the winning task according to $\mathbf{p}_\text{ind}$. If a task swap has occurred, this can be detected by checking whether the winning task previously existed in another path. In such cases, the robot updates its lists accordingly.
+
+Additionally, after each round of consensus, robots must update their internal estimate of $S_i$ to reflect any changes that occured, allowing for an accurate marginal gain to be computed in the next round. In environments with inconsistent situational awareness, these estimates may not be correct. However, such inconsistencies will be reflected in the bids that each robot puts forth. Thus, as long as each robot receives bids from all other robots, the consensus process guarantees conflict-free assignments.
+
+
+% Importantly, our bundle and path representation varies slightly from CBBA in that each robot maintains bundles and paths for all other robots on the team. Thus, we denote $\textbf{b}_i^k$ and $\textbf{p}_i^k$ as the robot $k$'s estimate of robot $i$'s bundle and path, respectively.
+
+% \section{LICA Version}
+% \textbf{outline}: extension of CBBA. talk about bid warping, explain the information that is shared, give algorithm score function, describe how to guarantee convergence: (talk about how in [], they clear agents bundles at the begining to handle bids that may have changed. But this causes the divergent behavior in coupling, so after certain amount of iterations, must lock in won bids. Agents can update the previously won bids at the end of rounds after receiving updated information about closest distances (this is the only thing that could change them), but after task order locks for won tasks, the tasks themselves cannot be changed unless a different agent outbids. Note, this locking iteration parameter can be changed according to the number of agents and uncertain tasks. Ideally want to have all the uncertain tasks get to final places first before locking in support bids.
+
+
+
+% \textbf{outline}: Based on combination of sequential single item and cbba. mainly, we want from cbba not having to remove tasks from the set of biddable tasks immediately after an agent has won (because assignments could cause those bids to change). Instead of single agent, each agent directly maximizes over the joint score function, and bids are marginal gains across all agents. This increase complexity, but allows us to capture the affects that inserting a task in one agents bundle has on all other agents, which is necessary for convergence in this approach given the coupling. However, we must also only admit one task per round because we are directly maximizes the joint marginal gain. Thus, if we accepted multiple bids from different agents, there is no guarantee that this creates a positive joint marginal gain which may set the algorithm into cyclic behavior. (Example: if task A and task B have negative synergies, then current plan + task A > current plan + task A + task B. If this is the case, accepting both would send the allocation down a suboptimal path relative to accepting one. This is because agents use the previous assignment of other agents as the best estimate.
+% Additionally, since bids change dynamically, we seek to optimize the global reward sequentially at each bundle position. 
+
+% In standard sequential greedy, each agent sends their best bid given all available tasks and their current bundle. The agent that has the max bid of all agent task combos wins this round and is allocated the winning task based on the bundle/path position it won at. Then, all agents remove the winning task from the set of available tasks and only the winning agent has to recompute its next best bid given its updated bundle. This leads to the next round where the max bid is then selected again. This sequentially builds the bundles of all agents iteratively, but requires GICA, to ensure that all robots are operating with a consistent set of remaining tasks. This can be achieved through a centralized auctioneer approach or by propagating bids and winners through connected agents to ensure the entire network has received the same information before next round. This method was introduced as the sequential single-item auction. This method was considered an improvement versus the parallel single item auction, which simply assigned tasks to the highest bids in one shot, without regarding intra-robot schedule dependencies (if assigning multiple tasks to robots, the scores based on time of completion may differ from the bids assuming that each robot puts for initial completion. 
+
+% From SSI, the novelty of CBBA was then achieving the same performance in a faster LICA way. Using consensus, robots could bid on tasks even working with a partial information set relative to global. Additionally, CBBA allowed mulitple tasks to be won simultaneously because tasks weren't removed from the set of biddable tasks after being won. This both makes for faster bundle building and is necessary for robots to received delayed information (non-communicating agents sharing information by propogating through a series of connected agents). The one caveat of CBBA is that is required a property called DMG, or having bids be submodular in order for convergence guarentees. With this assumption satisfied, agents could make bundle building progress quicker in all sorts of network topologies because they could act without waiting for all agent information to reach them through propagation.
+
+% plan: address cbaa and they test against ICBAA
+% explain how algorithm is like iterative cbba, where consensus is established at each bundle position. However, unlike ICBAA, bids can be made for different path positions. Thus, we come to convergence at each bundle position before moving to the next. But, bids at later bundle positions can be for earlier path positions, so this becomes more like an iterative cbba. 
+% If we were to fix tasks at each bundle position (remove them from the set of tasks that agents can bid on at future bundle positions), this would be a very greedy approach, producing worse performance than cbba. However, our score functino is already extremely non-submodular due to the inter-agent utility dependence. GICA requires that all agents receive updated information from all agents on the team during the consensus phase of each iteration. We acknowledge this as a current limitation of the algorithm as the number of messages passed scales linearly with the diameter of the network. 
+
+
+
+% LOOK AT ROBUST CBBA FORMULATION FOR GOOD EXAMPLE VARIABLES
+
+\section{Simulation Results}
+
+% Robust CBBA      & 6  & 72  & 8  & 64  & 10 & 60  \\
+% Red. CBBA  & 6  & 72  & 8  & 64  & 10 & 60  \\
+% Sup + Red CBBA  & 9  & 108 & 11 & 88  & 12 & 72  \\ 
+% Proposed  & 12 & 156 & 12 & 158 & 13 & 154 \\ \hline
+%
+
+\subsection{Simulation Setup}
+This section describes a simulation environment designed to evaluate the performance of our algorithm in comparison to several baseline algorithms. The simulated mission consists of two types of robots and two types of tasks. Similar to the example in Section I, Search UGVs are capable of searching for high-value targets, while Support UGVs are capable of clearing debris and repairing infrastructure. Search tasks initially require a Search UGV, though there may be some probability $\mathcal{P}$ that support capabilities are required at an estimated time $\mathcal{T}$ into the task. Infrastructure repair tasks require Support UGVs deterministically. Furthermore, each task has an associated deadline $\mathcal{D}$. 
+% (Maybe table for capabilities? Path-clearing have slower speed?). 
+
+The goals of our experiments are twofold: (i) to demonstrate the value of intelligent, proactive allocation under uncertainty and (ii) to analyze how the solution quality varies under different decentralized formulations, considering both reward structure and communication assumptions. To this end, we benchmark against three categories of planners: \textbf{reactive}, \textbf{redundant}, and \textbf{coupled}. Robust CBBA serves as the reactive baseline, since it is effectively uncertainty-unaware with respect to HVUTs. We use CBBA with auxiliary tasks for the redundant baseline, treating support as an actual task with an expected value and duration based on $\mathcal{P}$ and $\mathcal{T}$, respectively. Finally, we consider three algorithms that leverage our coupled reward function. The first variant extends CBBA to use single-robot local rewards (LR) from Eq. (7), where each robot bids only for its own gain. To mitigate oscillations that may emerge, tasks are frozen after a set number of iterations. The second variant builds bundles iteratively using the joint reward (JR) from Eq. (8), locking tasks once consensus is reached at each bundle position. We also permit multiple winning bids per round, which requires task freezing during cycles. Both coupled formulations are evaluated under LICA and GICA. Lastly, we denote the primary algorithm discussed in this paper by JR-PRIM. For all experiments, we use a partially connected ring topology where each robot can exchange information with its two adjacent neighbors.
+
+% Existing resilient approaches that formulate MRTA as a MIP assign tasks one at a time, since computing full task sequences for each robot is computationally intractable. As a result, any 
+% score differences with our approach would primarily reflect the myopic design of these planners rather than their resilience mechanisms. Therefore, we also use Robust CBBA as the baseline for resilient experiments, as it mimics resilient methods that replan only after tasks are declared infeasible while still incorporating task deadlines.
+% (assume that travelling to and completing takss is quite abstracted away. talk more)
+% (talk about which algoritjms are being compared. Need to say that resilient can handle much more)
+
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=1.0\textwidth, keepaspectratio]{main_robust_results.png}
+    \vspace{-0.6cm}
+    \caption{Average \% change in mission scores and average missed tasks for an 8-robot, 12-task (4 HVUTs) mission with known uncertainty, where disturbance discovery time is $\mathcal{T}=0.5\times \text{duration}$. We compare performance across a range of probabilities that support is needed based on 40 randomly generated environments.}
+    \label{fig:wide_example1}
+    \vspace{-0.3cm}
+\end{figure*}
+
+
+% Note, we assume the onset of uncertainty occurs at arrival as it (explain how it doesn't matter if its on arrival or later into task because an agent won't get called to support until it gets realized anyway. So only doing harm in terms of feeding into negatives of exponential decay by waiting until later)
+
+
+\subsection{Simulation Results}
+
+
+The results in this section are based on a mission in which all search tasks are high-value, uncertain tasks (HVUTs), requiring Support UGVs to balance meeting their own task deadlines with positioning to anticipate potential search task failures. HVUTs have a task value of 400, while regular infrastructure repair tasks have a value of 100. Robot and task positions are randomly generated within a $1{,}000 \times 1{,}000$ m area. The speed of each Search UGV is set to 5 m/s, and each Support UGV to 3 m/s. Deadlines are randomly assigned in the range [100, 600] seconds for HVUTs and [100, 1500] seconds for regular tasks. All task durations are fixed at 300 seconds. These parameters are inspired by \cite{PIalg}, though we maximize rewards across tasks with varying importance rather than minimizing the average completion time of tasks with the same value. This is why we compared against CBBA-based formulations. We use a marginal discount factor of $\lambda=0.99$, encouraging earlier arrival times while still retaining nearly full value when deadlines are met.
+
+
+\textbf{Robust Trials.} Fig. \ref{fig:wide_example1} shows the expected performance of a mission with 8 robots (4 Search, 4 Support) and 12 tasks (4 Search, 8 Infrastructure), where HVUTs are subject to varying levels of a priori uncertainty and disturbances occur halfway through their execution. The left-most plot shows the expected change in performance relative to the reactive baseline, while the middle and right plots show the expected number of missed deadlines for HVUTs and regular tasks, respectively. We observe that redundancy degrades performance under low uncertainty, as overcommitment is unnecessary. Performance improves at higher uncertainty levels but comes at the cost of missing more regular tasks. The LR method scores comparably to the reactive baseline, since local-only bidding produces the behavior described in Section IV-A. The first JR method improves performance by better accounting for inter-robot coupling but still suffers from the effects of task freezing. Across both methods that require task freezing, performance differences between LICA and GICA are negligible, indicating that the complex reward structure itself is the primary limiting factor. JR-PRIM avoids these limitations by accepting only one bid at a time and using task swapping, enabling monotonic convergence.
+
+Better performance, however, comes at a communication cost (Fig. \ref{fig:wide_example2}). JR-PRIM requires additional communication for two reasons: (i) GICA demands extra messages per iteration, and (ii) task swapping increases the number of iterations, since early bidding is highly greedy and leads to frequent swaps. As a result, this approach may struggle in communication-constrained environments, making JR-LICA a viable substitute. 
+
+
+
+% We note that redundancy can be a good strategy in hight uncertainty scenarios when support is realized immediately, though we see this approach struggle when uncertainty isn't realized until later on in the task. Thus, our approach which combines strategic allocation with redundancy gets the best of both worlds, as it defaults to redundant behavior when the expected reward is high enough. Given the highly non-submodular nature of our score function, bid warping is not effective to approximate DMG. Thus, while the the communication bandwidth redunces, we actually see negative score returns relative to an uncertaint-unaware algorithm 
+
+ % Although these metrics aren't being optimized explicitly, we also find it valuable to look at total mission times and distances traveled (energy exerted). In particular, our proposed algorithm generally saves time and energy relative to the two other proactive methods. This intuitively makes sense as a more conservative approach looks more like an uncertainty-unaware algorithm and the more aggressive algorithms can waste resources when support isn't needed. Once again, we emphasize that these metrics aren't directly factored into reward. 
+
+% The remaining three algorithms illustrate the difference between being too conservative, overcommitting, and a balance of both. We see that NAME + Redundant outperforms either alone, illustrating the need for both depending on the scenario. Note that as uncertainty increases, NAME + Redundant behaves very similar to Redundant.In Fig 5., we observe smaller margins of improvement, primarily due to the nature of the exponential decay score function. Regardless of parameter tuning, we find that differences in arrival time for high-value tasks become negligible as time increases. This is because the slope of the exponential decay function goes to zero quickly, regardless of parameter tuning.
+% (Maybe add a table to evaluate scores as number of uncertain tasks increase. 
+
+% Likie robust cbba, giuve a 6 agent mission (maybe 12 tasks?) and show the score distribtuion for ours versus benchmark
+
+
+\begin{table*}[t]
+\centering
+\caption{Performance of a 6-robot, 10-task (3 HVUTs) mission with unexpected disturbances under varying impact and decay settings}
+\label{tab:impact_decay_single}
+\renewcommand{\arraystretch}{1.2}
+\setlength{\tabcolsep}{12pt} % adjust spacing if needed
+
+\begin{tabular}{l|cccc|cccc}
+\hline
+\multirow{3}{*}{\textbf{Algorithm}} 
+ & \multicolumn{4}{c|}{\textbf{Total Score}} 
+ & \multicolumn{4}{c}{\textbf{Missed Tasks (High Value / Regular)}} \\ \cline{2-9}
+ & \multicolumn{2}{c}{\textbf{High Impact}} 
+ & \multicolumn{2}{c|}{\textbf{Low Impact}} 
+ & \multicolumn{2}{c}{\textbf{High Impact}} 
+ & \multicolumn{2}{c}{\textbf{Low Impact}} \\ \cline{2-9}
+ & \textbf{Fast} & \textbf{Slow} 
+ & \textbf{Fast} & \textbf{Slow} 
+ & \textbf{Fast} & \textbf{Slow} 
+ & \textbf{Fast} & \textbf{Slow} \\ \hline
+Reactive & 1401.26 & 1170.30 & 1597.72 & 1486.45 & 0.56 / \textbf{0.03} & 1.00 / \textbf{0.03} & 0.21 / 0.01 & 0.37 / 0.01 \\
+Redundant & 1466.20 & 1236.16 & 1626.27 & 1517.91 & 0.46 / 0.07 & 0.82 / 0.11 & 0.19 / 0.03 & 0.34 / 0.03 \\
+LR-LICA & 1457.93 & 1211.32 & 1616.52 & 1505.81 & 0.40 / 0.11 & 0.80 / 0.15 & 0.16 / 0.02 & 0.30 / 0.06 \\ 
+LR-GICA & 1454.74 & 1214.89 & 1615.57 & 1504.55 & 0.41 / 0.12 & 0.80 / 0.13 & 0.16 / 0.04 & 0.31 / 0.04 \\ 
+JR-LICA & 1436.94 & 1216.19 & 1608.15 & 1497.03 & 0.43 / 0.04 & 0.77 / \textbf{0.03} & 0.18 / 0.01 & 0.31 / 0.01 \\ 
+JR-GICA & 1462.78 & 1246.79 & 1629.46 & 1530.89 & 0.43 / \textbf{0.03} & 0.74 / 0.05 & 0.17 / 0.01 & 0.28 / 0.01 \\ 
+JR-PRIM & \textbf{1550.96} & \textbf{1305.54} & \textbf{1688.23} & \textbf{1579.51} & \textbf{0.22} / \textbf{0.03} & \textbf{0.61} / 0.04 & \textbf{0.08} / \textbf{0.00} & \textbf{0.19} / \textbf{0.00} \\ \hline
+\end{tabular}
+\vspace{-0.4cm}
+\end{table*}
+
+
+\textbf{Resilient Trials.} In these simulations, certain search tasks may encounter unmodeled disturbances. When a Search UGV arrives at a task eligible for failure, two outcomes are possible. In the case of failure, the task feasibility $f$ decreases linearly to zero as the expected progress grows relative to the actual progress (e.g., the robot encounters a disturbance, explores alternative routes and ultimately fails). When success occurs, the task feasibility decreases until reaching a threshold and then returns to 1 (e.g., the robot initially struggles but overcomes the disturbance).
+
+Table \ref{tab:impact_decay_single} reports the average mission scores and missed tasks for 40 randomly sampled environments with 6 robots (3 Search, 3 Support) and 10 tasks (3 Search, 7 Infrastructure). Disturbances are categorized as either high impact or low impact. High impact disturbances have a feasibility floor $f_\text{floor}$ that ranges from 0.3 to 0.6, whereas low impact disturbances have a feasibility floor that ranges from 0.6 to 0.9. Under the fast decay rate ($\beta=0.01$), the feasibility function drops quickly, whereas the slow decay rate ($\beta=0.004$) allows more time for proactive adjustments. Furthermore, we set $\gamma = 0.99$ so that feasibility has a strong influence on task uncertainty. To approximate the expected mission score, we sample successes and failures assuming that $f_\text{floor}$ represents the underlying probability of success. For example, given a scenario with $f_\text{floor}=0.4$, we expect 40\% of the samples to be successes (no support needed) and 60\% of samples to require support. However, robots are not aware of the true value of $f_\text{floor}$ when planning. 
+% These experiments serve as one approach to assessing responses to unmodeled disturbances, though the systematic evaluation of resilience remains an open problem.
+
+We observe trends similar to those in the robust trials with a few nuances. Namely, the redundant and LR methods offer improvements relative to the reactive baseline, while the JR-LICA method shows a slight performance drop. Overall, we find that JR-PRIM achieves higher scores and misses fewer deadlines across almost all scenarios, demonstrating the benefits of proactive adjustments after discovering unmodeled disturbances. The largest improvement over the reactive baseline occurs under high-impact, slow-decaying disturbances, which is expected as these provide the most time for proactive changes. 
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=.45\textwidth]{comm_robust_results.png}
+    \vspace{-0.3cm}
+    \caption{Expected messages sent per allocation across robust experiments.}
+    \label{fig:wide_example2}
+    \vspace{-0.3cm}
+\end{figure}
+
+\section{Conclusion}
+ Our results demonstrate that mission performance can be improved by valuing tasks not only for their immediate reward, but also for the future reward created by intelligent positioning in environments with task capability uncertainty. This yields consistent gains over purely reactive or redundant approaches in the presence of both in-distribution and out-of-distribution disturbances. Achieving these benefits, however, requires a strongly coupled reward formulation, which remains challenging in decentralized settings. In fact, the only way to guarantee stable assignments becomes close-to impractical without centralization, due to the significant communication overhead. While JR-LICA shows performance improvements, its reliance on task freezing can result in poor allocations. A practical alternative, when situational awareness is consistent across agents, is to leverage implicit coordination. This involves running JR-PRIM as a centralized planner locally on each robot, with message passing handled in memory.
+ Future work includes extending the formulation to incorporate additional sources of inter-robot dependencies, such as multi-robot collaboration. We also plan to explore other strategies for solving this coupled problem, expanding beyond market-based methods.
+
+
+
+% Performance differences between LICA and GICA remain negligible, suggesting that the reward structure is the primary limiting factor. In particular, the algorithms that rely on task freezing exhibit performance degradation when freezing occurs at suboptimal allocations, whereas JR-PRIM converges monotonically toward the global objective.
+
+
+
+% However, methods that rely on task freezing provide no guarantee of converging to a good solution. We observe that incorporating more global properties tends to improve solution quality, highlighting the inherent challenges of formulating coupled rewards in a decentralized setting. Another alternative is to leverage implicit coordinationis more feasible in scenarios with consistnet situational awareness.
+
+% takeaway of the paper is that acheviing imtelligent proactive solutions in a decentrlaized setting comes at an extreme cost 
+
+% takeaways: mission performance can be enhanced by looking at the value of tasks as more than the task itself, but any future value that might come from being in a partiular location in missions with task capability uncertainty. This increases performance when both in-dstribution and out of distutubiton disturbances occur in compariosn to pure reactive or redundant approaches. However, to achieve this, rewards must be modeled in a strongly coupled formulation, and we've shown that this is very challegnging in a decentralized setting. In fact, the only way to GUARENTEE solution quality that is better is to make the algorithm that becomes infeasible unless centralized due to singificant message passing increase. While we observe the increase in performance from JR-LICA, there is also no guarentee of converging to a good solution due to task freezing. If no inconsistencies in situational aweareness are present, an effective alternative is to leverage implcity coordination---running JR-PRIM as a centralized planner on each robot where message passing occurs in memory---
+
+% Results section changes:
+% discuss results by numbers for both robust and then resilient. Illustrate differences in numbers witout being to analytical for space reasons. Then after talking about both results, new paragraph on takeaways above. 
+
+% As a result, this approach may struggle in communication-constrained settings, making JR-LICA a more viable alternative. However, the methods with task freezing have no guarentee of settling on a good solution. We observe that as more global properties are introduced, the solution quality increases. This demonstares the challenges of fomrulating coupled rewards in a decentralized setting and suggest that doing sometihtn more along the lines of implict coordination may be better, where message passing occurs in memoery in a centralized fashion. 
+
+% By directly optimizing over the global objective, our proposed approach capture strongly coupled inter-robot dependencies and mitigates the local greediness of individual agents. Our simulated results demonstrate that our approach consistently produces superior allocations compared to reactive or redundant planning by balancing between guaranteed task value and future support rewards. However, the communication burden demonstrates the significant challenges of addressing this coupling in a decentralized setting. 
+
+
+% relax our communication requirements toward a LICA framework while preserving the benefits of our method.
+
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+\addtolength{\textheight}{-12cm}   % This command serves to balance the column lengths
+                                  % on the last page of the document manually. It shortens
+                                  % the textheight of the last page by a suitable amount.
+                                  % This command does not take effect until the next page
+                                  % so it should come on the page before the last. Make
+                                  % sure that you do not shorten the textheight too much.
+                                  
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+%%%%%%%%%%%%%%%%%%%%-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+
+
+
+
+\end{document}

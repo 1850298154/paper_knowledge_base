@@ -1,0 +1,69 @@
+The unique characteristic that makes VMAS different from the related works compared in \autoref{tab:simulator_comparison} is the fact that our platform brings together multi-agent learning and environment vectorization. Vectorization is a key component to speed-up MARL training. In fact, an on-policy training iteration\footnote{Here we illustrate an on-policy training iteration, but simulation is a key component of any type of MARL algorithm} is comprised of simulated team rollouts and a policy update. During the rollout phase of iteration $k$, simulations are performed to collect experiences from the agents' interactions with the environment according to their policy $\pi_k$. The collected experiences are then used to update the team policy. The new policy $\pi_{k+1}$ will be employed in the rollout phase of the next training iteration. The rollout phase usually constitutes the bottleneck of this process. Vectorization allows parallel simulation and helps alleviate this issue.
+
+
+Inspired by the modularity of some existing solutions, like MPE~\cite{lowe2017multi}, we created our framework as a new scalable platform for running and creating MARL benchmarks. With this goal in mind, we developed VMAS following a set of tenets:
+
+\begin{itemize}
+    \item \textbf{Vectorized}. VMAS vectorization can step any number of environments in parallel. This significantly reduces the time needed to collect rollouts for training in MARL.
+    \item \textbf{Simple}. Complex vectorized physics engines exist (e.g., Brax~\cite{brax2021github}), but they do not scale efficiently when dealing with multiple agents. This defeats the computational speed goal set by vectorization. VMAS uses a simple custom 2D dynamics engine written in PyTorch to provide fast simulation. 
+    \item \textbf{General}. The core of VMAS is structured so that it can be used to implement general high-level multi-robot problems in 2D. It can support adversarial as well as cooperative scenarios. Holonomic robot simulation shifts focus to high-level coordination, obviating the need to learn low-level controls using MARL.
+    \item \textbf{Extensible}. VMAS is not just a simulator with a set of environments. It is a framework that can be used to create new multi-agent scenarios in a format that is usable by the whole MARL community. For this purpose, we have modularized our framework to enable new task creation and introduced interactive rendering to debug scenarios.
+    \item \textbf{Compatible}. VMAS has multiple wrappers which make it directly compatible with different MARL interfaces, including RLlib~\cite{liang2018rllib} and Gym~\cite{brockman2016openai}. RLlib has a large number of already implemented RL algorithms.
+
+\end{itemize}
+Let us break down VMAS's structure in depth.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.85\textwidth]{figures/vmas.pdf}
+\caption{VMAS structure. VMAS has a vectorized MARL interface (left) with wrappers for compatibility with OpenAI Gym~\cite{brockman2016openai} and the RLlib RL library~\cite{liang2018rllib}. The default VMAS interface uses PyTorch~\cite{paszke2019pytorch} and can be used for feeding input already on the GPU. Multi-agent tasks in VMAS are defined as scenarios (center). To define a scenario, it is sufficient to implement the listed functions. Scenarios access the VMAS core (right), where agents and landmarks are simulated in the world using a 2D custom written physics module.}
+\label{fig:vmaps_structure}
+\end{figure}
+
+\textbf{Interface}. The structure of VMAS is illustrated in \autoref{fig:vmaps_structure}. It has a vectorized interface, which means that an arbitrary number of environments can be stepped in parallel in a batch. In \autoref{sec:mpe_comparison}, we demonstrate how vectorization grants important speed-ups on the CPU and seamless scaling on the GPU. While the standard simulator interface uses PyTorch~\cite{paszke2019pytorch} to enable feeding tensors directly as input/output, we provide wrappers for the standard non-vectorized OpenAI Gym~\cite{brockman2016openai} interface and for the vectorized interface of the RLlib~\cite{liang2018rllib} framework. This enables  users to effortlessly access the range of RL training algorithms already available in RLlib. Actions for all environments and agents are fed to VMAS for every simulation step. VMAS supports movement and inter-agent communication actions, both of which can be either continuous or discrete. The interface of VMAS provides rendering through Pyglet~\cite{pyglet}. 
+
+\textbf{Scenario}. Scenarios encode the multi-agent task that the team is trying to solve. Custom scenarios can be implemented in a few hours and debugged using interactive rendering. Interactive rendering is a feature where agents in scenarios can be controlled by users in a videogame-like fashion and all environment-related data is printed on screen. To implement a scenario, it is sufficient to define a few functions: \verb|make_world| creates the agents and landmarks for the scenario and spawns them in the world, \verb|reset_world_at| resets a specific environment in the batch or all environments at the same time, \verb|reward| returns the reward for one agent for all environments, \verb|observation| returns the agent's observations for all environments. Optionally, \verb|done| and \verb|info| can be implemented to provide an ending condition and extra information. Further documentation on how to create new scenarios is available in the \href{https://github.com/proroklab/VectorizedMultiAgentParticleSimulator}{repository}\footref{foot:vmas_url} and in the code.
+
+\textbf{Core}. Scenarios interact with the core. This is where the world simulation is stepped. The world contains $n$ entities, which can be agents or landmarks. Entities have a shape (sphere, box, or line) and a vectorized state $(\mathbf{x}_i,\dot{\mathbf{x}}_i,\theta_i,\dot{\theta}_i ),\, \forall i \in [1..n] \equiv N$, which contains their position $\mathbf{x}_i\in\R^2$, velocity $\dot{\mathbf{x}}_i\in\R^2$, rotation $\theta_i\in\R$, and angular velocity $\dot{\theta}_i \in\R$ for all environments. Entities have a mass $m_i\in\R$ and a maximum speed and can be customized to be movable, rotatable, and collidable. Agents’ actions consist of physical actions, represented as forces $\mathbf{f}^a_i \in \R^2$, and optional communication actions. In the current state of the simulator, agents cannot control their orientation. Agents can either be controlled from the interface or by an “action script” defined in the scenario. Optionally, the simulator can introduce noise to the actions and observations. Custom sensors can be added to agents. We currently support LIDARs.
+The world has a simulation step $\delta t$, velocity damping coefficient $\zeta$, and customizable gravity $\mathbf{g} \in \R^2$.
+
+VMAS has a force-based physics engine. Therefore, the simulation step uses the forces at time $t$ to integrate the state by using a semi-implicit Euler method~\cite{niiranen1999fast}:
+
+\begin{equation}
+    \begin{cases}
+      \mathbf{f}_i(t) = \mathbf{f}^a_i(t) + \mathbf{f}_i^g + \sum_{j \in N \setminus \{i\}}\mathbf{f}_{ij}^e(t) \\
+      \dot{\mathbf{x}}_i(t + 1) = (1-\zeta)\dot{\mathbf{x}}_i(t) + \frac{\mathbf{f}_i(t)}{m_i}\delta t\\
+      \mathbf{x}_i(t + 1) = \mathbf{x}_i(t) + \dot{\mathbf{x}}_i(t + 1)\delta t 
+    \end{cases}\,,
+\end{equation}
+where $\mathbf{f}^a_i$ is the agent action force, $\mathbf{f}_i^g = m_i\mathbf{g}$ is the force deriving from gravity and $\mathbf{f}_{ij}^e$ is the environmental force used to simulate collisions between entities $i$ and $j$. It has the following form:
+
+\begin{equation}
+\mathbf{f}^e_{ij}(t) = 
+\begin{cases}
+    c \frac{\mathbf{x}_{ij}(t)}{\left \| \mathbf{ x}_{ij}(t)\right \|}  k\log{\left(1 + e^{\frac{-\left(\left \| \mathbf{ x}_{ij}(t)\right \|-d_{\textrm{min}}\right)}{k}}\right )} & \quad\text{if }\left \| \mathbf{ x}_{ij}(t)\right \| \leqslant d_{\textrm{min}} \\
+    0  & \quad\text{otherwise}\
+
+    \end{cases}\, .
+\end{equation}
+ Here, $c$ is a parameter regulating the force intensity. $\mathbf{x}_{ij}$ is the relative position between the closest points on the shapes of the two entities. $d_{\textrm{min}}$ is the minimum distance allowable between them. The term inside the logarithm computes a scalar proportional to the penetration of the two entities, parameterized by a coefficient $k$. This term is then multiplied by the normalized relative position vector. Collision intensity and penetration can be tuned by regulating $c$ and $k$. This is the same collision system used in OpenAI MPE~\cite{lowe2017multi}. 
+ 
+ The simulation step used for the linear state is also applied to the angular state:
+
+\begin{equation}
+    \begin{cases}
+      \tau_i(t) =  \sum_{j \in N \setminus \{i\}}\left \| \mathbf{r}_{ij}(t) \times \mathbf{f}^e_{ij}(t) \right \| \\
+      \dot{\theta}_i(t + 1) = (1-\zeta)\dot{\theta}_i(t) + \frac{\tau_i(t)}{I_i}\delta t\\
+      \theta_i(t+1) = \theta_i(t) + \dot{\theta}_i(t+1)\delta t 
+    \end{cases}\,.
+\end{equation}
+Here, $\mathbf{r}_{ij}\in\R^2$ is the vector from the center of the entity to the colliding point, $\tau_i$ is the torque, and $I_i$ is the moment of inertia of the entity. The rules regulating the physics simulation in the  core are basic 2D dynamics implemented in a vectorized manner using PyTorch. They simulate holonomic (unconstrained motion) entities only. 
+
+%Given the current rate of development of vectorized physics simulators, we have also made it possible to eventually swap the core of VMAS with a more complex and realistic engine.
+
+%Holonomic simulation has been chosen in order keep the research focus on using MARL to solve high-level NP-Hard multi-robot coordination problems. 
+
+%The low lever control translation from holonomic to custom robot dynamics can then be tackled by using first-principles-based exact solutions and is not the focus of this project.
+
+
+

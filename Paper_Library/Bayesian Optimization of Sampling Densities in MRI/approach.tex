@@ -1,0 +1,450 @@
+
+In this section, we describe the main ideas of this work after having introduced the notation. 
+
+\subsection{Preliminaries}\label{subsec:preliminaries}
+\paragraph{Images} Let $\mathcal{X}$ denote the set of $K$ training images $\mathcal{X}=\{x_1,\hdots,x_K \}$. A $D$-dimensional image is a vector of $\C^N$, where $N=N_1\hdots N_D$ and $N_d\in 2\mathbb{N}$ denotes the number of pixels in the $d$-th direction. In this work, each index $n\in \llbracket 1, N\rrbracket$, is associated with  a position $p_n\in \left\llbracket -\frac{N_1}{2},\frac {N_1}{2}-1\right\rrbracket \times \hdots \times \left\llbracket-\frac{N_D}{2},\frac{N_D}{2}-1\right\rrbracket$ on Euclidean grid. It describes the location of the $n$-th pixel in the k-space. 
+With a slight abuse of notation, we associate to each discrete image $x_k\in\C^N$, a function still denoted $x_k$, defined by
+\begin{equation*}
+x_k=\left(\sum_{n=1}^N x_k[n] \delta_{p_n}\right)\star \psi,
+\end{equation*}
+where $\star$ denotes the convolution-product and where $\psi$ is an interpolation function. For instance, we can set $\psi$ as the indicator of a grid element to generate piece-wise constant images.
+
+\paragraph{Image quality} To measure the reconstruction quality, we consider an image quality metric $\eta:\R^N\times \R^N\to \R_+$. The experiments in this work are conducted using the squared $\ell^2$ distance $\eta(\tilde x,x)=\frac{1}{2}\|\tilde x - x\|_2^2$. Any other metric could be used instead with the proposed approach.
+
+\paragraph{The Non-Uniform Fourier Transform} Throughout the paper, we let $\xi =(\xi_1, \hdots, \xi_M)\in (\R^D)^M$ denote a set of locations in the k-space (or Fourier domain). Let $A(\xi)\in \C^{M\times N}$ denote the forward non-uniform Fourier transform defined for all $m\in \llbracket 1,M\rrbracket$ and $x\in \C^N$ by
+\begin{align}
+ [A(\xi)(x)]_m &= \int_{t\in \R^D} \exp(- i \langle t,\xi_m\rangle) x(t) \,dt\nonumber \\
+  &=\Psi(\xi_m) \cdot\sum_{n=1}^N x[n] \exp(-i \langle p_n, \xi_m\rangle),\label{eq:def_NUFFT}
+\end{align}
+where $\Psi$ is the Fourier transform of the interpolation function $\psi$.
+
+\paragraph{Image reconstruction} We let $R:\C^M\times (\R^D)^M \times \R^J\to \C^N$ denote an image reconstruction mapping.
+For a measurement vector $y\in \C^M$, a sampling scheme $\xi\in (\R^D)^M$, and a parameter $\lambda\in \R^J$, we let $\tilde x = R(\xi, y,\lambda)$ denote the reconstructed image.
+In this paper, we will consider two different reconstructors:
+\begin{itemize}
+    \item A Total Variation (TV) reconstructor \cite{lustig2008compressed}, which is a standard baseline:
+    \begin{equation}\label{eq:reconstructor_TV}
+    R_1(\xi, y,\lambda)=\argmin_{x\in \C^N} \frac{1}{2}\|A(\xi)x - y\|_2^2 + \lambda \|\nabla x\|_1,
+    \end{equation}
+where $\lambda\geq 0$ is a regularization parameter. The approximate solution of this problem is obtained with an iterative algorithm run for a fixed number of iterations.  We refer the reader to Appendix~\ref{sec:reconstruction_algorithm_TV} for the algorithmic details. This allows us to use the automatic differentiation of PyTorch as described in \cite{ochs2015bilevel}.
+
+    \item An unrolled neural network $R_2(\xi,y,\lambda)$, where $\lambda$ denotes the weights of the neural network.
+There is now a multitude of such reconstructors available in the literature \cite{muckley2021results}.
+They draw their inspiration from classical model-based reconstructors with hand-crafted priors.
+The details are provided in Appendix~\ref{sec:appendix_neural_net_definition}.
+\end{itemize}
+
+
+\paragraph{Constraints on the sampling scheme} As mentioned in the introduction, the sampling positions $\xi=(\xi_1,\hdots,\xi_M)$ correspond to the discretization of a k-space trajectory subject to kinematic constraints. Throughout the paper, we  let $\Xi \subset (\R^D)^M$ denote the constraint set for $\xi$. A sampling set consists of $N_s \in \mathbb{N}$ trajectories (shots) with $P$ measurements per shot. We consider realistic kinematic constraints on these trajectories. Let $\alpha$ denote the maximal speed of a discrete trajectory and $\beta$ denote its maximal acceleration (the slew rate). We let
+\begin{equation}\label{eq:constraint_sets}
+  Q_P^{\alpha,\beta} = \left\{ \xi \in ([-\pi,\pi]^D)^P, \|\dot \xi \|_\infty\leq\alpha, \|\ddot \xi \|_\infty\leq\beta, C\xi=b \right\},
+\end{equation}
+where 
+\begin{align*}
+\|\dot \xi \|_\infty &= \max_{1\leq p \leq P-1} \|\xi_{p+1}-\xi_p\|_2 \\
+\|\ddot \xi \|_\infty &= \max_{2\leq p \leq P-1} \|\xi_{p+1}+\xi_{p-1} - 2 \xi_p\|_2,
+\end{align*}
+where $b$ is a vector and $C$ a matrix encoding some position constraints. For instance, we enforce the first point of each trajectory to start at the origin. Since the sampling schemes consists of $N_s$ trajectories, the constraint set on the sampling is $\Xi=(Q_P^{\alpha,\beta})^{N_s}$. The total number of measurements $M$ is equal to $M=N_s\cdot P$.
+We refer the reader to \cite{chauffert2016projection} for more details on these constraints.
+
+
+\subsection{The challenges of sampling scheme optimization}
+\label{sec:first-section}
+
+In this paper, we consider the optimization of a sampling scheme for a fixed reconstruction mapping $R$. A good sampling scheme should reconstruct the images in the training set $\mathcal{X}$ efficiently on average. Hence, a natural  optimization criterion is 
+\begin{equation}\label{eq:objective_xi}
+    \min_{\xi \in \Xi} \E \left(\frac{1}{K}\sum_{k=1}^K \eta\left( R(\xi,A(\xi)x_k + n,\lambda), x_k) \right)\right).
+\end{equation}
+The term $A(\xi)x_k$ corresponds to the measurements of the image $x_k$ associated with the sampling scheme $\xi$. The expectation is taken with respect to the term $n\in \C^N$ which models noise on the measurements.
+More elaborate forward models can be designed to account for sensibility matrices in multi-coil imaging or for trajectory errors.
+We will not consider these extensions in this paper. Their integration is straightforward -- at least at an abstract level.
+
+Even if problem \eqref{eq:objective_xi} is simple to state (and very similar to \cite{weiss2021pilot, wang2022b}), the practical optimization looks extremely challenging for the following reasons:
+\begin{itemize}
+	\item The computation of the cost function is very costly.
+	\item Computing the derivative of the cost function using backward differentiation requires differentiating a Non-uniform Fast Fourier Transform (NFFT). It also requires a consequent quantity of memory that limits the complexity of the reconstruction mapping.
+	\item The energetic landscape of the functional is usually full of spurious minimizers \cite{gossard2022spurious}.
+	\item The minimization of an expectation calls for the use of stochastic gradient descent, but the additional presence of a constraint set $\Xi$ reduces the number of solvers available.
+\end{itemize}
+Hence, the design of efficient computational solutions is a major issue. It will be the main focus of this paper.
+The following sections are dedicated to the simplification of \eqref{eq:objective_xi} and to the design of a lightweight solver.
+We also propose a home-made solver that attacks \eqref{eq:objective_xi} directly. Since similar ideas were proposed in \cite{wang2022b}, we describe the main ideas and differences in Appendix \ref{sec:solving_xi} only.
+
+\subsection{Regularization and dimensionality reduction}\label{subsec:parametrization}
+
+The non-convexity of \eqref{eq:objective_xi}  is a major hurdle inducing spurious minimizers \cite{gossard2022spurious}.  We discuss the existing solutions to mitigate this problem and give our solution of choice.
+
+\subsubsection{Existing strategies and their limitation}
+In \cite{weiss2021pilot,wang2022b}, the authors propose to avoid local minima by using a multi-scale optimization approach starting from a trajectory described through a small number of control points and progressively getting more complex through the iterations.
+The use of the stochastic Adam optimizer can also allow escaping from narrow basins of attraction. In addition, Adam optimizer can be seen as a preconditioning technique, which can accelerate the convergence, especially for the high frequencies \cite{gossard2022spurious}.
+This optimizer together with a multi-scale approach can yield sampling schemes with improved reconstruction quality at the cost of a long training process.
+However, despite heuristic approaches to globalize the convergence, we experienced significant difficulties in getting reproducible results.
+
+To illustrate this fact, we conducted a simple experiment in Fig.~\ref{fig:optimmultiTVinit}.
+Starting from two similar initial sampling trajectories, we let a multi-scale solver run for 14 epochs and 85 hours on the fastMRI knee database.
+We then evaluate the average reconstruction peak signal-to-noise ratio (PSNR) on the validation set.
+As can be seen, the final point configuration \rev{and the average performance varies by $0.3$dB, which is significant.}
+\rev{This suggests that the algorithm was trapped in a spurious local minimizer and illustrates the difficulty to globalize the convergence.}
+
+\begin{figure}
+    \centering
+    \begin{subfigure}[t]{.24\linewidth}
+        \centering
+        \includegraphics[width=1.0\textwidth]{TV_init_multiscale_10.pdf}
+        \caption{Radial init.}
+    \end{subfigure}
+    \begin{subfigure}[t]{.24\linewidth}
+        \centering
+        \includegraphics[width=1.0\textwidth]{TV_multiscale_10.pdf}
+        \caption{Optimized scheme\\$33.48$dB}
+    \end{subfigure}
+    \begin{subfigure}[t]{.24\linewidth}
+        \centering
+        \includegraphics[width=1.0\textwidth]{TV_init_multiscale_boxinit_10.pdf}
+        \caption{Box init.}
+    \end{subfigure}
+    \begin{subfigure}[t]{.24\linewidth}
+        \centering
+        \includegraphics[width=1.0\textwidth]{TV_multiscale_boxinit_10.pdf}
+        \caption{Optimized scheme\\ $33.17$dB}
+    \end{subfigure}
+    \caption{The globalization issue: optimizing a scheme with an advanced multi-scale approach yields different average PSNR when starting from different point configurations. In this experiment, we used a total variation reconstruction algorithm and $10\%$ undersampling.}
+    \label{fig:optimmultiTVinit}
+\end{figure}
+
+\subsubsection{Optimizing a sampling density}\label{subsubsec:reparam}
+
+The key idea in this paper is to regularize the problem by optimizing a sampling density rather than the point positions directly. 
+To formalize this principle we need to introduce two additional ingredients:
+\begin{enumerate}
+    \item A \emph{probability density generator} $\rho:\R^L\to \mathcal{P}$, where $\mathcal{P}$ is the set of probability distributions on $\R^D$. In this paper, $\rho$ will be defined as a simple affine mapping, but we could also consider more advanced generators such as Generative Adversarial Networks.
+    \item A \emph{trajectory sampler} $\Sc_M:\Pc \to (\R^D)^M$, which maps a density $\rho$ to a point configuration $\Sc_M(\rho) \in (\R^D)^M$. Various possibilities could be considered such as Poisson point sampling, Poisson disk sampling. In this paper, we will use discrepancy based methods \cite{boyer2016generation}.
+\end{enumerate}
+
+Instead of minimizing \eqref{eq:objective_xi}, we propose to work directly with the density. 
+Letting $\xi:\R^L\to (\R^D)^M$ denote the mapping defined by
+\begin{equation}
+\xi(z) \eqdef \Sc_M(\rho(z)),
+\end{equation}
+we propose to minimize:
+\begin{equation}\label{eq:objective_rho}
+F(z) \eqdef \min_{z \in \Cc\subset \R^L} \frac{1}{K}\sum_{k=1}^K \E\left(\eta\left[ R( \xi(z) ,A(\xi(z))x_k + n,\lambda), x_k \right]\right),
+\end{equation}
+where the expectation is taken with respect to the noise term $n$. A schematic illustration of this approach is proposed in Fig.~\ref{fig:optimizationdensity}.
+
+\begin{figure*}
+    \begin{center}
+      \tikzset{transition/.style = {rectangle, rounded corners, draw=black!70, dashed, thick, minimum width=15cm, minimum height=6cm},}
+      \begin{tikzpicture}
+        \footnotesize
+        \node[align=center] (input) at (0.5,2.7) {$z\in\R^L$};
+        \node[draw, rounded corners, align=center, minimum height=0.9cm, text height=0.9cm] (denformula) at (0.5,1) {$\rho(z)=\mu_0+\sum_{l=1}^L z_l\mu_l$};
+        \node[align=center] (density_title) at ([yshift=-10pt]denformula.north) {\textbf{Density generator}};
+
+
+        \node[align=center] (den1) at (0.8,-0.7)     {\includegraphics[width=0.07\textwidth]{den_3.png}};
+        \node[align=center] (den2) at (0.5,-1) {\includegraphics[width=0.07\textwidth]{den_2.png}};
+        \node[align=center] (den3) at (0.2,-1.3) {\includegraphics[width=0.07\textwidth]{den_1.png}};
+        \node[align=center] (text_family_den) at ([xshift=1.4cm]den2.east) {Family of\\ eigen-densities\\ $(\mu_l)_{1 \leq l\leq L}$};
+
+        \node[align=center] (denTV) at (2.95,2)  {\includegraphics[width=0.07\textwidth]{pi_TV_BO_25.png}};
+        \node[align=center] (xiTV)  at (6.95,2)  {\includegraphics[width=0.07\textwidth]{xi_TV_BO_25.png}};
+
+        \node[draw, rounded corners, align=center, minimum height=0.9cm, text height=0.9cm] (sampler) at (5,1) {$\xi(z) = \Sc_M(\rho(z))$};
+        \node[align=center] (density_title) at ([yshift=-10pt]sampler.north) {\textbf{Sampler}};
+
+        \node[align=center] (img3) at (10,-1) {\includegraphics[width=0.07\textwidth]{img1.png}};
+        \node[align=center] (img2) at (10.2,-0.8) {\includegraphics[width=0.07\textwidth]{img2.png}};
+        \node[align=center] (img1) at (10.4,-0.6) {\includegraphics[width=0.07\textwidth]{img3.png}};
+        \node[align=center] (text_training_img) at ([xshift=1cm]img2.east) {Training\\ images \\ $(x_k)_{1 \leq k\leq K}$};
+
+        \node[draw, transition] (forward) at (5.7,1) {};
+        \node[align=center, black!70] (text_forward) at ([yshift=-0.4cm, xshift=-1.5cm]forward.south east) {Forward model};
+
+        \node[draw, rounded corners, align=center, minimum height=0.9cm, text height=0.9cm] (recon) at (10.2,1) {$\tilde x_k(z) = R\left(\xi(z),A(\xi(z))x_k+n,\lambda\right)$};
+        \node[align=center] (recon_title) at ([yshift=-10pt]recon.north) {\textbf{Reconstructor}};
+        \node[draw, rounded corners, align=center, minimum width=1.5cm, minimum height=0.9cm, text height=0.9cm] (metric) at (10.2,3) {$\sum_k \eta(\tilde x_k(z),x_k)$};
+        \node[align=center] (metric_title) at ([yshift=-10pt]metric.north) {\textbf{Metric}};
+        \draw[->,draw,thick,black] (input.south) to (denformula.north);
+        \draw[->,draw,thick,black] (denformula.east) to (sampler.west) node [left,xshift=-0.3cm,yshift=-0.3cm] {$\rho(z)$};
+        \draw[->,draw,thick,black] (sampler.east) to (recon.west) node [left,xshift=-0.3cm,yshift=-0.3cm] {$\xi(z)$};
+        \draw[->,draw,thick,black] (recon.north) to (metric.south);
+        \draw[->,draw,thick,black] (den2.north) to (denformula.south);
+        \draw[->,draw,thick,black] (img2.north) to (recon.south);
+
+        \path[draw,thick,-latex] (metric) -- ++(0,2) -| (input) node [pos=0.05,left,yshift=0.25cm] {Optimization routine};
+      \end{tikzpicture}
+    \end{center}
+    \caption{A schematic illustration of the proposed algorithm. We generate a sampling density $\rho(z)$ through an affine combination of eigen-elements $(\mu_l)$. The density is then used in a sampling pattern generator $\Sc_M$ which yields a sampling trajectory $\xi(z)$. A set of training images are then reconstructed using this scheme. This allows computation of the (batch) average error. A zero-th, or first order (automatic differentiation) optimization routine optimizes the sampling density iteratively. \label{fig:optimizationdensity}}
+\end{figure*}
+
+
+
+\subsubsection{The density generator}\label{subsubsec:dengenerator}
+
+Various approaches could be used to define a density generator $\rho$.
+In this work, we simply define $\rho(z)$ as an affine mapping, i.e.
+\begin{equation}
+    \rho(z) \eqdef \mu_0 + \sum_{l=1}^L z_l \mu_l,
+\end{equation}
+where $z$ belongs to a properly defined convex set $\Cc$. 
+We describe hereafter how the eigen-elements $(\mu_l)_l$ and the set $\Cc$ are constructed.
+
+\paragraph{A candidate space of densities}
+
+The general idea of our construction is to define a family of elementary densities and to enrich it by taking convex combinations of its elements. 
+
+Let $\theta\in [0,\pi[$ denote a rotation angle, $\sigma_x,\sigma_y$ denote lengths, $r>0$ denote a density at the center and $\gamma>0$ a decay rate. 
+For $(x,y)\in \R^2$, let $x_\theta = x\cos(\theta)+y\sin(\theta)$, $y_\theta=-\sin(\theta)x + \cos(\theta)y$. We define
+\begin{equation}\label{eq:family_of_densities}
+    g(x,y;\sigma_x,\sigma_y,\theta, r, \gamma) = \frac{1}{c} \min\left(r, \frac{1}{ \left(\left(\frac{x_\theta}{\sigma_x}\right)^2+\left(\frac{y_\theta}{\sigma_y}\right)^2+\epsilon \right)^\gamma}\right),
+\end{equation}
+where $c$ is a normalizing constant such that $\int_{\R^2} g = 1$. We then smooth the function $g$ by convolving it with a Gaussian function $G_\kappa$ of standard deviation $\kappa>0$:
+\begin{equation}
+\pi = G_\kappa \star g.
+\end{equation}
+
+The elements in this family are good candidates for sampling densities: i) they are nearly constant and approximately equal to $r$ at the center of the k-space, ii) they can be anisotropic to accommodate for specific image orientations and iii) they have various decay rates, allowing sampling the high frequencies more or less densely. Some examples of such densities are displayed in Fig.~\ref{fig:exampledensities1}. 
+However, the family of densities generated by this procedure is quite poor. For instance, it is impossible to sample densely both the $x$ and $y$ axes simultaneously. 
+In order to enrich it, we propose to consider the set of convex combinations of these elementary densities.
+This allows us to construct more general multi-modal densities, see  Fig.~\ref{fig:exampledensities2} for examples of such convex combinations.
+
+\paragraph{Dimensionality reduction}
+
+In order to construct the family $(\mu_0,\hdots,\mu_L)$, we first draw a large family of $I\gg L$ densities $(\pi_i)_{1\leq i \leq I}$.
+They are generated at random by uniform draws of the parameters $(\sigma_x,\sigma_y,\theta, t, \gamma)$ inside a box. 
+We then perform a principal component analysis (PCA) on this family to generate some eigen-elements $(\nu_l)_{0\leq l \leq L}$.
+We set $\mu_0 = \nu_0/\langle \nu_0, \one\rangle$. 
+Since probability densities must sum to $1$, we orthogonalize the family $(\nu_l)$ with respect to the vector $\mu_0$. 
+Thereby, we obtain a second family $(\mu_l)_{0\leq l\leq L}$ that satisfies $\langle \mu_0 , \one\rangle = 1$ and $\langle \mu_l, \one\rangle = 0$ for all $1\leq l\leq L$. This procedure discards one dimension. The resulting PCA basis is illustrated in Fig.~\ref{fig:exampledensities3}. 
+
+Let $\mathcal E$ denote the intersection of the span of $(\mu_l)_{l\le L}$ with the probability densities and $\Pi_{\mathcal E}$ the orthogonal projection on $\mathcal E$. The space of densities is the convex hull of the family $(\pi_i)_i$ projected on $\mathcal E$:
+\begin{equation}\label{eq:convex_hull}
+\Cc \eqdef \text{Conv}\left(\Pi_{\mathcal E}\left(\pi_i\right), 1\leq i \leq I \right).
+\end{equation}
+As illustrated in Fig.~\ref{fig:exampledensities2}, this process overall provides a rather rich and natural family.
+\rev{In practice, we select a value $L=20$, so that the $\ell_2$ tail of the singular values contains less than $1\%$ of the energy.
+This value is also a compromise between numerical complexity (the higher $L$, the more complex) and the richness of the family of densities that can be generated.}
+
+\begin{figure*}
+    \centering
+    \begin{subfigure}[t]{0.49\textwidth}
+        \centering
+        \includegraphics[width=0.2\textwidth]{pi_0.png}%
+        \includegraphics[width=0.2\textwidth]{pi_1.png}%
+        \includegraphics[width=0.2\textwidth]{pi_2.png}%
+        \includegraphics[width=0.2\textwidth]{pi_3.png}%
+        \includegraphics[width=0.2\textwidth]{pi_4.png}%
+        \caption{Examples of $\pi_i$ \label{fig:exampledensities1}}
+    \end{subfigure}\hfill
+    \begin{subfigure}[t]{0.49\textwidth}
+        \centering
+        \includegraphics[width=0.2\textwidth]{rho_0.png}%
+        \includegraphics[width=0.2\textwidth]{rho_1.png}%
+        \includegraphics[width=0.2\textwidth]{rho_2.png}%
+        \includegraphics[width=0.2\textwidth]{rho_3.png}%
+        \includegraphics[width=0.2\textwidth]{rho_4.png}%
+        \caption{Examples of $\rho(z)$ \label{fig:exampledensities2}}
+    \end{subfigure}\\
+    \begin{subfigure}[t]{\textwidth}
+        \centering
+        \includegraphics[width=0.1\textwidth]{mu_0.png}%
+        \includegraphics[width=0.1\textwidth]{mu_1.png}%
+        \includegraphics[width=0.1\textwidth]{mu_2.png}%
+        \includegraphics[width=0.1\textwidth]{mu_3.png}%
+        \includegraphics[width=0.1\textwidth]{mu_4.png}%
+        \includegraphics[width=0.1\textwidth]{mu_5.png}%
+        \includegraphics[width=0.1\textwidth]{mu_6.png}%
+        \includegraphics[width=0.1\textwidth]{mu_7.png}%
+        \includegraphics[width=0.1\textwidth]{mu_8.png}%
+        \includegraphics[width=0.1\textwidth]{mu_9.png}%
+        \caption{$\mu_l$ for $0\leq l\leq 9$ \label{fig:exampledensities3}}
+    \end{subfigure}
+    \caption{Examples of densities using the proposed parameterization.}
+    \label{fig:exampledensities}
+\end{figure*}
+
+
+\subsubsection{The sampler}
+\label{sec:sampler}
+
+The sampler $\Sc_M:\Pc \to (\R^D)^M$ is based on discrepancy minimization \cite{schmaltz2010electrostatic,graf2012quadrature,chauffert2017projection}. It is defined as an approximate solution of
+\begin{equation}\label{eq:discrepancy}
+    \Sc_M(\rho) = \argmin_{\xi \in \Xi} \mathrm{dist}\left(\frac{1}{n}\sum_{m=1}^M \delta_{\xi[m]} , \rho\right),
+\end{equation}
+where \rev{$\delta_{\xi[m]}$ indicates the Dirac delta function, $\Xi\subset(\R^D)^M$ is the set of feasible discrete trajectories} and $\mathrm{dist}$ is a discrepancy defined by
+\begin{equation*}
+    \mathrm{dist}(\mu,\nu) = \sqrt{\langle h\star (\mu-\nu), (\mu-\nu)\rangle_{L^2(\R^D)}},
+\end{equation*}
+where $h$ is a positive definite kernel (i.e. a function with a real positive Fourier transform). 
+Other metrics on the set of probability distributions could be used such as the transportation distance \cite{lebrat2019optimal}.
+The formulation \eqref{eq:discrepancy} has already been proposed in \cite{chauffert2017projection} and it is at the core of the Sparkling scheme generation \cite{lazarus2019sparkling}. We will discuss the choice of the kernel $h$ in the numerical experiments: it turns out to play a critical role.
+
+In practice \eqref{eq:discrepancy} is not solved exactly: an iterative solver \cite{chauffert2016projection} is ran for a fixed number of iterations. This allows the use of automatic differentiation in order to compute the Jacobian of $\xi$ w.r.t. $z$.
+Technical details about the implementation of this sampler are provided in Appendix~\ref{subsec:computational_details}.
+
+\subsubsection{The pros and cons of this strategy}
+
+The optimization problem \eqref{eq:objective_rho} presents significant advantages compared to the original one \eqref{eq:objective_xi}:
+\begin{itemize}
+    \item The number of optimization variables is considerably reduced: instead of working with $D\cdot M$ variables, we now only work with $L \ll D\cdot M$ variables defining a continuous density. In this paper we set $L=20$ which is considerably smaller in comparison to the $M=25 801$ 2D sampling points for the formulation of \eqref{eq:objective_xi} with $25\%$ undersampling on $320\times 320$ images. This allows resorting to global optimization routines. Hereafter, we will describe a Bayesian optimization approach.
+    \item The point configurations generated by this algorithm are always locally uniform since they correspond to the minimizers of a discrepancy. Clusters are therefore naturally discarded, which can be seen as a natural regularization scheme.
+    \item As discussed in the numerical experiments, the regularization effect allows optimizing the sampling density with a small dataset with a similar performance. Optimizing the function with as little as $32$ reference images yields a near optimal density.
+    This aspect might be critical for small databases.
+\end{itemize}
+
+On the negative side, notice that we considerably constrained the family of achievable trajectories, thereby reducing the maximal achievable gain. We 
+will show later that the trajectories obtained by minimizing \eqref{eq:objective_rho} are indeed slightly less efficient than those obtained with \eqref{eq:objective_xi}. This price might be affordable if we compare it to the advantages of having a significantly faster and more robust solver requiring only a fraction of the data needed for solving \eqref{eq:objective_xi}.
+
+
+\subsection{The optimization routine}\label{subsec:bayesian_optim}
+
+In this section, we describe an algorithmic approach to attack the problem \eqref{eq:objective_rho}.
+
+\subsubsection{The non informativeness of the gradient}\label{subsec:bayesian_optim:gradient}
+
+\rev{A natural approach to solve \eqref{eq:objective_rho} is to optimize the coefficients $z\in\R^{L}$ using a gradient based algorithm. Indeed, one may hope that the reparameterization of the cost function with a density prevents the appearance of spurious minimizers described in \cite{gossard2022spurious}. Unfortunately, this is not the case and gradient based algorithms might be trapped in such local minimizers.
+Fig.~\ref{fig:oscillations_TV} and \ref{fig:oscillations_TV2} illustrate this fact.
+In Fig.~\ref{fig:oscillations_TV}, the baseline sampling scheme is shifted continuously in the $x$ and $y$ directions. The cost function is evaluated for each shift and displayed in the right. Observe that many local minimizers are present.
+Similarly, in Fig.~\ref{fig:oscillations_TV2}, a target density is varied continuously in a subspace consisting of $L=2$ eigen-elements $(\mu_1,\mu_2)$.
+Again, the energy profiles on the right are highly oscillatory.}
+
+Overall, this experiment shows that the gradient direction is not meaningful: it oscillates in an erratic way.
+This advocates for the use of 0\textsuperscript{th} order optimization methods.
+A significant advantage of this observation is that it allows discarding the memory and time issues related to automatic differentiation. 
+
+\begin{figure*}[htbp]
+    \centering
+        \begin{subfigure}[b]{0.65\textwidth}
+            \centering
+            \includegraphics[width=1\textwidth]{xi.png}
+            \caption{Sampling scheme \\ \ \label{fig:oscillations_TV_left}}
+        \end{subfigure} 
+        \begin{subfigure}[b]{0.34\textwidth}
+            \begin{center}
+                \begin{tikzpicture}
+                    \node[align=center] at (0,0){\includegraphics[height=3.3cm]{shift_cf_nbatch=100.pdf}};
+                    \node[align=center] at (0,3.3){\includegraphics[height=3.3cm]{shift_cf_nbatch=10.pdf}};
+                    \node[align=center] at (0,6.6){\includegraphics[height=3.3cm]{shift_cf_nbatch=1.pdf}};
+                \end{tikzpicture}
+            \end{center}
+            \vspace{-2em}
+            \caption{Energy profiles for \\ $K\in \{1, 10, 100\}$ images. \label{fig:energyprofiles}}
+        \end{subfigure}
+    \caption{\rev{Spurious minimizers through the shift experiment. Here, the sampling scheme on the left \ref{fig:oscillations_TV_left} is continuously shifted on the x and y axes. For each $(x,y)$-shift position, we reconstruct a set of $K$ images, and evaluate the mean square reconstruction error. This way, we can visualize a slice of the energy profile. The results are show in Fig.~\ref{fig:energyprofiles} for $K=1,10,100$ images from top to bottom. In this Figure, the gray grid indicates the Shannon sampling distance.  Here, we consider a total variation reconstructor and $25\%$ undersampling. Observe that the oscillation amplitude decays with the number of images, but spurious minimizers are present whatever the number of images.\label{fig:oscillations_TV}}}
+\end{figure*}
+
+
+\begin{figure*}[htbp]
+    \newcommand{\fle}{3.3cm}
+    \newcommand{\fli}{2.8cm}
+    \centering
+    \begin{subfigure}[b]{0.65\textwidth}
+        \begin{center}
+            \begin{tikzpicture}
+                \footnotesize
+                \node[align=center] (im02) at (0,2*\fle) {\includegraphics[width=\fli]{denextrem_i=0_j=2.png}};
+                \node[align=center] (im12) at (\fle,2*\fle) {\includegraphics[width=\fli]{denextrem_i=1_j=2.png}};
+                \node[align=center] (im22) at (2*\fle,2*\fle) {\includegraphics[width=\fli]{denextrem_i=2_j=2.png}};
+                \node[align=center] (im01) at (0,1*\fle) {\includegraphics[width=\fli]{denextrem_i=0_j=1.png}};
+                \node[align=center] (im11) at (\fle,\fle) {\includegraphics[width=\fli]{denextrem_i=1_j=1.png}};
+                \node[align=center] (im21) at (2*\fle,\fle) {\includegraphics[width=\fli]{denextrem_i=2_j=1.png}};
+                \node[align=center] (im00) at (0,0) {\includegraphics[width=\fli]{denextrem_i=0_j=0.png}};
+                \node[align=center] (im10) at (\fle,0) {\includegraphics[width=\fli]{denextrem_i=1_j=0.png}};
+                \node[align=center] (im20) at (2*\fle,0) {\includegraphics[width=\fli]{denextrem_i=2_j=0.png}};
+                \draw[->,thick] ([yshift=-0.2cm]im00.south west) -- ([yshift=-0.2cm]im20.south east) node [pos=0.5,below,font=\footnotesize] {$x$};
+                \draw[->,thick] ([xshift=-0.2cm]im00.south west) -- ([xshift=-0.2cm]im02.north west) node [pos=0.5,left,font=\footnotesize] {$y$};
+            \end{tikzpicture}
+        \end{center}
+        \caption{Sampling densities \label{fig:oscillations_TV2:1}}
+    \end{subfigure}
+    \begin{subfigure}[b]{0.34\textwidth}
+        \begin{center}
+            \begin{tikzpicture}
+                \node[align=center] at (0,0){\includegraphics[height=3.6cm]{pca_cf_nbatch=100.pdf}};
+                \node[align=center] at (0,3.5){\includegraphics[height=3.6cm]{pca_cf_nbatch=10.pdf}};
+                \node[align=center] at (0,7){\includegraphics[height=3.6cm]{pca_cf_nbatch=1.pdf}};
+            \end{tikzpicture}
+        \end{center}
+        \vspace{-2em}
+        \caption{Energy profiles for \\ $K\in \{1, 10, 100\}$ images. \label{fig:oscillations_TV2:2}}
+    \end{subfigure}
+    \caption{\rev{Spurious minimizers with variations in the density space. Different sampling schemes are generated with the Sparkling algorithm for various target densities. The densities are linear combinations the two leading principal components, indexed by $x$ and $y$ in Fig.~\ref{fig:oscillations_TV2:1}. The sampling scheme corresponding to the density in the middle ($x=y=0$) is displayed in Fig.~\ref{fig:oscillations_TV_left}. The plots in Fig.~\ref{fig:oscillations_TV2:2} show the energy profile for continuously varying target densities. The number of images $K$ used to evaluated the energy varies from $K=1$ (top) to $K=100$ (bottom). The 3x3 densities in Fig.~\ref{fig:oscillations_TV2:2} are indicated by red crosses in Fig.~\ref{fig:oscillations_TV2:2}.  We consider a total variation reconstructor and $25\%$ undersampling. Similarly to the experiment in Fig.~\ref{fig:energyprofiles}, observe the numerous spurious minimizers occuring whatever the number $K$ of images in the database.\label{fig:oscillations_TV2}}}
+\end{figure*}
+
+
+\subsubsection{Bayesian optimization}
+
+As can be seen from the energy profiles in Fig.~\ref{fig:oscillations_TV}, the cost function seems to be decomposable as a smooth function plus an oscillatory one of low amplitude. 
+This calls for the use of algorithms that i) sample the function at a few scattered points, ii) construct a smooth surrogate approximation, iii) find a minimizer of the surrogate and add it to the explored samples, iv) go back to ii). 
+
+Bayesian Optimization (BO) \cite{frazier2018tutorial} is a principled approach that follows these steps. 
+It seems particularly adequate since it models uncertainty on the function evaluations and comes with advanced solvers \cite{balandat2020botorch}. Its application is nonetheless nontrivial and requires some care in our setting. We describe some technical details hereafter.
+
+Consider an objective function of the form
+\begin{equation*}
+\inf_{z\in \Cc} \E \left( F(z, V)\right),
+\end{equation*}
+where \rev{the expectation is taken with respect to a random vector $V$}. In our setting, $V$ models both the noise $n$ and the input images $x_k$. We consider $V$ to be a random vector taken uniformly inside a database. In that setting, Bayesian optimization requires the following ingredients:
+\begin{enumerate}
+    \item An initial sampling set. 
+    \item A black-box evaluation routine of $F(z,V)$. 
+    \item A family of interpolation functions together with a regression routine. 
+    \item A solver that minimizes the regression function. 
+\end{enumerate}
+Hereafter, each choice made in this work is described.
+ 
+\paragraph{The initial sampling set}
+
+To initialize the algorithm, we need the convex set $\Cc$ to be covered as uniformly as possible in order to achieve a good uniform approximation of the energy profile. 
+In this work, we used a maximin space covering design \cite{pronzato2017minimax}. 
+The idea is to construct a discrete set $\Zc=\{z_1,\hdots, z_P\}$ that solves approximately
+\begin{equation}
+    \max_{\Zc \in \Cc^P} \min_{p'\neq p}\|x_p-x_{p'}\|_2.
+\end{equation}
+In words, we want the minimal distance between pairs of points in $\Zc$ to be as large as possible. 
+This problem is known to be hard. In this work we used the recent solver proposed in \cite{debarnot2022deep} together with the Faiss library \cite{johnson2019billion}.
+
+
+\paragraph{The evaluation routine}
+
+Evaluating the cost function \eqref{eq:objective_rho} is not an easy task. 
+For just one realization of the noise $n$ and image $x_k$, we need a fast reconstruction method and a fast way to evaluate the non-uniform Fourier transform. The technical details are provided in the appendix \ref{sec:implementation}.
+Second, $K$ might be very large. For instance, the fastMRI knee training database contains more than 30 000 slices of size $320\times 320$.
+Hence, it is impossible to compute the complete function and it is necessary to either pick a random, but otherwise fixed subset of the images, or to consider random batches that would vary from one iteration to the next.
+A similar comment holds for the noise term $n$.
+
+While Bayesian optimization allows the use of random functions, \rev{it requires evaluating expectations, i.e. integrals. This is typically achieved with Monte-Carlo methods, which is computationally costly}. Hence, in all the forthcoming experiments, we will fix a subset of $K$ images. In practice, we observed that using random batches increases the computational load without offering perceptible advantages.
+
+\paragraph{The interpolation process}
+
+In Bayesian optimization, a Gaussian process is used to model the underlying unknown function.
+This random process models both the function and the uncertainty associated with each prediction.
+This uncertainty is related to the fact that the function $F$ is evaluated only at a finite number of points hence leading to an unknown behavior when getting distant from the samples.
+It is also related to the fact that the function evaluations might be noisy.
+Every sampled point has a zero variance when using a fixed realization or a low variance when using random noise and batches.
+The variance increases with the distance between the sampled points.
+
+In our experiments, the Gaussian process is constructed using a Matern kernel of parameter $5/2$, which is a popular choice for dimensions in the range $[5,20]$. It is defined as
+\begin{equation*}
+\Phi(z_1,z_2) = \left( 1 + \frac{\sqrt{5}\|z_1-z_2\|_2}{\nu} + \frac{5\|z_1-z_2\|_2^2}{3\nu^2} \right) \exp\left( \frac{-\sqrt{5}\|z_1-z_2\|_2}{\nu}\right),
+\end{equation*}
+where $\nu$ is a scaling parameter that controls the smoothness of the interpolant and its point-wise variance. 
+In practice, the value of $\nu$ is a parameter that is optimized at each iteration when fitting the Gaussian process to the sampled data.
+
+The interpolant mean and its variance are then evaluated by solving a linear system constructed using the kernel $\Phi$ and the sampled points $z_1,\hdots, z_P$. We refer to \cite{frazier2018tutorial} for more details.
+
+\paragraph{Sampling new points}
+
+Bayesian optimization works by iteratively sampling new points. The point in the sampling set with lowest function value, is an approximation of the minimizer. 
+To choose a new point, there is a trade-off between finding a better minimizer in the neighborhood of this point and space exploration. Indeed, big gaps in between the samples could hide a better minimizer. This trade-off is managed through a so-called utility function. In this work, we chose the expected improvement \cite{frazier2018tutorial}, resulting in a new function $\Lc(z)$. The new sampled point is found by solving a constrained non-convex problem:
+\begin{equation*}
+\inf_{z\in \Cc} \Lc(z)
+\end{equation*}
+Since the function $\Lc$ is non-convex, we use a multi-start strategy. 
+We first sample $1000$ points evenly in $\Cc$ using a maximin design.
+Then, we launch many projected gradient descents on $\Lc$ in parallel, starting from those points. 
+\rev{Notice that the gradient is evaluated with respect to the surrogate interpolation function, and not with respect to the target density.}
+The best critical point is chosen and added as a new sample. 
+
+This process requires projecting $z$ on $\Cc$ defined in \eqref{eq:convex_hull}. To this end, we designed an efficient first order solver.

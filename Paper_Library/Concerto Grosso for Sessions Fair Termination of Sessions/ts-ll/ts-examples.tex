@@ -1,0 +1,580 @@
+\beginbass
+%
+We dedicate the rest of the section to show some more involved
+examples. In \Cref{ex:parallel_programming} we show the implementation of 
+a \emph{parallel programming pattern}. 
+%
+\Cref{ex:forwarder} models a simple $\Forwarder$ that has the peculiarity 
+of unfolds a leas fixed point infinitely many times.
+%
+At last, in \Cref{ex:slot_machine} we model a slot machine.
+
+\begin{example}[Parallel Programming]
+    \label{ex:parallel_programming}
+    %
+    In this example we see a \piLIN modeling of a \emph{parallel programming
+    pattern} whereby a $\Work$ process creates an unbounded number of workers
+    each one dedicated to an independent task and a $\Gather$ process collects
+    and combines the partial results from the workers. The processes $\Work$ and
+    $\Gather$ are defined as follows:
+    \begin{align*}
+        \Work(x) & =
+        \Rec\x.\parens{
+            \PiChoice{
+                \Select\ComplexTag\x.\Fork\x\y{\PiClose\y}{\Call\Work\x}
+            }{
+                \Select\SimpleTag\x.\PiClose\x
+            }
+        }
+        \\
+        \Gather(x,z) & =
+        \Corec\x.
+        \Case\x{
+            \Join\x\y.\PiWait\y.\Call\Gather{x,z}
+        }{
+            \PiWait\x.\PiClose\z
+        }
+    \end{align*}
+
+    At each iteration the $\Work$ process non-deterministically decides whether
+    the task is $\ComplexTag$ (left hand side of the choice) or $\SimpleTag$
+    (right hand side of the choice). In the first case, it bifurcates into a new
+    worker, which in the example simply sends a unit on $y$, and another
+    instance of itself. In the second case it terminates.
+    %
+    The $\Gather$ process joins the results from all the workers before
+    signalling its own termination by sending a unit on $z$. Note that the
+    number of actions $\Gather$ has to perform before terminating is unbounded,
+    as it depends on the non-deterministic choices made by $\Work$.
+
+    Below is a typing derivation for $\Work$ where $\FormulaF \eqdef
+    \tmu\X.(\One \tfork X) \plinchoice \One$ and $a$ is an arbitrary atomic address:
+    \[
+        \begin{prooftree}
+            \[
+                \[
+                    \[
+                        \[
+                            \justifies
+                            \qtp{
+                                y : \One
+                            }{
+                                \PiClose\y
+                            }
+                            \using\refrule[close]\PiCloseRule
+                        \]
+                        \quad
+                        \[
+                            \mathstrut\smash\vdots
+                            \justifies
+                            \qtp{
+                                x : \FormulaF_{ailr}
+                            }{
+                                \Call\Work\x
+                            }
+                        \]
+                        \justifies
+                        \qtp{
+                            x : (\One \tfork \FormulaF)_{ail}
+                        }{
+                            \Fork\x\y{\PiClose\y}{\Call\Work\x}
+                        }
+                        \using\refrule[fork]\ForkRule
+                    \]
+                    \justifies
+                    \qtp{
+                        x : ((\One \tfork \FormulaF) \plinchoice \One)_{ai}
+                    }{
+                        \Select\ComplexTag\x\dots
+                    }
+                    \using\refrule[select]\SelectRule
+                \]
+                \[
+                    \justifies
+                    \qtp{
+                        x : \dots %((\One \tfork \FormulaF) \plinchoice \One)_{ai}
+                    }{
+                        \Select\SimpleTag\x.\PiClose\x
+                    }
+                    \using\refrule[close]\PiCloseRule,\refrule[select]\SelectRule
+                \]
+                \justifies
+                \qtp{
+                    x : ((\One \tfork \FormulaF) \plinchoice \One)_{ai}
+                }{
+                    \PiChoice{
+                        \Select\ComplexTag\x.\Fork\x\y{\PiClose\y}{\Call\Work\x}
+                    }{
+                        \Select\SimpleTag\x.\PiClose\x
+                    }
+                }
+                \using\refrule\PiChoiceRule
+            \]
+            \justifies
+            \qtp{
+                x : \FormulaF_\address
+            }{
+                \Call\Work\x
+            }
+            \using\refrule[rec]\RecRule
+        \end{prooftree}
+    \]
+
+    Note that the only infinite branch in this derivation is unfair because it
+    traverses infinitely many choices with rank $1 = \rankof{\Call\Work\x}$. So,
+    $\Work$ is well typed.
+
+    Concerning $\Gather$, we obtain the following typing derivation where
+    $\FormulaG \eqdef \tnu\X.(\Bot \tjoin X) \plinbranch \Bot$:
+    \[
+        \begin{prooftree}
+            \[
+                \[
+                    \[
+                        \[
+                            \mathstrut\smash\vdots
+                            \justifies
+                            \qtp{
+                                x : \FormulaG_{\dual ailr},
+                                z : \One
+                            }{
+                                \Call\Gather{x,z}    
+                            }
+                        \]
+                        \justifies
+                        \qtp{
+                            x : \FormulaG_{\dual ailr},
+                            y : \Bot,
+                            z : \One
+                        }{
+                            \PiWait\y.\Call\Gather{x,z}
+                        }
+                        \using\refrule[wait]\PiWaitRule
+                    \]
+                    \justifies
+                    \qtp{
+                        x : (\Bot \tjoin \FormulaG)_{\dual ail},
+                        z : \One
+                    }{
+                        \Join\x\y.\PiWait\y.\Call\Gather{x,z}
+                    }
+                    \using\refrule[join]\JoinRule
+                \]
+                \[
+                    \justifies
+                    \qtp{
+                        x : \Bot,
+                        z : \One
+                    }{
+                        \PiWait\x.\PiClose\z
+                    }
+                    %\using\refrule[close]\PiCloseRule,\refrule[wait]\PiWaitRule
+                \]
+                \justifies
+                \qtp{
+                    x : ((\Bot \tjoin \FormulaG) \plinbranch \Bot)_{\dual ai},
+                    z : \One
+                }{
+                    \Case\x{
+                        \Join\x\y.\PiWait\y.\Call\Gather{x,z}
+                    }{
+                        \PiWait\x.\PiClose\z
+                    }            
+                }
+                \using\refrule[case]\CaseRule
+            \]
+            \justifies
+            \qtp{
+                x : \FormulaG_{\dual a},
+                z : \One
+            }{
+                \Call\Gather{x,z}
+            }
+            \using\refrule[corec]\CorecRule
+        \end{prooftree}
+    \]
+
+    Here too there is just one infinite branch, which is fair and supported by
+    the $\tnu$-thread $t = (\FormulaG_{\dual a}, ((\Bot \tjoin \FormulaG) \plinbranch
+    \Bot)_{\dual ai}, (\Bot \tjoin \FormulaG)_{\dual ail}, \FormulaG_{\dual
+    ailr}, \dots)$. Indeed, all the formulas in $\strip{t}$ occur infinitely
+    often and $\minf\InfOften{t} = \FormulaG$ which is a $\tnu$-formula.
+    %
+    Hence, $\Gather$ is well typed and so is the composition
+    $\Cut\x{\Call\Work\x}{\Call\Gather{x,z}}$ in the context $z : \One$. We
+    conclude that the program is fairly terminating, despite the fact that the
+    composition of $\Work$ and $\Gather$ may grow arbitrarily large because
+    $\Work$ may spawn an unbounded number of workers.
+    %
+    \eoe
+\end{example}
+
+\begin{example}[Forwarder]
+    \label{ex:forwarder}
+    %
+    In this example we illustrate a deterministic, well-typed process that
+    unfolds a least fixed point infinitely many times. In particular, we
+    consider once again the formulas $\FormulaF \eqdef \tmu\X.X \plinchoice \One$ and
+    $\FormulaG \eqdef \tnu\X.X \plinbranch \Bot$ and the process $\Forwarder$ defined
+    by the equation
+    \[
+        \Forwarder(x,y) =
+        \Corec\x.
+        \Rec\y.
+        \Case\x{
+            \Left\y.
+            \Call\Forwarder{x,y}
+        }{
+            \Right\y.
+            \PiWait\x.
+            \PiClose\y
+        }
+    \]
+    which forwards the sequence of messages received from channel $x$ to channel
+    $y$. We derive
+    \[
+        \begin{prooftree}
+            \[
+                \[
+                    \[
+                        \mathstrut\smash\vdots
+                        \justifies
+                        \qtp{
+                            x : \FormulaG_{ail},
+                            y : \FormulaF_{bil}
+                        }{
+                            \Call\Forwarder{x,y}
+                        }
+                    \]
+                    \justifies
+                    \qtp{
+                        x : \FormulaG_{ail},
+                        y : (\FormulaF \plinchoice \One)_{bi}
+                    }{
+                        \Left\y\dots %.\Call\Forwarder{x,y}
+                    }
+                    \using\refrule[select]{\SelectRule}
+                \]                
+                \[
+                    \[
+                        \justifies
+                        \qtp{
+                            x : \Bot,
+                            y : \One
+                        }{
+                            \PiWait\x.\PiClose\y
+                        }
+                        \using\refrule[close]\PiCloseRule,\refrule[wait]\PiWaitRule
+                    \]
+                    \justifies
+                    \qtp{
+                        x : \Bot,
+                        y : (\FormulaF \plinchoice \One)_{bi}
+                    }{
+                        \Right\y\dots %.\PiWait\x.\PiClose\y
+                    }
+                    \using\refrule[select]{\SelectRule}
+                \]
+                \justifies
+                \qtp{
+                    x : (\FormulaG \plinbranch \Bot)_{ai},
+                    y : (\FormulaF \plinchoice \One)_{bi}
+                }{
+                    \Case\x{
+                        \Left\y.
+                        \Call\Forwarder{x,y}
+                    }{
+                        \Right\y.
+                        \PiWait\x.
+                        \PiClose\y
+                    }            
+                }
+                \using\refrule[case]{\CaseRule}
+            \]
+            \justifies
+            \qtp{x : \FormulaG_a, y : \FormulaF_b}{\Call\Forwarder{x,y}}
+            \using\refrule[corec]{\CorecRule}, \refrule[rec]{\RecRule}
+        \end{prooftree}
+    \]
+    %
+    and observe that $\rankof{\Call\Forwarder{x,y}} = 0$. This typing derivation
+    is valid because the only infinite branch is fair and supported by the
+    $\tnu$-thread of $\FormulaG_a$.
+    %
+    Note that $\FormulaF = \dual\FormulaG$ and that the derivation proves an
+    instance of \refrule{\LinkRule}. In general, the axiom is admissible in
+    \muMALL \citep{BaeldeDoumaneSaurin16}.
+    %
+    \eoe
+\end{example}
+
+\begin{example}[Slot Machine]
+    \label{ex:slot_machine}
+    Rank finiteness is not a necessary condition for well typedness. As an
+    example, consider the system $\Cut\x{\Call\Player\x}{\Call\Machine{x,y}}$
+    where
+    \[
+        \begin{array}{@{}r@{~}c@{~}l@{}}
+            \Player(x) & = &
+            \Rec\x.
+            \parens{
+                \PiChoice{
+                    \Select\PlayTag\x.
+                    \Case\x{
+                        \Call\Player\x
+                    }{
+                        \Rec\x.\Select\QuitTag\x.\PiClose\x
+                    }
+                }{
+                    \Select\QuitTag\x.\PiClose\x
+                }
+            }
+            \\
+            \Machine(x,y) & = &
+            \Corec\x.
+            \\ & &
+            \Case\x{
+                \PiChoice{
+                    \Select\WinTag\x.\Call\Machine{x,y}
+                }{
+                    \Select\LoseTag\x.\Call\Machine{x,y}
+                }
+            }{
+                \PiWait\x.\PiClose\y
+            }
+        \end{array}
+    \]
+    which models a game between a player and a slot machine. At each round, the
+    player decides whether to $\PlayTag$ or to $\QuitTag$. In the first case,
+    the slot machine answers with either $\WinTag$ or $\LoseTag$. If the player
+    $\WinTag$s, it also $\QuitTag$s. Otherwise, it repeats the same behavior.
+    %
+    It is possible to show that $\qtp{x : \FormulaF_a}{\Call\Player\x}$ and
+    $\qtp{x : \FormulaG_{\dual a}, y : \One}{\Call\Machine{x,y}}$ are derivable
+    where $\FormulaF \eqdef \tmu\X.(X \plinbranch X) \plinchoice \One$ and $\FormulaG
+    \eqdef \tnu\X.(X \plinchoice X) \plinbranch \Bot$. For
+		convenience, we define $\Formula' \eqdef (\Formula \plinbranch \Formula) \plinchoice
+		\One$ and we abbreviate $\Player$ to $P$. 
+		Note that $\Formula'$ is the unfolding of $\Formula$.
+    %
+    \[
+    \renewcommand{\Player}{P}
+    \begin{prooftree}
+        \[
+            \[
+                \[
+                    \[
+                        \mathstrut\smash\vdots
+                        \justifies
+                        \qtp{
+                            x : \FormulaF_{aill}
+                        }{
+                            \Call\Player\x
+                        }
+                    \]
+                    \qquad
+                    \[
+                        \[
+                            \[
+                                \justifies
+                                \qtp{
+                                    x : \One
+                                }{
+                                    \PiClose\x
+                                }
+                                \using\refrule[close]{\PiCloseRule}
+                            \]
+                            \justifies
+                            \qtp{
+                                x : \Formula'_{ailri}
+                            }{
+                                \Select\QuitTag\x.\PiClose\x
+                            }
+                            \using\refrule[select]{\SelectRule}
+                        \]
+                        \justifies
+                        \qtp{
+                            x : \FormulaF_{ailr}
+                        }{
+                            \Rec\x\dots
+                        }
+                        \using\refrule[rec]{\RecRule}
+                    \]
+                    \justifies
+                    \qtp{
+                        x : (\FormulaF \plinbranch \FormulaF)_{ail}
+                    }{
+                        \Case\x{
+                            \Call\Player\x
+                        }{
+                            \Rec\x\dots
+                        }    
+                    }
+                    \using\refrule[case]{\CaseRule}
+                \]
+                \justifies
+                \qtp{
+                    x : \Formula'_{ai}
+                }{
+                    \Select\PlayTag\x.
+                    \Case\x{
+                        \Call\Player\x
+                    }{
+                        \Rec\x\dots
+                    }
+                }
+                \using\refrule[select]{\SelectRule}
+            \]
+            \[
+                \[
+                    \justifies
+                    \qtp{
+                        x : \One
+                    }{
+                        \PiClose\x
+                    }
+                    \using\refrule[close]{\PiCloseRule}
+                \]
+                \justifies
+                \qtp{
+                    x : \Formula'_{ai}
+                }{
+                    \Select\QuitTag\x.\PiClose\x
+                }
+                \using\refrule[select]{\SelectRule}
+            \]
+            \justifies
+            \qtp{
+                x : \Formula'_{ai}
+            }{
+                \PiChoice{
+                    \Select\PlayTag\x\dots
+                }{
+                    \Select\QuitTag\x.\PiClose\x
+                }
+            }
+            %\using\refrule{\PiChoiceRule}
+        \]
+        \justifies
+        \qtp{
+            x : \Formula_a
+        }{
+            \Call\Player\x
+        }
+        \using\refrule[rec]{\RecRule}
+    \end{prooftree}
+		\]
+    %
+    Note that the only infinite branch in the derivation for $\Player$ is unfair since
+    $\rankof{\Call\Player\x} = 1$. Hence, $\Player$ is well typed.
+    
+    Below is the typing derivation showing that $\Machine$ is quasi typed. For
+		convenience, we define $\FormulaG' \eqdef \FormulaG \plinchoice \FormulaG$,
+		we abbreviate $\Machine$ to $M$ and we show the derivation only for the $\WinTag$
+		branch since the $\LoseTag$ is the same.
+		%
+		\[
+    \renewcommand{\Machine}{M}
+    \begin{prooftree}
+        \[
+            \[
+                \[
+                    \[
+                        \mathstrut\smash\vdots
+                        \justifies
+                        \qtp{
+                            x : \FormulaG_{bill},
+                            y : \One
+                        }{
+                            \Call\Machine{x,y}
+                        }
+                    \]
+                    \justifies
+                    \qtp{
+                        x : \FormulaG'_{bil},
+                        y : \One        
+                    }{
+                        \Select\WinTag\x\dots
+                    }
+                    \using\refrule[select]\SelectRule
+                \]
+                \[
+                    \vdots
+                    \justifies
+                    \qtp{
+                        \dots     
+                    }{
+                        \Select\LoseTag\x\dots
+                    }
+                    \using\refrule[select]\SelectRule
+                \]
+                \justifies
+                \qtp{
+                    x : \FormulaG'_{bil},
+                    y : \One    
+                }{
+                    \PiChoice{
+                        \Select\WinTag\x\dots
+                    }{
+                        \Select\LoseTag\x\dots
+                    }
+                }
+                \using\refrule\PiChoiceRule
+            \]
+            \hspace{-1em}
+            \[
+                \[
+                    \justifies
+                    \qtp{
+                        y : \One
+                    }{
+                        \PiClose\y
+                    }
+                    \using\refrule[close]{\PiCloseRule}
+                \]
+                \justifies
+                \qtp{
+                    x : \Bot,
+                    y : \One
+                }{
+                    \PiWait\x.\PiClose\y    
+                }
+                \using\refrule[wait]{\PiWaitRule}
+            \]
+            \justifies
+            \qtp{
+                x : (\FormulaG' \plinbranch \Bot)_{bi},
+                y : \One
+            }{
+                \Case\x{
+                    \PiChoice{
+                        \Select\WinTag\x\dots
+                    }{
+                        \Select\LoseTag\x\dots
+                    }
+                }{
+                    \PiWait\x.\PiClose\y
+                }            
+            }
+            \using\refrule[case]{\CaseRule}
+        \]
+        \justifies
+        \qtp{
+            x : \FormulaG_b,
+            y : \One
+        }{
+            \Call\Machine{x,y}
+        }
+        \using\refrule[corec]{\CorecRule}
+    \end{prooftree}
+		\]
+    %
+    There are infinitely many branches in the derivation for $\Machine$
+    accounting for all the sequences of $\WinTag$ and $\LoseTag$ choices that
+    can be made. Since $\rankof{\Call\Machine{x,y}} = \infty$, all these
+    branches are fair but also valid.
+    %
+    So, the system as a whole is well typed.
+    %
+    \eoe
+\end{example}

@@ -1,0 +1,300 @@
+\beginbass
+%
+The first compliance relation that we consider requires that, if the interaction
+in a session stops, it is because the client ``is satisfied'' and the server
+``has not failed'' (recall that a session type can turn into $\TNil$ only if an
+unexpected message is received). Formally:
+
+\begin{definition}[Compliance]
+  \label{def:comp}
+  We say that $R$ is \emph{compliant} with $T$ if
+  $\session\R\T \wred \session{\R'}{\T'} \nred$ implies $\R' = \Win$
+  and $\T' \neq \TNil$.
+\end{definition}
+
+This notion of compliance is an instance of \emph{safety property} in which the
+invariant being preserved at any stage of the interaction is that either client
+and server are able to synchronize further, or the client is satisfied and the
+server has not failed.
+
+The second compliance relation that we consider adds a \emph{liveness}
+requirement namely that, no matter how long client and server have been
+interacting with each other, it is always possible to reach a configuration in
+which the client is satisfied and the server has not failed.
+
+\begin{definition}[Fair Compliance]
+  \label{def:fcomp}
+  We say that $R$ is \emph{fairly compliant} with $T$ if $\session\R\T \wred
+  \session{\R'}{\T'}$ implies $\session{\R'}{\T'} \wred \session\Win{\T''}$ with
+  $\T'' \neq \TNil$.
+\end{definition}
+
+Notably, fair compliance corresponds to a \emph{successful} form of fair termination.
+It is easy to show that fair compliance implies compliance, but there exist
+compliant session types that are not fairly compliant, as illustrated in the
+following example.
+
+\begin{example}
+  \label{ex:fcomp}
+  Recall \Cref{ex:agda_st_ex} and consider the session types $R_1$ and $R_2$
+  such that
+  \[
+    R_1 = \In\vtrue.\In\Nat.R_1 \branch \In\vfalse.\Win
+    \qquad
+    R_2 = \Out\vtrue.(\In0.\Win \branch \In\NatPlus.R_2)
+  \]
+
+  Then $R_1$ is fairly compliant with both $T_1$ and $S_1$ and $R_2$ is
+  compliant with both $T_2$ and $S_2$.
+  %
+  Even if $S_1$ exhibits fewer behaviors compared to $T_1$ (it never sends $0$
+  to the client), at the beginning of a new iteration it can always send
+  $\vfalse$ and steer the interaction along a path that leads $R_1$ to success.
+  %
+  On the other hand, $R_2$ is fairly compliant with $T_2$ but not with $S_2$. In
+  this case, the client insists on sending $\vtrue$ to the server in hope to
+  receive $0$, but while this is possible with the server $T_2$, the server
+  $S_2$ only sends strictly positive numbers.
+
+  This example also shows that fair termination of both client and server is not
+  sufficient, in general, to guarantee fair compliance. Indeed, both $R_2$ and
+  $S_2$ are fairly terminating, but they are not fairly compliant. The reason is
+  that the sequences of actions leading to $\Win$ on the client side are not
+  necessarily the same (complemented) traces that lead to $\End$ on the server
+  side. Fair compliance takes into account the synchronizations that can
+  actually occur between client and server.
+  %
+  \eoe
+\end{example}
+
+\begin{remark}
+  \label{rm:asymmetry}
+  With the above notions of compliance we can now better motivate the
+  asymmetric modeling of (passive) inputs and (active) outputs in the labeled
+  transition system of session types (\Cref{fig:agda_st_lts}). Consider the session
+  types $R = \Out\vtrue.\Win + \Out\vfalse.\Out\vfalse.\Win$ and $S =
+  \In\vtrue.\End[\In]$. Note that $R$ describes a client that succeeds by either
+  sending a single $\vtrue$ value or by sending two $\vfalse$ values in
+  sequence, whereas $S$ describes a server that can only receive a single
+  $\vtrue$ value. If we add the same side condition $S \ne \TNil$ also for
+  \refrule{input} then $R$ would be compliant with $S$. Indeed, the server
+  would be unable to perform the $\In\vfalse$-labeled transition, so that the
+  only synchronization possible between $R$ and $S$ would be the one in which
+  $\vtrue$ is exchanged. In a sense, with the $S \ne \TNil$ side condition in
+  \refrule{input} we would be modeling a communication semantics in which
+  client and server \emph{negotiate} the message to be exchanged depending on
+  their respective capabilities. Without the side condition, the message to be
+  exchanged is always chosen by the active part (the sender) and, if the
+  passive part (the receiver) is unable to handle it, the receiver fails. The
+  chosen asymmetric communication semantics is also key to induce a notion of
+  (fair) subtyping that is \emph{covariant} with respect to inputs
+  (see \Cref{sec:agda_fc}).
+  %
+  \eor
+\end{remark}
+
+\begin{figure}[t]
+	\framebox[\textwidth]{
+	\begin{mathpar}
+      \inferrule[c-success]{\mathstrut}{
+        \compliance\Win\T
+      }
+      ~T \neq \TNil \defrule[c-success]{}
+      \and
+      \inferrule[c-inp-out]{
+        \forall x \in X : \compliance{S_x}{T_x}
+      }{
+        \compliance{\In\set{x:S_x}_{x\in\Message}}{\Out\set{x:T_x}_{x\in X}}
+      }
+      ~X \ne \emptyset \defrule[c-inp-out]{}
+      \and
+      \infercorule[c-sync]{
+        \compliance{S}{T}
+      }{
+        \compliance{\Pol x.S + S'}{\co{\Pol}x.T + T'}
+      } \defrule[c-sync]{}
+      \and
+      \inferrule[c-out-inp]{
+        \forall x \in X : \compliance{S_x}{T_x}
+      }{
+        \compliance{\Out\set{x:S_x}_{x\in X}}{\In\set{x:T_x}_{x\in\Message}}
+      }
+      ~X \ne \emptyset \defrule[c-out-inp]{}
+  \end{mathpar}
+  }
+  \caption{Generalized inference system $\gis{\is[C]}{\cois[C]}$ for fair compliance}
+  \label{fig:compliance}
+\end{figure}
+
+\Cref{fig:compliance} presents the \GIS $\gis{\is[C]}{\cois[C]}$ for fair
+compliance. Intuitively, a derivable judgment $\compliance{S}{T}$ means that the
+client $S$ is (fairly) compliant with the server $T$.
+%
+Rule \refrule{c-success} relates a satisfied client with a non-failed server.
+%
+Rules \refrule{c-inp-out} and \refrule{c-out-inp} require that, no matter which
+message is exchanged between client and server, the respective continuations are
+still fairly compliant. The side condition $X \ne \emptyset$ guarantees progress
+by making sure that the sender is capable of sending at least one message.
+%
+As we will see, the coinductive interpretation of $\is[C]$, which consists of
+these three rules, completely characterizes compliance
+(\Cref{def:comp}).
+%
+However, these rules do not guarantee that the interaction between client and
+server can always reach a successful configuration as required by
+\Cref{def:fcomp}. For this, the corule \refrule{c-sync} is essential.
+Indeed, a judgment $\compliance{S}{T}$ that is derivable according to the
+generalized interpretation of the \GIS $\gis{\is[C]}{\cois[C]}$ must admit a
+well-founded derivation tree also in the inference system $\is[C] \cup
+\cois[C]$. Since \refrule{c-success} is the only axiom in this inference system,
+finding a well-founded derivation tree in $\is[C] \cup \cois[C]$ boils down to
+finding a (finite) path of synchronizations from $\session{S}{T}$ to a
+successful configuration in which $S$ has reduced to $\Win$ and $T$ has reduced
+to a session type other than $\TNil$.
+%
+Rule \refrule{c-sync} allows us to find such a path by choosing the appropriate
+messages exchanged between client and server.
+%
+In general, one can observe a dicotomy between the rules \refrule{c-inp-out} and
+\refrule{c-out-inp} having a universal flavor (they have many premises
+corresponding to every possible interaction between client and server) and the
+corule \refrule{c-sync} having an existential flavor (it has one premise
+corresponding to a particular interaction between client and server). This is
+consistent with the fact that we use rules to express a safety property (which
+is meant to be \emph{invariant} hence preserved by all the possible
+interactions) and we use the corule to help us expressing a liveness property.
+%
+This pattern in the usage of rules and corules is quite common in \GISs because
+of their interpretation and it can also be observed in the \GIS for fair
+termination (see \Cref{fig:ft}) and, to some extent, in that for fair subtyping
+as well (see \Cref{sec:agda_fs}).
+
+\begin{example}
+  \label{ex:fcomp:gis}
+  %
+  Consider again $R_2 = \Out\vtrue.(\In0.\Win \branch \In\NatPlus.R_2)$ from
+  \Cref{ex:fcomp} and $T_2 = \In\vtrue.\Out\Nat.\T_2 \branch
+  \In\vfalse.\End[\In]$ from \Cref{ex:agda_st_ex}.
+  %
+  In order to show that $\compliance{R_2}{T_2} \in \FlexCo{\is[C]}{\cois[C]}$ we
+  have to find a possibly infinite derivation for $\compliance{R_2}{T_2}$ using
+  the rules in $\is[C]$ as well as finite derivations for all of the judgments
+  occurring in this derivation in $\is[C] \cup \cois[C]$.
+  
+  For the former we have
+  \[
+    \begin{prooftree}
+      \[
+        \[
+          \justifies
+          \compliance\Win{T_2}
+          \using\refrule{c-success}
+        \]
+        \[
+          \smash\vdots\mathstrut
+          \justifies
+          \compliance{R_2}{T_2}
+        \]
+        \justifies
+        \compliance{
+          \In0.\Win + \In\NatPlus.R_2
+        }{
+          \Out\Nat.T_2
+        }
+        \using\refrule{c-inp-out}
+      \]
+      \justifies
+      \compliance{R_2}{T_2}
+      \using\refrule{c-out-inp}
+    \end{prooftree}
+  \]
+  %
+  where, in the application of \refrule{c-inp-out}, we have collapsed all of the
+  premises corresponding to the $\NatPlus$ messages into a single premise. Thus,
+  we have proved $\compliance{R_2}{T_2} \in \CoInductive{\is[C]}$.
+  %
+  Note the three judgments occurring in the above derivation tree. The finite
+  derivation
+  \[
+    \begin{prooftree}
+      \[
+        \[
+          \justifies
+          \compliance\Win{T_2}
+          \using\refrule{c-success}
+        \]
+        \justifies
+        \compliance{
+          \In0.\Win + \In\NatPlus.R_2
+        }{
+          \Out\Nat.T_2
+        }
+        \using\refrule{c-sync}
+      \]
+      \justifies
+      \compliance{R_2}{T_2}
+      \using\refrule{c-sync}
+    \end{prooftree}
+  \]
+  %
+  shows that $\compliance{R_2}{T_2} \in \Inductive{\is[C] \cup \cois[C]}$. We
+  conclude $\compliance{R_2}{T_2} \in \FlexCo{\is[C]}{\cois[C]}$.
+  %
+  \eoe
+\end{example}
+
+Observe that the corule \refrule{c-sync} is at once essential and unsound. For
+example in \Cref{ex:fcomp:gis}, without it we would be able to derive the judgment
+$\compliance{\R_2}{\S_2}$ despite the fact that $R_2$ is not fair compliant with
+$S_2$ (see \Cref{ex:fcomp}). At the same time, if we treated
+\refrule{c-sync} as a plain rule, we would be able to derive the judgment
+$\compliance{\Out\Nat.\Win}{\In0.\End[\In]}$ despite the reduction
+$\session{\Out\Nat.\Win}{\In0.\End[\In]} \red \session\Win\TNil$ since \emph{there
+exists} an interaction that leads to the successful configuration
+$\session\Win{\End[\In]}$ (if the client sends $0$) but none of the others does.
+
+\begin{theorem}[Compliance]
+  \label{thm:compliance}
+  For every $R, T \in \SessionType$, the following properties hold:
+  \begin{enumerate}
+  \item $R$ is compliant with $T$ if and only if $\compliance\R\T \in
+    \CoInductive{\is[C]}$;
+  \item $R$ is fairly compliant with $T$ if and only if
+    $\compliance\R\T \in \FlexCo{\is[C]}{\cois[C]}$.
+  \end{enumerate}
+\end{theorem}
+\begin{proof}[Proof sketch]
+  %
+  We sketch the proof of item~(2), which is the most interesting one. In
+  \Cref{sec:agda_fc_corr} we will describe the full proof formalized in Agda.
+  %
+  For the ``if'' part, suppose that $\compliance\R\T \in
+  \FlexCo{\is[C]}{\cois[C]}$ and consider a reduction $\session\R\T \wred
+  \session{R'}{T'}$. An induction on the length of this reduction, along with
+  \refrule{c-inp-out} and \refrule{c-out-inp}, allows us to deduce
+  $\compliance{R'}{T'} \in \FlexCo{\is[C]}{\cois[C]}$. Then we have
+  $\compliance{R'}{T'} \in \Inductive{\is[C] \cup \cois[C]}$ by
+  Definition~\ref{def:gis}. An induction on this (well-founded) derivation
+  allows us to find a reduction $\session{R'}{T'} \wred \session\Win{T''}$ such
+  that $T'' \ne \TNil$.
+
+  For the left to right implication part we apply the bounded coinduction principle
+  (\Cref{prop:bcp}). Concerning consistency, we show that whenever
+  $R$ is fairly compliant with $T$ we have that $\compliance{R}{T}$ is the
+  conclusion of a rule in \Cref{fig:compliance} whose premises are pairs of
+  fairly compliant session types. Indeed, from the hypothesis that $R$ is fairly
+  compliant with $T$ we deduce that there exists a derivation $\session{R}{T}
+  \wred \session\Win{T'}$ for some $T'\ne\TNil$. A case analysis on the shape of
+  $R$ and $T$ allows us to deduce that either $R = \Win$ and $T = T' \ne \TNil$,
+  in which case the axiom \refrule{c-success} applies, or that $R$ and $T$ must be
+  input/output session types with opposite polarities such that the sender has
+  at least one non-$\TNil$ continuation and whose reducts are still fairly
+  compliant (because fair compliance is preserved by reductions). Then either
+  \refrule{c-inp-out} or \refrule{c-out-inp} applies.
+  %
+  Concerning boundedness, we do an induction on the reduction $\session{R}{T}
+  \wred \session\Win{T'}$ to build a well-founded tree made of a suitable number
+  of applications of \refrule{c-sync} topped by a single application of
+  \refrule{c-success}.
+\end{proof}

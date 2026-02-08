@@ -1,0 +1,124 @@
+% section: basic parsing
+
+We choose UDPipe-future \cite{straka-2018-udpipe} for basic parsing 
+and joint prediction of lemmata, POS tags and morphological features
+so as
+to not require a separate tagger.
+We extend
+UDPipe-future to train multi-treebank models
+as introduced by \cite{stymne-etal-2018-parser} with UUParser.\footnote{Multi-treebank
+    \label{fnt:mtb}
+    models supply each token with the
+    source treebank ID as additional input with a separate
+    embedding table.
+    Like \newcite{stymne-etal-2018-parser}, we use a vector size of 12.
+    At test time, a proxy treebank must be chosen when the input sentence does not come from one of the training treebanks or the source is unknown.
+}$^,$\footnote{\url{https://github.com/jowagner/UDPipe-Future/tree/multitreebank}}
+    
+
+Inspired by \newcite{straka-etal-2019-evaluating},
+we use two types of external word embeddings with UDPipe-future:
+ELMo contextualised word embeddings \citep{peters-etal-2018-deep}
+and
+FastText character-n-gram-based word embeddings
+\citep{bojanowski-etal-2017-enriching}.\footnote{The
+    FastText word embedding is restricted to a fixed vocabulary of
+    one million tokens, not taking advantage of FastText's ability to
+    produce new vectors for OOVs.
+    UDPipe-future does not fine-tune these word embeddings.
+    Instead, the parser trains an additional embedding exclusively for
+    training words and a character-based representation.
+    The latter two are added and the result is concatenated with the
+    two externally provided representations.
+    As far as we understand the code, an all-zero vector is used for OOVs,
+    \ie words not in the selected one-million-word FastText vocabulary.
+}
+For 15 of the 17 test languages,
+ElmoForManyLangs\footnote{\url{https://github.com/HIT-SCIR/ELMoForManyLangs}} \citep{che-etal-2018-towards}
+provides ELMo models.
+We train FastText
+on the raw text provided by the CoNLL'17 shared task for
+the same 15 languages after shuffling sentences.
+For the Russian FastText model, we kept getting vectors with large
+component values even after
+trying a different machine and a different permutation of sentences,
+prohibiting effective training of the parser.
+We then used a model trained on \sfrac{2}{3} of the Russian data
+for which component values and parser LAS were in the expected range.
+Furthermore, we train UDPipe-future models using FastText and internal embeddings only.
+
+For Lithuanian and Tamil, we train UDPipe-future without external word embeddings.
+The parser still uses an internal word embedding covering all words of
+the training treebank(s) and a word representation obtained with a 
+bidirectional GRU layer over the input characters.
+
+For each target language, we train \textit{(a)} mono-treebank models for
+each training treebank available with surface strings in UD v2.5, preferring the shared-task version when available, and
+\textit{(b)} a multi-treebank model for each language using all treebanks for that language for which we also trained mono-treebank models.
+We train up to seven models with different initialisation
+for each setting to combine them in
+ensembles.\footnote{We
+    trained 68 types of models.
+    % 41 mono-treebank models and
+    % 27 types of multi-treebank models.
+    We trained seven seeds for 34 of these,
+    five seeds for 30 and three seeds for four.
+    Ensembles sizes three, five and seven are
+    considered, including a combination of $(n+1)/2$
+    models of one type and $(n-1)/2$ models of
+    another type with $n \in \{3,5,7\}$.
+}$^,$\footnote{We
+    use our implementation
+    \url{https://github.com/jowagner/ud-combination}
+    of the linear combiner of
+    \newcite{attardi-dellorletta-2009-reverse}.
+}
+We consider ensembles not just of a single type of model with
+different initialisation but also combinations of models trained
+on different treebanks (mono-treebank models) or treebank combinations
+(multi-treebank models) and in the
+plain, FastText and ELMo variants.\footnote{While
+    predicting on development data to facilitate model selection,
+    we temporarily introduced a bug in our system causing it to use
+    the first initialisation seed for all ensemble members only,
+    effectively falling back to a single model when only one model
+    type is used.
+    We fixed this bug before we switched to making test set
+    predictions and tried to account for it in the model selection
+    but, under time pressure, made some hard to explain ad hoc
+    choices,
+    \eg we used an ensemble of three models for Czech, two mono-treebank
+    models trained on \texttt{cs\_cac} and one multi-treebank
+    model, even though we also had test set predictions
+    with an ensemble of seven models with the same mixture of model
+    types available.
+    For details, see the reproducibility notes in our code
+    repository.
+}
+As the number of possible combinations increases exponentially
+with the number of models, we prune the candidates giving
+preference to models using all or only one treebank and
+to models using ELMo.
+We then test each ensemble on the development data
+(raw input segmented with UDPipe) and pick the
+best ensembles based on ELAS after applying our heuristic enhancer
+(Section~\ref{sec:heuristic})
+to the basic trees.
+
+To pick the proxy treebank
+(see description in Footnote~\ref{fnt:mtb})
+for multi-treebank parsing, we use
+the treebank name in the filename of the raw text during development.
+However, for final testing, the treebank identifier is unavailable (and
+if it had been available there would have been cases where this
+treebank is not one of the training treebanks).
+Given time limits, we decided to simply assign each test set,
+\ie each test language, the training treebank with the largest amount
+of training data as the
+proxy treebank.\footnote{For Estonian, French, Dutch and Polish
+    (a subset of the languages with PUD treebanks announced in the development pack),
+    we randomised on the sentence level which proxy treebank
+    is used during multi-treebank parsing.
+}
+
+% eof

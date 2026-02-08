@@ -1,0 +1,93 @@
+\section{Method} \label{sec:method}
+\vspace{-0.2cm}
+In this section, we describe our hierarchical RL training framework, which is designed to harness the benefits of motion imitation and train a more powerful high-level policy to extend the capabilities of the original motions only feasible on flat ground for the acquisition of locomotion, local obstacle avoidance, and goal-reaching navigation skills on more challenging terrains. 
+
+As illustrated in \figref{fig:framework}, our approach is divided into four phases: motion processing, pre-training, task training and policy distillation for sim2real. 
+Prior to pre-training, animal motion data are retargetted to align with the robot's configuration. 
+During pre-training, we first train the FLD encoder on offline data and subsequently learn a low-level policy using the extracted latent representations as the input to generate physical motions.
+In the task training phase, the frozen low-level policy acts as a motion prior, while we train a high-level teacher policy with privileged information to handle complex tasks over diverse terrains by outputting latent command to the low-level policy and augmenting the low-level skills with residuals. 
+Lastly, the high-level teacher policy is distilled into the student policy with noisy observation to narrow the sim2real gap.
+The following subsections provide further details.
+\vspace{-0.2cm}
+\subsection{Motion Preprocessing}
+\vspace{-0.2cm}
+Before training the policy to mimic animal movements, the raw motion capture data need to be retargetted to match the robot’s kinematic configuration. 
+We employ inverse kinematics to convert the raw data based on the positions of the neck, pelvis, and feet, following the established pipeline in~\citet{RoboImitationPeng20}. 
+The selected animal mocap data, sourced from~\citep{Han_2024,mann}, comprise various gait patterns, such as walking, pacing, and cantering, performed at different speeds on flat ground.
+\vspace{-0.2cm}
+\subsection{Pre-training} \label{sec:fld_model_and_low_level}
+\vspace{-0.2cm}
+Given the retargeted motion data, the pre-training stage focuses on acquiring a low-level policy that mimics the demonstrated motor skills.
+Crucial to this process is the training of an encoder that compresses the motion trajectories into low-dimensional latent vectors, thereby enabling efficient reuse of these low-level skills in later stages.
+
+We first pre-train the FLD model which comprises both an encoder and a decoder, to capture a representation of motion patterns before proceeding to train the low-level imitation policy, following the framework outlined in~\citet{li2024fld}.
+More information on FLD training is detailed in \suppref{sec:detail_fld}.
+
+With the refined motion representation in hand, we next leverage the latent embedding to train a low-level motion imitation policy.
+In this phase, the policy is trained on flat terrain while adhering to the FLD pipeline for motion learning. However, several modifications are introduced to boost imitation performance.
+Specifically, we eliminate the decoder and replace the reconstructed trajectories with ground-truth trajectories, bypassing the phase propagation mechanism entirely.
+During training, motion clips are randomly sampled from the dataset, and the encoder dynamically computes latent embeddings from the input reference state sequences.
+These modifications may help reduce performance degradation from FLD decoder reconstruction errors while still maintaining a structured latent space that captures the motion’s global periodic features.
+
+The low-level policy operates in an action space defined by 12-dimensional joint actions $a_t^l$, and its observation $o_p^l$ comprises proprioceptive signals including base linear and angular velocities, projected gravity vectors, joint positions, and the latent encodings. 
+The reward function is composed of an imitation component and a regularization component.
+Additional details regarding the reward functions are provided in \suppref{sec:reward_low_high_detail}. 
+Consequently, the trained low-level policy that bridges the robot's motor skills with low-dimensional latent embeddings not only serves as the command interface for executing low-level skills, but also lays the foundation for subsequent high-level policy training.
+
+\vspace{-0.2cm}
+\subsection{Task Training}
+\vspace{-0.2cm}
+After training the low-level policy as a motion prior on flat-ground data, we extend its capabilities to complex environments via task training.
+In this phase, a high-level teacher policy is learned on top of the frozen low-level policy to address locomotion and local navigation tasks across various terrains. 
+
+The high-level teacher policy outputs 16-dimensional latent commands $z_t$ and 12-dimensional joint residuals $a_t^{res}$ to refine the basic motion skills. 
+Its observation space includes noiseless proprioceptive inputs $o_{p}^h$ (identical to those used by the low-level policy), noiseless exteroceptive inputs $o_e^h$, privileged states $o_{priv}^h$ (capturing leg contact information, friction coefficients, and external disturbances), and task-specific inputs.
+For exteroception, we fuse elevation scans around each robot foot~\citep{doi:10.1126/scirobotics.abc5986} with a downsampled Velodyne LiDAR scan arranged in a sparse conical pattern to provide a comprehensive environmental profile.
+As illustrated in \figref{fig:framework}, we further employ small MLPs to encode these terrain and privileged state inputs.
+
+For the downstream task, our objective is to train an integrated policy that leverages motion priors to reach a goal in challenging, rough terrains including uneven surfaces, stairs, slopes, and high obstacles. 
+The task input comprises the goal position $p_g=(p_{g,x},p_{g,y})$, defined relative to the robot's base frame, and a velocity command $v_{cmd}$ that coarsely regulates forward motion toward the goal. 
+We define the task rewards as follows:
+\vspace{-0.cm}
+\begin{equation}
+    r_{reach} = \frac{1}{T_r}\left(1-\frac{\norm{\mathbf{d}}_2}{2}\right) \quad \text{if} \; t > T-T_r \; \text{and} \; \norm{\mathbf{d}}_2 < 2; \text{else} \; 0,
+    \label{eq:tracking_rew}
+\end{equation}
+\begin{equation}
+    r_{vel} = \min(v_{cmd}, \langle \mathbf{v}, \mathbf{d} \rangle) \quad \text{if} \; \norm{\mathbf{d}}_2 > 0.15; \text{else} \; 0,
+    \label{eq:vel_rew}
+\end{equation}
+where $t$, $T$, and $T_r$ denote the current time, the interval between successive position commands, and the threshold time for reward computation, respectively.
+$\mathbf{d}$ denotes the displacement vector from the robot base to the target, and $\mathbf{v}$ represents the robot's base linear velocity. 
+Since $r_{reach}$ tends to be sparse, the additional velocity reward $r_{vel}$ provides a denser learning signal to effectively guide local navigation in cluttered environments with high obstacles. 
+
+We maintain the same regularization rewards and weights used in the low-level policy (excluding tracking terms) and add new residual penalty terms to constrain the joint residual corrections (\eqnref{eq:joint_res}).
+\begin{equation}
+    r_{res} = w_{res} \sum_{i=1}^{12}(a^{res}_{t,i})^2, 
+    \label{eq:joint_res}
+    % \vspace{-0.1cm}
+\end{equation}
+where $w_{res}$ denotes the weight for the residual penalty.
+More details on the reward functions for the high-level teacher policy are provided in~\suppref{sec:reward_low_high_detail}.
+
+\begin{figure}[t!]
+    \centering
+    \includegraphics[clip, trim=0cm 0cm 0cm 0cm,width=0.86\textwidth]{images/dof_pos_ref_transition_corl.pdf}
+    \vspace{-0.1cm}
+    \caption{
+    Actual vs. reference joint positions for the low-level policy on flat ground. Dashed lines are reference trajectories; solid lines are the actual trajectories. The plot (canter → walk → pace → walk) shows close alignment between reference and actual motions.
+    }
+    \label{fig:dof_pos_transition}
+    \vspace{-0.45cm}
+\end{figure}
+\vspace{-0.2cm}
+\subsection{Policy Distillation for Sim2Real}
+\vspace{-0.2cm}
+To bridge the sim-to-real gap in perceptive locomotion, we employ a privileged learning strategy~\citep{pmlr-v100-chen20a} to distill a high-performance teacher policy into a student policy.
+In our approach, the teacher policy is initially trained under ideal conditions using privileged, noiseless proprioceptive and exteroceptive observations.
+Subsequently, we distill a student policy from the teacher that operates solely on noisy proprioceptive and exteroceptive data, without access to privileged information through supervised learning.
+As shown in \figref{fig:framework}, a recurrent belief encoder, implemented with a Gated Recurrent Unit (GRU), is integrated into student policy to reconstruct the privileged state and recover noiseless exteroceptive signals from noisy proprioceptive and exteroceptive inputs.
+The design of the belief encoder follows~\citet{doi:10.1126/scirobotics.abk2822}. 
+The distillation process is guided by a behavior loss $L_0$ that quantifies the discrepancy between the teacher’s and student’s actions.
+This teacher-student framework allows us to first establish a high-performance teacher policy under controlled conditions, and then transfer that performance to a student policy that is robust under realistic, noisy operating conditions.
+\vspace{-0.3cm}

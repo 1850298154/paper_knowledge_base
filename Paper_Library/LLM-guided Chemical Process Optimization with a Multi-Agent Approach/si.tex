@@ -1,0 +1,316 @@
+\documentclass[12pt]{iopart}
+    
+\usepackage{graphicx}
+\usepackage{siunitx}
+\usepackage{float}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage[linesnumbered,ruled,vlined]{algorithm2e}
+\usepackage{caption}
+
+
+\lstset{
+    backgroundcolor=\color{gray!10},
+    basicstyle=\ttfamily\footnotesize,
+    breaklines=true,
+    captionpos=b,
+    frame=single,
+    language=Python,
+    showstringspaces=false,
+    tabsize=2
+}
+
+\begin{document}
+
+\title{Supporting Information: LLM-guided Chemical Process Optimization with a Multi-Agent Approach}
+
+\author{Tong Zeng$^1$, Srivathsan Badrinarayanan$^1$, Janghoon Ock$^1$, Cheng-Kai Lai$^1$ and Amir Barati Farimani$^{2,1,3,4}$}
+
+\address{$^1$ Department of Chemical Engineering, Carnegie Mellon University, PA 15213, USA}
+\address{$^2$ Department of Mechanical Engineering, Carnegie Mellon University, PA 15213, USA}
+\address{$^3$ Department of Biomedical Engineering, Carnegie Mellon University, PA 15213, USA}
+\address{$^4$ Machine Learning Department, Carnegie Mellon University, PA 15213, USA}
+\ead{barati@cmu.edu}
+
+
+\section{Multi-Agent Framework Implementation}
+
+\subsection{Agent Coordination Logic}
+The framework uses a two-phase architecture where the ContextAgent independently generates operating constraints and process overviews, followed by iterative optimization through multi-agent collaboration. In the second phase, agent interactions are coordinated through a customized selector function that determines speaking order based on the source and message content of the most recent message.  The selector function implements a rule-based routing system that directs speaking flow between specialized agents. Constraint violations trigger redirection to the SuggestionAgent for parameter correction, while valid parameters proceed to the SimulationAgent for evaluation. The system achieves autonomous termination when the SuggestionAgent signals convergence. To minimize stochastic variance, the ContextAgent generates operating condition constraints five times with results averaged to establish the final constraints for optimization. The complete multi-agent optimization algorithm integrating both constraint generation and iterative optimization phases is presented below in Algorithm~\ref{alg:multiagent}. \\
+
+\newcommand{\agent}[1]{\texttt{#1}}
+
+\begin{algorithm}[H]
+\caption{Multi-Agent Optimization Framework}
+\label{alg:multiagent}
+\textbf{Phase 1: Autonomous Constraint Generation}\\
+Generate five independent constraint sets using \agent{ContextAgent}\\
+Compute average bounds for each decision variable\\[0.5em]
+
+\textbf{Phase 2: Collaborative Optimization}\\
+\agent{ParameterAgent} introduces initial parameter values\\
+\While{convergence not achieved}{
+    \agent{ValidationAgent} evaluates parameter feasibility against constraints\\
+    \eIf{parameters violate constraints}{
+        \agent{SuggestionAgent} proposes corrected values\\
+    }{
+        \agent{SimulationAgent} evaluates objective function using IDAES\\
+        Update optimization history in shared memory\\
+        \agent{SuggestionAgent} analyzes trends and proposes next iteration\\
+        \If{\agent{SuggestionAgent} detects convergence}{
+            Terminate optimization\\
+        }
+    }
+}
+\textbf{Output:} Optimal parameter configuration
+\end{algorithm}
+
+
+\subsection{Agent Prompts}
+
+Agent behavior is controlled through carefully designed prompts that define roles, objectives, and output formats. The following sections present the complete prompt templates of the key agents that guide autonomous constraint generation and optimization decisions.
+
+\subsubsection{ContextAgent Prompt}
+The optimization framework relies on prompt-engineered language model agents to reason about constraints and optimization strategies. Two central agents, ContextAgent and SuggestionAgent enable autonomous constraint generation and iterative parameter refinement. The following sections present the full prompt templates used to guide these agents' behavior.
+
+The ContextAgent is responsible for generating realistic operating constraints based on a natural language process description. It interprets flowsheet structure, design basis, and engineering heuristics to infer valid bounds for decision variables. Its output is formatted as a structured JSON object containing both a markdown-style overview and numerical constraint ranges. The complete prompt for ContextAgent is:
+\begin{lstlisting}[caption={Complete ContextAgent Prompt}, label={lst:context_prompt}]
+You are a senior process-design engineer in HDA process to produce benzene from toluene.
+
+OBJECTIVE
+(1) Write a structured and technically complete process overview of the hydrodealkylation (HDA) flowsheet.
+(2) Provide numerically realistic operational constraints for the variables listed below.
+
+FORMATTING RULES
+- Use SI units (K, Pa).
+- If a limit is fixed in the Design Basis, copy it verbatim.
+- No speculative extremes or lab-only conditions.
+- For Flash F102 DeltaPressure, respect physical constraints:
+    - The vessel is pressure-rated and the allowable maximum pressure drop must not exceed 240000 Pa in magnitude.
+    - Output values must lie within [-250000, 0] Pa.
+- The pressure of Flash F102 must not influence or constrain the allowable temperature range of Heater H101. These units operate independently in terms of pressure-temperature limitations.
+
+DESIGN BASIS (KNOWN & FIXED)
+- Feed T = 303.2 K; P = 350 kPa
+- Mixer M101: blends Streams A, B, and recycle gas; no duty.
+- Heater H101: adiabatic R101 feed
+- Reactor R101: single-pass toluene conversion fixed at 75%; Q = 0
+- Flash F101: approx. 350 kPa; DeltaP approx. 0
+- Splitter S101: 20% purge / 80% recycle (fixed)
+- Compressor C101: boosts recycle vapour back to 350 kPa (isothermal)
+- Flash F102: low-pressure, benzene-rich overhead / toluene-rich bottoms
+
+FLOW SHEET (for context only)
+- Reaction (gas-phase, exothermic): C6H5CH3 + H2 -> C6H6 + CH4
+- Feeds at 303.2 K & 350 kPa:
+    - Stream A: 0.30 mol/s H2 + 0.02 mol/s CH4
+    - Stream B: 0.30 mol/s toluene
+
+VARIABLES REQUIRING CONSTRAINTS
+- Heater H101 Temperature
+- Flash F101 Temperature
+- Flash F102 Temperature
+- Flash F102 DeltaPressure (include sign)
+
+Return valid JSON with exactly these keys:
+{
+  "process_overview": "<markdown overview goes here>",
+  "constraints": [
+    {"variable": "<Variable name>", "range": [<lower>, <upper>], "unit": "<unit>"},
+    ...
+  ]
+}
+\end{lstlisting}
+
+\subsubsection{SuggestionAgent Prompt}
+
+The SuggestionAgent performs the core optimization task. It analyzes previous simulation outcomes and constraint violations to propose parameter updates that improve a specified metric (e.g., cost, yield). The agent maintains memory of successful configurations and adapts its strategy based on trend direction and validator feedback. The complete prompt for SuggestionAgent is:
+\begin{lstlisting}[caption={Complete SuggestionAgent Prompt}, label={lst:suggestion_prompt}]
+You are SuggestionAgent.
+
+What you can see
+----------------
+1. constraint_memory  (chronological)
+- First lines: static constraint for the HDA problem.  
+- Subsequent lines: records that look like
+    H101_temperature:<val>, F101_temperature:<val>,
+    F102_temperature:<val>, F102_deltaP:<val>,
+    leads to Metric=<metric>.
+    These entries exist only for parameter sets that passed validation.
+
+2. The conversation stream
+- If your previous proposal was invalid, the immediately-preceding message
+    will come from ValidatorAgent and start with "Invalid, ...".
+- Use the reason in that message (e.g. which limit was exceeded) when
+    adjusting your next suggestion.
+
+Objective (one of the following)
+-------------------------------
+- Higher yield, or
+- Higher yield/cost, or
+- Lower cost
+
+Rules for every turn
+---------------------
+1. Parse the entire constraint_memory to understand long-term trends.
+2. Look at the most recent VALID parameter set (last line in memory).  
+Also check the last chat message:  
+    - If it begins with "Invalid," treat your last increments as rejected.  
+    - Shrink or reverse the offending increment so the result will fall
+      inside its constraint window.  
+    - Leave other increments unchanged unless you have evidence from
+      history that a different direction is better.
+
+3. Produce one Python dict literal (not JSON) called changes, e.g.
+
+{'H101_temperature': -10,
+ 'F101_temperature': 5,
+ 'F102_temperature': 0,
+ 'F102_deltaP': -5000}
+
+- All four keys must appear.  
+- The increments are RELATIVE adjustments (can be negative, positive, or 0).  
+
+4. If you judge no further improvement is possible, output exactly:
+    TERMINATE
+(uppercase, nothing else).
+\end{lstlisting}
+
+\section{Constraint Generation}
+
+This section presents the outputs generated by the ContextAgent to demonstrate the framework's capability to produce realistic process constraints and technical understanding from minimal input descriptions. The results validate the agent's embedded domain knowledge and its ability to infer engineering-appropriate operating bounds.
+
+\subsection{Process Understanding}
+
+To evaluate the ContextAgent's process comprehension capabilities, we examine the technical overview it generated for the HDA process. The following output demonstrates the agent's ability to synthesize process knowledge, identify key operational considerations, and provide technically accurate descriptions of unit operations and their interactions.
+
+\begin{lstlisting}[caption={ContextAgent’s Process Overview Generation Result}, label={lst:hda_process}]
+### Hydro-De-Alkylation (HDA) Process - Block-by-Block Summary
+1. Feed Preparation
+   - Liquid toluene (Stream B) and make-up/recycle hydrogen (Stream A + recycle loop) enter Mixer M101 at 303 K and 350 kPa.
+   - M101 provides homogeneous vapour-phase mixing without heat duty.
+2. Charge Heater H101
+   - The mixed feed is fired in Heater H101 to attain the high inlet temperature required for gas-phase hydrodealkylation.
+   - The heater operates under essentially the same pressure as the upstream mixer (approx. 350 kPa) and raises the temperature into the catalytic reaction window (approx. 827-975 K) while remaining below the metallurgical limit of common furnace tubes (approx. 1000 K).
+3. Reactor R101
+   - An adiabatic, fixed-bed catalyst reactor effects the exothermic conversion:
+     C6H5CH3 + H2 -> C6H6 + CH4.
+   - Design basis sets single-pass toluene conversion at 75%.
+   - Reactor effluent leaves only a few kelvin below the inlet (because the reaction is exothermic yet limited to 75% conversion) and at roughly 350 kPa.
+4. High-Pressure Flash F101
+   - The hot reactor effluent is partially condensed to 305-369 K at approx. 350 kPa with negligible pressure loss.
+   - Vapour phase (rich in H2 and CH4) proceeds to the purge/recycle loop; liquid phase (benzene/toluene) remains for further separation.
+5. Purge & Recycle Loop
+   - Splitter S101 removes 20% of the flash vapour as purge to control inerts (chiefly CH4).
+   - The remaining 80% is compressed isothermally in C101 back to the original system pressure of 350 kPa and returned to Mixer M101.
+6. Low-Pressure Flash F102
+   - The condensed liquid from F101 is throttled across a control valve, generating a pressure drop of 2 x 10^4 - 2 x 10^5 Pa (negative sign convention), well within the 250 kPa mechanical limit of the vessel.
+   - At the lower flash pressure, benzene preferentially vaporises and exits overhead; the toluene-rich bottoms are recycled or sent to further recovery.
+   - F102 temperature is maintained in the 306-366 K window to balance benzene recovery with heat-duty economy.
+   - By specification, the attainable temperature in Heater H101 is completely independent of the pressure drop selected for F102.
+7. Product Handling
+   - Benzene overhead is condensed, stabilised, and routed to storage.
+   - Toluene bottoms can be sent back to the reaction section or exported, depending on overall plant optimisation.
+### Utilities & Controls (brief)
+- Fired duty in H101 is trimmed to hold R101 inlet temperature.
+- Level control in F101/F102 maintains phase disengagement.
+- Pressure-override control on the purge stream prevents light-gas accumulation.
+\end{lstlisting}
+
+\subsection{Alternative Constraint Generation Approach Comparison}
+
+To evaluate the importance of embedded domain knowledge in constraint generation, we conducted preliminary testing using a retrieval-augmented generation (RAG) approach that relied on external documents rather than the LLM's pre-trained knowledge. The RAG-based implementation encountered difficulties in generating complete constraint sets for all required variables, potentially due to document formatting inconsistencies or retrieval strategy limitations.  While these results suggest that embedded process knowledge may provide advantages for autonomous constraint generation, further investigation with curated industrial documents and refined RAG implementations would be needed to draw definitive conclusions about the merits of different knowledge integration approaches.
+
+\section{Framework Convergence and Reproducibility Analysis}
+To assess the convergence of the proposed optimization method, we conducted five independent runs for cost minimization using the same generated constraints and process overview.
+
+Figure~\ref{fig:convergence_cost} presents the cost evolution across these runs, comparing individual optimization trajectories against the average trajectory across all runs and the grid-search benchmark. Only validated, successfully simulated iterations are included in the figure, as the ValidationAgent filters infeasible proposals before they reach simulation. The results demonstrate rapid convergence, with the average trajectory decreasing sharply in early iterations before stabilizing near the benchmark solution. Notably, the divergence among cost trajectories decreases as optimization progresses, indicating that the framework achieves consistent and reproducible convergence behavior.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{figure5.png}
+\caption{Convergence of cost minimization across five independent runs using the October 2025 version of OpenAI's o3 model. Thin lines show individual runs; thick blue curve shows average trajectory across runs; red dashed line represents grid search's optimal solution of \$$5.660 \times 10^5$, serving as a benchmark for comparison with the LLM-based optimization approach.}
+  \label{fig:convergence_cost}
+\end{figure}
+
+These convergence results were obtained using OpenAI's o3 model accessed in October 2025, which exhibits improved performance compared to results obtained in June 2025. The performance improvement may reflect model optimizations or updates between these testing periods.
+
+\section{Baseline Method Overview}
+
+IPOPT (Interior Point OPTimizer) is a gradient-based local optimizer designed to handle nonlinear programming problems (NLP). Mathematically, the NLP problem solved by IPOPT is expressed as\cite{wachter2006implementation}:
+\begin{equation}
+\eqalign{
+    & \min_{x} \quad f(x) \cr
+    & \text{s.t.} \quad g(x) \leq 0,\quad h(x) = 0,\quad x^L \leq x \leq x^U
+}
+\end{equation}
+where \(f(x)\) is the objective function, \(g(x)\) and \(h(x)\) are inequality and equality constraints, and \(x^L, x^U\) represent variable bounds.  
+
+For reliable convergence, IPOPT requires explicit constraints and at least first-order derivatives (exact or automatic). Providing twice-continuously-differentiable functions with accurate Hessian information improves robustness but is not strictly mandatory. Consequently, IPOPT can be less effective in early-stage problems where derivatives or complete constraints are unavailable. It is also vulnerable to getting stuck in local minima or convergence failures when faced with poorly defined spaces or discontinuous objectives.
+
+
+\section{HDA Process Description and Optimization Setup}
+
+\subsection{Process Specifications}
+
+The hydrodealkylation (HDA) process converts toluene to benzene through catalytic reaction with hydrogen according to the reaction:
+
+\begin{equation}
+\text{C}_6\text{H}_5\text{CH}_3 + \text{H}_2 \rightarrow \text{C}_6\text{H}_6 + \text{CH}_4
+\label{eq:hda_reaction}
+\end{equation}
+
+The process flowsheet (Figure in main text) consists of seven interconnected units: mixer (M101), heater (H101), reactor (R101), primary flash separator (F101), splitter (S101), compressor (C101), and secondary flash separator (F102). The process incorporates a recycle loop to maximize hydrogen utilization while managing methane accumulation through controlled purging.
+
+The process operates with two fresh feed streams that establish the baseline material balance. Stream A provides the hydrogen feed containing 0.30 mol/s H$_2$ and 0.02 mol/s CH$_4$ at 303.2 K and 350 kPa, while Stream B supplies 0.30 mol/s toluene at identical temperature and pressure conditions. These feed specifications represent typical industrial feedstock compositions with the hydrogen-to-toluene ratio designed to meet stoichiometric requirements at the target conversion level.
+
+Fixed process parameters define the fundamental design constraints that cannot be modified during operational optimization. The reactor operates at a fixed single-pass toluene conversion of 75\%, representing a design specification that balances reaction kinetics with equipment sizing requirements. The splitter maintains a constant split fraction of 20\% to purge and 80\% to recycle, establishing the recycle management strategy that prevents methane accumulation while maximizing hydrogen recovery. The compressor operates isothermally with a fixed outlet pressure of 350 kPa, restoring the vapor recycle stream to process operating pressure. The primary flash separator operates at approximately 350 kPa with negligible pressure drop across the unit.
+
+The optimization framework manipulates four key operating parameters that directly influence process performance through their effects on reaction rates, separation efficiency, and energy consumption. The H101 outlet temperature serves as the reactor inlet temperature, controlling reaction kinetics and energy requirements for the exothermic heating duty. The F101 temperature determines the primary flash separation conditions, affecting the vapor-liquid split between light gases and heavy aromatics. The F102 temperature controls the secondary flash operating conditions for final product purification, influencing the benzene-toluene separation efficiency. The F102 pressure drop creates the driving force for enhanced separation by reducing the operating pressure and increasing the relative volatility between benzene and toluene.
+
+\subsection{Objectives and Constraints}
+
+Three optimization metrics are evaluated to capture different aspects of process performance. Specifically, the annual operating cost objective minimizes energy consumption through optimal utility management:
+
+\begin{equation}
+\text{Operating Cost} = \text{Heating Cost} + \text{Cooling Cost}
+\label{eq:cost_objective}
+\end{equation}
+
+where heating costs account for the major energy consumers in the process:
+
+\begin{equation}
+\text{Heating Cost} = 2.2 \times 10^{-7} \cdot Q_{\text{H101}} + 1.9 \times 10^{-7} \cdot Q_{\text{F102}} + 63,931.475
+\label{eq:heating_cost}
+\end{equation}
+
+and cooling costs include heat removal requirements:
+
+\begin{equation}
+\text{Cooling Cost} = 2.12 \times 10^{-8} \cdot |Q_{\text{F101}}| + 2.12 \times 10^{-8} \cdot |Q_{\text{R101}}|
+\label{eq:cooling_cost}
+\end{equation}
+In Equation (4) and (5), $Q_{H101}$ (Heater H101), $Q_{F102}$ (Flash F102),$Q_{F101}$ (Flash F101) and $Q_{R101}$ (Reactor R101) represent the total annual heat duties (energy consumption) in units of Joules per year (J/yr). 
+The heating cost coefficients reflect different utility requirements across process units. The H101 coefficient $(2.2 \times 10^{-7} \$/J)$ represents high-temperature steam costs for reactor preheating from ambient to reaction temperature, while the F102 coefficient $(1.9 \times 10^{-7} \$/J)$ reflects lower-grade heating utility requirements for flash separation optimization. The constant term $(63,931.475 \$/yr)$ accounts for fixed operating expenses including maintenance, labor, and baseline utility consumption. Cooling cost coefficients $(2.12 \times 10^{-8} \$/J)$ represent cooling water or refrigeration costs for heat removal from the primary flash separator (F101) and reactor temperature management (R101). The lower magnitude compared to heating costs reflects the typically lower cost of cooling utilities versus high-temperature heating media. The other two evaluation metrics are defined in the main manuscript. 
+
+The optimization problem operates within physical and operational constraints that reflect thermodynamic feasibility and equipment limitations. Temperature limits are determined by vapor-liquid equilibrium requirements and equipment design ratings, typically ranging from 300-400 K for flash operations and 800-1000 K for reactor inlet conditions. The F102 pressure drop constraint range [-250,000, 0] Pa reflects equipment design limitations where excessive pressure drops can cause mechanical stress while positive values are thermodynamically impossible for expansion operations.
+
+Flow rate constraints are bounded by the fixed feed specifications (0.30 $mol/s$ toluene, 0.30 $mol/s$ $H_2$, 0.02 $mol/s$ $CH_4$) and steady-state material balance requirements throughout the process network. Phase equilibrium constraints govern all vapor-liquid separations based on component volatilities, with benzene and toluene exhibiting significantly different vapor pressures that enable effective separation.
+
+The reactor operates adiabatically $(Q = 0)$ with the fixed conversion constraint, eliminating reactor sizing as an optimization variable while allowing the exothermic heat of reaction $(\Delta H_{rxn} = -108 kJ/mol)$\cite{idaes_hda_flowsheet_2024} to contribute to maintaining reaction temperature. Despite the exothermic reaction, substantial external heating is required in H101 due to sensible heat requirements for elevating the feed mixture from 303.2 K to reaction temperature.
+
+The recycle loop creates steady-state material balances that significantly influence overall process economics through their impact on raw material efficiency and separation requirements. Unreacted hydrogen is recovered and recycled through 80\% of the vapor stream from F101, while methane accumulation is controlled by directing 20\% of the vapor stream to purge. The fresh feed hydrogen flow rate of 0.30 mol/s exactly matches the stoichiometric requirements for complete conversion at the 75\% conversion level.
+
+The material utilization efficiency depends critically on the balance between hydrogen recovery through recycling and methane removal through purging. This balance creates fundamental trade-offs between raw material costs and separation performance, as the purge stream removes valuable unreacted hydrogen along with the undesired methane byproduct. The steady-state operation requires that methane generation rates in the reactor equal methane removal rates in the purge stream, establishing equilibrium concentration levels throughout the recycle system.
+
+\subsection{IDAES Implementation}
+
+The process is modeled using the IDAES platform with ideal vapor-liquid equilibrium assumptions for all separation units. Component properties are based on standard correlations available in the IDAES property database, with the reactor kinetics represented through the fixed conversion constraint rather than detailed rate expressions. The simulation framework evaluates steady-state performance for each parameter set proposed by the LLM optimization agents, providing objective function values that guide the iterative optimization process. The IDAES implementation enables rapid evaluation of process performance while maintaining sufficient fidelity to capture the essential trade-offs between energy consumption, separation efficiency, and production capacity.
+
+\section*{References}
+
+
+\bibliographystyle{unsrt}
+\bibliography{references}
+\end{document}

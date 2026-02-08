@@ -1,0 +1,150 @@
+\section{Learning-based Collision Avoidance}
+\label{sec:approach}
+We begin this section by reviewing the ORCA algorithm, which, with appropriate tuned parameters, is able to produce locally collision-free motions for multiple agents. Next, we describe the details about how to leverage the ORCA algorithm to generate a large training dataset for learning a robust collision avoidance policy in terms of a deep neural network. Finally, we elaborate the network architecture and training details about the collision avoidance policy.
+
+\subsection{A Recap of ORCA}
+\label{sec:orca}
+In a nutshell, ORCA takes two steps to determine a collision-avoidance velocity $\mathbf v_{a_i}^+$ for an agent $a_i$. First, it computes a set of velocities that form the permitted velocity space for the agent, 
+i.e., if choosing a velocity within this space, the agent $a_i$ will not collide with other agents in a time horizon $\tau$. The permitted velocity set is denoted as ${ORCA}^{\tau}_{a_i}$ 
+%which can be computed as:
+%\begin{equation}
+%  ORCA^{\tau}_{a_i} = D(\mathbf{0},\mathbf v^{max}_{a_i}) \cap \bigcap_{{a_j}\ne {a_i}} ORCA^{\tau}_{{a_i}|{a_j}},
+%\end{equation}
+%where $D(\mathbf p, r)$ denotes a disc at position $\mathbf p$ with radius $r$, and $ORCA^{\tau}_{{a_i}|{a_j}}$ is the permitted velocity space for agent $a_i$ to safely avoiding agent $a_j$. 
+Next, among these permitted velocities, the agent
+selects the collision avoidance velocity as a velocity that locates inside the permitted velocity space but is closest to its current preferred velocity $\mathbf v_{a_i}^{pref}$, i.e., 
+\begin{equation}
+  \mathbf v_{a_i}^+ = \argmin_{\mathbf v \in ORCA^{\tau}_{a_i}} \|\mathbf v - \mathbf v_{a_i}^{pref}\|,
+\end{equation}
+where $\mathbf v_{a_i}^{pref}$ has been introduced in Section~\ref{sec:prob}.
+For good performance, the ORCA's parameters must be tuned carefully during the simulation for different scenarios. A list of the related ORCA parameters is shown in Table~\ref{tab:orca}. While varying these parameters, ORCA presents different collision avoidance behaviors, e.g. agents will be more "shy" if \textsc{neighborDist} is assigned a larger value. For some highly symmetric scenarios, ORCA agents will get stuck by each other without a carefully chosen \textsc{timeHorizon}. Furthermore, if you change the agent's \textsc{protectRadius}, you will need to select new values for all other parameters.
+
+\begin{table}
+ \begin{tabularx}{0.5\textwidth}{l|X}
+   %\hline
+  Parameter & Meaning  \\
+   \hline
+   \hline
+   \textsc{maxSpeed} & the maximum speed of an agent  \\
+   \hline
+  \textsc{maxNeighbors} & the maximal number of other agents that 
+   an agent takes into account in the navigation \\
+   \hline
+   \textsc{neighborDist} & the maximal distance to other agents that 
+   an agent takes into account in the navigation \\
+   \hline
+   \textsc{ProtectRadius} & the radius of a virtual protection circle centered at the agent where no obstacles shall enter \\
+\hline
+   \textsc{radius} & the physical radius of an agent \\
+   \hline
+   \textsc{timeHorizon} & the minimal time horizon for agents to compute collision-free velocities w.r.t. other agents \\
+   \hline 
+   \textsc{timeHorizonObs} & the minimal time horizon for agents 
+   to compute collision-free velocities w.r.t. obstacles \\  
+   %\hline
+ \end{tabularx}
+\caption{The ORCA's parameters.}
+\label{tab:orca}
+\vspace*{-0.1in}
+\end{table}
+
+
+%%% how to generate the training data
+% outline:
+% 1. RVO data: 
+% many frames - different agent number; - random initialization; - different RVO parameters; - noise
+% 2. data augmentation 
+\subsection{Dataset}
+\label{sec:data}
+The training of deep neural networks requires a sizable body of training data.
+However, directly collecting multi-robot navigation data in the real world could be both challenging and expensive. Thus, in this work we generate training data using the RVO2 simulator\footnote{http://gamma.cs.unc.edu/RVO2/} running the ORCA algorithm with many different configurations in terms of ORCA parameter settings. In this way, the learned policy will behave superior to a simulator with a fixed parameter in term of collision avoidance robustness and efficiency. 
+
+\subsubsection{\textbf{Data Generation}}
+\label{sec:data:data-gen}
+Our setup for the data collection of collision avoidance behaviors is shown in Figure~\ref{fig:datacollection}. Given an agent $A$ whose data is to be recorded, we put it at the origin in the global coordinate space because the agent's absolute position is not important for the collision avoidance. We then sample its preferred velocity $\mathbf v_A^{pref}$ along a random direction. Next, we generate a few agents randomly placed within the agent $A$'s neighborhood of radius $\textsc{neighborDist}$. The velocities of all agents are randomly initialized: the velocity magnitude is sampled from a uniform distribution over the interval $[0, \textsc{maxSpeed}]$, and the direction is also uniformly sampled from $[-\pi, \pi)$. Note that in this setup we do not add any static obstacles.
+
+\begin{figure}[t] % this figure will be revised
+\centering
+\includegraphics[width=0.6\linewidth]{fig/long3.pdf}
+\caption{Our setup for collecting collision avoidance behaviors of an agent $A$ using the ORCA simulator. The agent $A$ is marked as the yellow circle and locates at the origin. Its current preferred velocity points toward the tiny red square. Around $A$ are several (red) agents with their positions set randomly inside $A$'s neighborhood. We also randomly sample the current velocities of all agents, shown as the green vectors. The blue line segments are the simulated sensor ray cast from $A$, and the blue points are the scan results of the simulated sensor. The purple vector is $A$'s collision avoidance velocity computed by the ORCA algorithm.
+}
+\label{fig:datacollection}
+\vspace*{-0.2in}
+\end{figure}
+
+We repeat the above setup many times with different simulating configurations and generate a large amount of random scenarios. For each scenario, instead of running the simulator many times to generate a sequence, we only execute the simulator one step to generate one frame of collision avoidance data. The reason is the sequence data will have strong correlations with each other, while for training a deep neural network, data items independent with each other are more desirable.
+
+For each frame, we record the agent $A$'s observation $\mathbf o_{A}$ about the surrounding agents, its preferred velocity $\mathbf v_A^{pref}$, and the collision avoidance velocity $\mathbf v_A^+$ calculated by ORCA. To acquire $\mathbf o_{A}$,
+we mount a simulated $360$ degree 2D laser scanner at the center of the agent $A$. The simulated scanner has an angular resolution of $1$ degree and a maximum range of $4$ meters. In this way, each scan $\mathbf z_A$ provides $360$ distance values (though in Figure~\ref{fig:datacollection} we only show $72$ scan lines for legibility) ranging from agent radius to the scanner's maximum range. These distance values imply the shapes and positions of other agents in the agent $A$'s surrounding environment. We further infer these neighboring agents' velocities by performing a non-rigid point cloud matching between the current scan and the scan in previous time step using the \emph{coherent point drift} algorithm~\cite{cpd} implemented with the fast Gauss Transform. The matching result estimates the velocity of each point in the current scan, which is denoted as $\dot{\mathbf z}_A$. Two examples of the matched point clouds are shown in Figure~\ref{fig:matching}. 
+
+After collecting $\mathbf o_A = [\mathbf z_A, \dot{\mathbf z}_A]$, $\mathbf v_A^{pref}$ and $\mathbf v_A^+$, we further convert them from the global coordinate space to the local coordinate space fixed at the center of the agent $A$, because the collision avoidance behavior should only rely on the agent's local information. We denote the local observation as $\hat{\mathbf o}_A$, the local preferred velocity as  $\hat{\mathbf v}_A^{pref} = \mathbf v_A^{pref} - \mathbf v_A$, and $\hat{\mathbf v}_A^+ = \mathbf v_A^+ - \mathbf v_A$. In this way, we have prepared the input for the neural network as $[\hat{\mathbf o}_A, \hat{\mathbf v}_A^{pref}]$. The input $\hat{\mathbf o}_A$ has $1080$ dimensions consisting of the scan with $360$ dimensions and its estimated velocity with $720$ dimensions.
+The output for the neural network is the label for the velocity $\hat{\mathbf v}_A^+$ in a velocity cluster, as will be discussed later in Section~\ref{sec:data:clustering}.
+
+As described in Table~\ref{tab:orca}, there are seven parameters to be tuned in ORCA, we fix $\textsc{radius}= 0.2$m, $\textsc{maxSpeed} = 3.5$m/s, $\textsc{maxNeighbors} = 10$, $\textsc{neighborDist} = 3.0$m and $\textsc{timeHorizonObs} = 1.0$s for all agents; we vary the $\textsc{protectRadius}$ from set of $\{0.2, 0.5\}$m, and vary $\textsc{timeHorizon}$ from $\{0.5,1.0,2.0\}$s during the data collection. 
+We do not vary $\textsc{timeHorizonObs}$ because there is no static obstacle in the training data.
+Along with the %seven parameters of ORCA 
+two varied parameters above, another two variables can be changed. The first is the number of $A$'s neighbors, which can vary from $3$ to $10$. The other is the sensor measurement noise, which is a Gaussian noise with a standard deviation ranging between $0.01$ and $0.05$. We generate in total about $310,000$ examples, where each example is a pair in form of $([\hat{\mathbf o}_A, \hat{\mathbf v}_A^{pref}], \hat{\mathbf v}_A^+)$.
+
+
+\begin{figure}
+\centering
+\includegraphics[width=0.7\linewidth]{fig/long4.pdf}
+\caption{The results of non-rigid point matching between scans, which are used to represent the velocities of other agents within an agent's sensing range. The red points are the scan in the previous time step, while the blue points are the scan in the current time step. The green lines illustrate the mapping between two scans. The circle indicate the sensing range of the agent.}
+\label{fig:matching}
+\vspace*{-0.2in}
+\end{figure}
+
+\subsubsection{\textbf{Data Cleansing, Augmentation and Preprocessing}} 
+\label{sec:data:preprocess}
+Before feeding the saved examples to the CANet, we need to first perform some data cleansing, augmentation and preprocessing techniques. For data cleansing, we remove the cases that the agent $A$ updates its position with $\mathbf v_A^{+}$ computed by ORCA but still collides with its neighbors. We then delete the unreasonable outliers by checking whether the speed of collision avoidance velocity $\mathbf v_A^{+}$ is close to $\textsc{maxSpeed}$. For data augmentation, we generate more examples by first adding measurement noises to the inputs and secondly leveraging  symmetries in the collision avoidance scenario along the axis of $\mathbf v_A$, i.e., if we mirror the positions and velocities of the neighboring agents and the preferred velocity along the axis of $\mathbf v_A$, the mirrored version of $\mathbf v_A^+$ will be a valid collision avoidance velocity. As shown in~\cite{krizhevsky2012imagenet,amodei2015deep}, data augmentation technologies can moderate over-fitting and improve the generalization capability of the learned policy. 
+It is important to note that data augmentation only adds some redundancy and does not rely on any external source of new information. 
+
+Finally, the training data will be performed standardization (or Z-Score normalization) before being fed to the network. 
+
+
+\subsubsection{\textbf{Collision Avoidance Velocity Clustering}}
+\label{sec:data:clustering}
+As stated in Section~\ref{sec:prob}, we formulate the computation of the reactive collision avoidance strategy as a multi-class classification problem. In other words, we divide the space of all possible collision avoidance velocities into several classes; and in the runtime the reactive controller will determine which class the collision avoidance velocity should be chosen from, given the sensor observation and the preferred velocity.
+
+To generate a reasonable partition for the space of collision avoidance velocity, we first perform a $k$-means clustering on the $\mathbf v_A^+$ and use the clustering result shown in Figure~\ref{fig:km} as a reference, we manually design a partition with 61 classes as shown in Figure~\ref{fig:manually}.
+
+We choose to not model the computation of collision avoidance velocity as a regression problem because the $l_2$ loss function for regression tasks usually is more fragile to outliers~\cite{Belagiannis:ICCV:ROD}. In addition, it is more desirable to output a probability about selecting a collision avoidance velocity given a noisy sensor measurement, but the regression only generates a single velocity output with no indication about the confidence. 
+
+\begin{figure} 
+\hspace{0.2in}
+\begin{subfigure}{0.20\textwidth}
+\includegraphics[width=1.0\linewidth]{fig/long5a.pdf}
+\caption{$k$-means}
+\label{fig:km}
+\end{subfigure}
+\begin{subfigure}{0.20\textwidth}
+\includegraphics[width=1.0\linewidth]{fig/long5b.pdf}
+\caption{manual partition}
+\label{fig:manually}
+\end{subfigure}
+\caption{Partition of the space of collision avoidance velocity. (a) The $k$-means clustering results on the collision avoidance velocities in the collected dataset; (b) A Manually designed partition with 61 classes. Each point in both figures represents a collision avoidance velocity $\mathbf v^+$, and its class label is determined by the point color.}
+\label{fig:clustering}
+\vspace*{-0.1in}
+\end{figure} 
+
+\subsection{Collision Avoidance Network} 
+\label{sec:net}
+The CANet is a two-branch multilayer perceptron (MLP) and its architecture is as summarized in Figure~\ref{fig:net}. Following is the details about the different components of this network:  
+\subsubsection{\textbf{Architecture}}
+The CANet has two branches. The input of the main branch is the agent's observation $\hat{\mathbf o}_A$ and the input of the auxiliary branch is $\hat{\mathbf v}_A^{pref}$, which are both described in Section~\ref{sec:data:data-gen}. The output of the CANet is a probability distribution over the velocity classes which will be parsed to the collision avoidance velocity $\hat{\mathbf v}^+$ for updating the agent's position. In the main branch, there are four fully connected hidden layers after the input layer, and these layers consist of $1024$, $1024$, $512$ and $256$ rectified linear units (ReLUs) respectively. A dropout layer with probability $0.2$ is applied after each of these hidden layers. The auxiliary branch has only one fully connected hidden layer with $256$ ReLUs. The two branches are merged by concatenating the fourth layer of the main branch with the hidden layer of the auxiliary branch. This merged layer is then followed by a fully connected layer with one neuron per class, activated by a softmax function. We use the cross-entropy loss function during the training stage.  
+
+\begin{figure}
+\centering 
+\includegraphics[width=0.8\linewidth]{fig/long6.pdf} 
+\caption{The architecture of the collision avoidance network CANet. The network has the local observation $\hat{\mathbf o}$ and the local preferred velocity $\hat{\mathbf v}^{pref}$ as inputs, and outputs a probability distribution $\mathbf{Pr}(L(\hat{\mathbf v}^+))$ that can be parsed to the collision avoidance velocity, where $L(\hat{\mathbf v}^+)$ is the class label for each $\hat{\mathbf v}^+$.} 
+\label{fig:net} 
+\vspace*{-0.2in}
+\end{figure} 
+
+\subsubsection{\textbf{Training}}
+We randomly split the dataset into ten stratified folds preserving the percentage of samples for each class and report results using 10-fold cross-validation. 
+We train our network for about 5 hours until convergence on a single Nvidia Titan X GPU, using stochastic gradient descent (SGD) with the momentum of $0.9$. We use a base learning rate of $0.1$ and a decay rate of $0.0002$. The network is trained for the maximal $300$ epochs with early stopping using a batch size of $64$. The classification accuracy on the test dataset is $33.435\%$ ($\pm 0.354\%$) and $64.106\%$ ($\pm 0.313\%$) on the training set. 
+%\textcolor{red}{We have also tested the proposed network with different activations: the classification accuracy is $26.458\%$ ($\pm 0.444\%$) with tanh activation and $23.641\%$ ($\pm 0.229\%$) with sigmoid activation.}
+
+\subsubsection{\textbf{Collision Avoidance Velocity}} CANet will output a distribution over the collision avoidance velocity $\mathbf{Pr}(l=L(\hat{\mathbf v}^+))$, where $L(\hat{\mathbf v}^+)$ is the class label for each $\hat{\mathbf v}^+$. In this work, we determine the actual collision avoidance velocity using a simple method. We first choose the class $l$ with the highest probability and then perform random sampling inside the class around the class centroid. Next, we compute the safety margins (i.e., closest distance to obstacles) when the agent applies these sampled velocities as the collision avoidance velocity in the time horizon $\tau$, and choose the velocity with the maximum safety margin as our result. If this velocity will make the agent collide with obstacles (i.e., the minimum safety margin is negative), we will slow down the velocity accordingly.
+

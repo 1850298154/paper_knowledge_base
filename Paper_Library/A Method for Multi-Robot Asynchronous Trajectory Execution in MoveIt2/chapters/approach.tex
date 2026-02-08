@@ -1,0 +1,102 @@
+MoveIts functionalities are exposed through the \emph{move group} module, which manages and plans motions for specific subsets of joints and links of a robot. The \emph{planning scene} component collects the robot's joint configurations, positions of links, collision objects in the environment and provides collision-checking capabilities.
+%
+The \emph{trajectory execution manager} handles the execution of planned trajectories.  Its key responsibilities include trajectory splitting, dispatching these sub-trajectories to their respective controllers and relaying execution information. 
+%Trajectories that need to be executed in a blocking manner are sent to the controller using a blocking queue and \hl{vice versa for continuous queue}. 
+%The current MoveIt implementation caters for synchronized movements of multiple robots, and although planning and execution of individual arm movements is possible, this will not perform collision checking.
+With the current implementation of MoveIt, it is only possible to do synchronized movements, as for safety reason only a single trajectory can be executed at the same time.
+
+In order to support asynchronous execution, we introduced the following changes to MoveIt:
+%\begin{itemize} 
+%Point 1 is not inherently correct anymore, as the moveit2 implementation has changed in rolling to a unified queue. Point 2 is more of a result, and not a direct design choice - I wouldn't include it as a Point. Point 3 is correct, but I think it is not made clear what an online collision detector actually is and how it differs from the 'normal' collision checker
+1) Collision detection strategies for multiple trajectories 
+%
+2) Central execution scheduler that ensures collision free execution 
+%
+3) Online collision detection.
+
+%1) unifying blocking and continuous execution queues\footnote{at the time of writing moveit2 implementation associated with the ROS ``rolling'' release has also been moved to a unified queue}; 2) introducing a backlog; 3) introducing an online collision detector.
+%\end{itemize}
+
+
+\subsection{Central scheduler}
+
+To allow the trajectory execution manager to handle multiple trajectories, the blocking execution that was previously present has been replaced with a continuous execution queue (top right in Figure \ref{fig:exec_mgr}). Any new trajectory $t_n$ added to the queue will be collision checked against all currently running trajectories $t_r \in T$. 
+%
+If no collision is expected, $t_n$ will be scheduled for immediate execution and the execution manager will store its information for future collision avoidance. 
+Instead, in case of expected collision, $t_n$ is added to a backlog queue (bottom right in figure), similarly to the implementation suggested by Felix von Drigalski in \cite{Felix_2020}. %, Felix_OA2S}. 
+As soon as the running trajectory $t_r$ that was causing a collision with $t_n$ is finished, $t_n$ will be moved from the backlog into the continuous queue and checked against collisions to be executed again.
+To avoid deadlocks and minimize execution duration, all trajectories are assigned a backlog timeout. If the execution manager is not able to schedule a trajectory within said timeout, the trajectory execution aborts, allowing the user to re-plan. 
+
+\begin{figure*}[htbp]
+\begin{center}
+%\centerline{\includegraphics{Figures/proposed_trajectory_execution_manager.png}}
+% \scalebox{.5}{
+\includegraphics[width=0.8\textwidth]{Figures/execution_mgr.png}
+\caption{Proposed Trajectory Execution Manager.}
+\label{fig:exec_mgr}
+\end{center}
+\end{figure*}
+
+
+%\subsection{Unified queue}
+
+%We have unified the continuous and blocking execution queues so that they can collect all the contexts of the running trajectories. This allows the trajectory execution manager to check for collisions of both continuous and blocking executions before sending them to the respective controllers. 
+
+%By following the ideas proposed by Felix von Drigalski in \cite{Felix_2020, Felix_OA2S}
+%we have added an option \textit{execution finished} callback for continuous execution so that successful trajectory execution can be notified. Since we can determine the state of the robot after a continuous execution, this allows the move group module to attempt to execute a trajectory, and if execution fails (e.g., because of a predicted collision), re-plan the motion from the last state of the robot.  
+%\hl{This enables the move group module to execute blocking executions using "Plan and Execute", "Plan" and "Execute" independently for continuous executions.}
+%\hl{In the prior implementation, a simultaneous execution is performed in "Plan and Execute" manner for multi-arm robot. With proposed work, move group of one arm can be in "Execute" stage while other move group of another arm in "Plan" stage.(This is a repetition of synchronous and asynchronous execution in moveit term. we can remove it if needed)}
+
+%\subsection{Backlog to handle failed executions}
+
+%A FIFO queue was introduced as a backlog to handle failed trajectories due to collisions or occupied controllers, with the primary aim of being able to reschedule them once they are valid. Once a backlog trajectory is valid again, it  will be pushed to the unified queue.
+
+
+%The mentioned changes introduce two main issues. Firstly, there is a risk of deadlock due to specific trajectories getting stuck and blocking the entire process. Secondly, a scenario might arise where executing a trajectory immediately is necessary, but waiting for it could block another concurrent task.
+
+%To address these problems, items in the backlog  have a timeout attribute. When an item times out, it is removed from the backlog, and its execution fails. A continuous execution thread regularly checks for expired backlog items
+
+\subsection{Collision Detection}
+
+Collision avoidance between a new and a running trajectory can be addressed by ``sweeping'' methods that reserve all the space occupied by an entire trajectory in the workspace (as done in e.g., \cite{Planrob}). However, this reduces the motion space available for planning. For this reason, we chose to check for collision in a time dependent manner. 
+
+The default collision checking library in MoveIt is FCL (Flexible Collision Library), which allows for discrete collision detection for a single robot state. To be able to check for collision in a time-variant manner, we will have to discretize the trajectory and check for every discrete time step. At first we tried evaluating collisions between a trajectory's discrete robot state at each timestamp and the interpolated state of another trajectory at the corresponding timestamp, but this led to undetected collisions, so we resorted to use a configurable parameter for the time step used to break trajectories into discrete steps. This allows to tune the trade-off between performance and security.
+
+%Though there has been an attempt to discretize the trajectories only for each robot state of a trajectory and the interpolated state of the second trajectory, this approach led to collisions not being detected. To circumvent this, the time-step for discretization of the trajectories is being set as a parameter which can be set to best fit the trade-off between performance and security.
+
+This approach is still of course sub-optimal,  as it won't detect collisions between discrete time-steps. To solve this issue, Continuous Collision Detection (CCD) could be used in a future implementation. %With CCD, the collision detector sweeps between two robot states and detects any collision within. 
+%The CCD library implemented in MoveIt is Bullet, however the implementation does not allow for collision detection of the robot with itself. 
+%For that reason, though discrete collision detection was chosen for this work, future implementations would greatly benefit from being able to leverage CCD.
+
+
+%\begin{figure}[htbp]
+%\centerline{\includegraphics{Figures/proposed_trajectory_execution_manager.png}}
+%\centerline{\scalebox{.1}{\includegraphics{Figures/trajectory_leading_discretization.png}}}
+%\caption{Trajectory leading discretization.}
+%\label{fig_leading_trajectory}
+%\end{figure}
+
+
+%In our implementation, we adopt time-dependent discrete collision detection, which entails evaluating collisions between a trajectory's discrete robot state at each timestamp and the interpolated state of another trajectory at the corresponding timestamp (see Figure \ref{fig_leading_trajectory}). %This approach is adopted in the implementation and starts with comparing the new trajectory's initial point with the ongoing trajectory's first robot state. 
+
+
+%\paragraph{discrete collision detection}
+%When evaluating collisions between discrete robot states, the time discretization follows the longer trajectory, with the other trajectory's interpolated state computed at corresponding timestamps of the longer trajectory's states. This approach guarantees ongoing collision checks with the last state of the longer trajectory, even after the shorter trajectory completes. Any new trajectory designated as shorter trajectory is checked independently against ongoing trajectories at execution time, including the remaining part of ongoing trajectories. 
+%Additionally, an attempt was made to implement Bullet Continuous Collision Detection (CCD) to enhance collision detection and ensure collision-free trajectories. In contrast to discrete collision detection relying on discrete steps that might overlook collisions, CCD offers a more precise and dependable collision detection method for multiple trajectories.
+%\paragraph{continuous collision detection}
+%In this implementation, both trajectories influence the discretization process, with interpolated states computed for discrete timestamps of each trajectory. This approach enables CCD by considering transitions between discrete robot states, ensuring collision-free trajectory execution. However, as of the current state, the Bullet interface performs inadequately detecting collisions, including self-collisions. \textbf{Our attempts to enable the feature yielded no results}.
+
+%This is commented out, as i wouldn't include it as part of the work. It doesn't work fantastically well, and more or less the only robots that have grave
+%\subsection{Synchronizing Timestamps}
+
+%An algorithm was developed to synchronize the trajectory execution manager's timestamps with the ongoing execution state (Figure \ref{fig_time}). This ensures synchronization and reliability even during deviations, as ROS controllers expect precise timestamps in the trajectory for PID settings. To pinpoint the current position in the trajectory, a linear algebraic equation matches the closest trajectory state to the current state, factoring in inherent errors between set and actual values. This process corrects trajectory timestamps using the discrepancy between the estimated and actual states, converging to the accurate state despite potential initial estimation errors, ultimately enhancing trajectory management and execution precision.
+
+%\begin{figure}[htbp]
+%\centerline{\scalebox{.1}%{\includegraphics{Figures/timestamp_synchronization.png}}}
+%\caption{Timestamp synchronization.}
+%\label{fig_time}
+%\end{figure}
+
+\subsection{Online collision detection}
+
+MoveIt incorporates real-time trajectory validity assessment using collision checking for single trajectories, yet collision checks only consider a single trajectory as well as the continuously updated planning scene. This design, meant to account for a single executing trajectory, may incur in a high executon overhead due to extensive collision evaluations. A more efficient approach is sought to accommodate multiple trajectories while expanding collision checks between executing trajectories and the planning scene. Our proposed solution consolidates all robot states from concurrent trajectories at discrete intervals, subjecting this combined state to self-collision checks and evaluations against the planning scene. Discretization strategies to balance efficiency and safety vary, with the preferred approach involving periodic collision checks with planning scene updates.

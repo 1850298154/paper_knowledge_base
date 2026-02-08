@@ -1,0 +1,222 @@
+\section{System Implementation}
+\label{sect:the-system}
+
+In this section, a system implementing the proposed approach to SQL semantic error identification is described.
+We developed this proposal in the deductive database system DES (Datalog Educational System, \url{des.sourceforge.net}) version 6.0.
+
+
+\subsection{Defining Solver Cooperation}
+
+In the current implementation, there is opportunity for the cooperation of the exact numerical solvers  $\mathscr{Q}$ and $\mathscr{FD}$.
+To implement this, we define the way for solving an integer constraint, which follows the approach described in Section \ref{sect:cooperation}.
+The following code excerpt shows posting an integer constraint to both solvers  $\mathscr{Q}$ and $\mathscr{FD}$ (the case of a single solver is a simplification of this predicate and its description is thus omitted):
+
+{\myfontcodesize
+\begin{verbatim}
+1. post_clp_ctr(ctr(Cond,integer),InputBridges,OutputBridges) :-
+2.   Cond =.. [Op,L,R], copy_term([L,R],[FDL,FDR]), copy_term([L,R],[QL,QR]),
+3.   term_variables([L,R],Xs),
+4.   term_variables([LFD,RFD],XFDs), term_variables([LQ,RQ],XQs),
+5.   op_fdop(Op,FDOp),
+6.   CtrFD =.. [FDOp,LFD,RFD], CtrQ  =.. [Op,LQ,RQ],
+7.   add_bridges(fd,Xs,XFDs,InputBridges,Bridges),
+8.   add_bridges(q,Xs,XQs,Bridges,OutputBridges),
+9.   catch(call(CtrFD),_,true), catch(clpq:{CtrQ},_,true).
+\end{verbatim}
+}
+
+This predicate has two input arguments and a third output argument.
+The first one is the constraint, the second one is the list of already built bridges along solving, and the third one is for the output bridges (possibly augmenting the input bridges with new ones).
+Line 2 identifies the condition with its left and right arguments (\mytt{L} and \mytt{R}, respectively) and makes a copy (to be sent later on) as part of the $\mathscr{Q}$ and $\mathscr{FD}$ constraints, which are built in line 6, and posted to the corresponding solvers in line 9.
+The CLP operator for the domain $\mathscr{Q}$ is the same as for Datalog, but its correspondence with the $\mathscr{FD}$ operator has to be found (line 5) to build a syntactically correct $\mathscr{FD}$ constraint.
+Lines 7--8 build the bridges between each variable \mytt{X}$^\mathscr{H}$ in the original condition and its counterpart variables \mytt{X}$^\mathscr{Q}$ and \mytt{X}$^\mathscr{FD}$.
+Because of variable sharing, it may be the case that a bridge for a given variable has been previously built.
+All the previous bridges are stored in the input list \mytt{InputBridges} and no bridge is added by the predicate \mytt{add\_bridges}/5 if already present in this list.
+This predicate has as input arguments the domain for which to build the bridge, the variables in the condition, the copy of these variables in the constraint domain, and the input bridges.
+Its last argument (\mytt{OutputBridges}) will contain the input bridges plus the new one (if eventually created).
+For each variable in \mytt{Xs}, it calls \mytt{add\_bridge}/3, which adds a new bridge if needed:
+
+{\myfontcodesize
+\begin{verbatim}
+% Existing bridge: just retrieve bindings
+add_bridge(bridge(D,X,Y),Bridges,Bridges) :- bridge_in(bridge(D,X,Y),Bridges), !.
+% New bridge: add it to the output list
+add_bridge(bridge(D,X,Y),Bridges,[bridge(D,X,Y)|Bridges]) :-
+  add_domain_binding_daemon(D,X,Y).
+\end{verbatim}
+}
+
+Here, a bridge has the form \mytt{bridge(D,X,Y)}, where \mytt{D} is the domain, \mytt{X} is the variable in the domain $\mathscr{H}$, and \mytt{Y} is the variable in the domain \mytt{D} (this term corresponds to the previous notation \mytt{X$^{\mathscr{H}}$ \#==$_{\mathscr{H},\mathscr{D}}$ Y$^{\mathscr{D}}$}).
+The predicate \mytt{bridge\_in}/2 checks if the input bridge is already built and, if so, it retrieves the bindings for both variables.
+Otherwise, a new bridge is created:
+
+{\myfontcodesize
+\begin{verbatim}
+bridge_in(bridge(D,X,Y),[bridge(D,BX,Y)|_Bri]) :- var(BX), X==BX, !.
+bridge_in(bridge(D,X,Y),[_|Bri]) :- bridge_in(bridge(D,X,Y),Bri).
+\end{verbatim}
+}
+
+Finally, the predicate \mytt{add\_domain\_binding\_daemon} creates a daemon %(with the help of the Prolog built-in \mytt{freeze}, 
+(which suspends the goal in its second argument until its first argument becomes ground).
+It is activated by grounding either \mytt{X} in $\mathscr{H}$ or \mytt{Y} in \mytt{D}: % (recall that each domain requires a different syntax for posting a constraint):
+
+{\myfontcodesize
+	\begin{verbatim}
+add_domain_binding_daemon(fd,X,FD):- freeze(X,FD#=X), freeze(FD,X=FD).
+add_domain_binding_daemon(q,X,Q):- freeze(X,clpq:{Q=X}), freeze(Q,q_to_int(Q,X)).
+\end{verbatim}
+}
+
+The call to the predicate \mytt{q\_to\_int} converts compatible numbers between rationals and integers.
+
+The function $solve(\phi, \Pi_{CLP})$ has been implemented with a CLP metainterpreter written in Prolog.
+The predicate for to this function is \mytt{clp\_evaluation(Goal, Program, InputBridges, OutputBridges)}, where \mytt{Goal} is the argument corresponding to $\phi$, and \mytt{Program} corresponds to $\Pi_{CLP}$.
+The arguments \mytt{InputBridges} and \mytt{OutputBridges} are added to keep track of the bridges being created during solving.
+The sketch of this predicate is similar to a Prolog metainterpreter \cite{Sterling:1994:APA:175753}, but when a constraint term is identified as a goal, it calls the predicate \mytt{post\_clp\_ctr}/3.
+
+
+\subsection{A System Session}
+
+A system session log for the examples in the introduction can be found at {\myfontcodesize\url{www.fdi.ucm.es/profesor/fernan/DES/prole2018/examples.pdf}}, which we omit here for the sake of space.
+%
+In addition to these examples, note that our approach is applied to conditions as complex as needed, including subqueries.
+For example, subqueries in expressions are allowed:
+
+{\myfontcodesize
+	\begin{verbatim}
+DES> SELECT (SELECT ename FROM employees WHERE salary BETWEEN 5000 AND 1000) 
+     FROM departaments WHERE dname='Human resources';
+Warning: Inconsistent condition.
+Warning: Missing join condition for [departments,employees].
+\end{verbatim}
+}
+
+The next condition includes a subquery in the \mytt{WHERE} clause and is inconsistent:
+
+{\myfontcodesize
+	\begin{verbatim}
+DES> SELECT ename FROM employees
+     WHERE salary<1000 AND salary>(SELECT salary FROM employees WHERE salary>2000);
+Warning: Inconsistent condition.
+\end{verbatim}
+}
+
+Note that inconsistency in this case is due to the combination of the conditions of both the root query and its subquery.
+The translations are:
+
+$\Pi_{DL}$=\{(\mytt{answer(A) :- employees(A,\_B,C), employees(\_D,\_E,F), F>2000, C>F, C<1000})\}
+
+$\Pi_{CLP}$=\{(\mytt{answer(A) :- ctr(F>2000,integer), ctr(C>F,integer), ctr(C<1000,integer)})\}
+
+\noindent where it can be seen that the last three constraints cannot be fulfilled.
+
+\subsection{Performance}
+
+%An interesting point to be clarified is whether the proposed method is enough performant to deal 
+This section describes the performance of our approach when dealing
+with queries of relevant size.
+Our experience at classroom indicates that the tool successfully handles students' queries (including long queries for solving complex SQL puzzles which were posed to outstanding students \cite{sae19b-prole19}).
+However, the tool might be used to verify very long queries which are automatically generated by other tools (e.g., handling of persistence in Object-Relational Mapping approaches such as Hibernate ORM).
+Thus, this section analyses the cost of an SQL query translation (i.e., the function \mytt{{\em SQL\_to\_DL}} to translate SQL into Datalog in Subsection \ref{sect:sql-to-dl-translation}, and the function \mytt{{\em DL\_to\_CLP}} to translate Datalog into CLP in Subsection \ref{sect:dl-to-clp-translation}), and CLP solving (the function $solve$ in Subsection \ref{sect-clp-solving}).
+For the experiments we have selected a database with $n$ empty tables, each one with a column with a \mytt{CHECK} constraint over integers (so that solver cooperation is applied), and a query $Q_1$ consisting of $n-1$ nested subqueries, inductively defined as:
+
+\begin{tabbing}
+	$Q_n$\=$\equiv$ \=\mytt{SELECT t$_n$.a} \=\mytt{FROM t$_n$} \=\mytt{WHERE t$_n$.a>$n$}\\
+	%\indent
+	$Q_i$\>$\equiv$ \>\mytt{SELECT t$_i$.a} \>\mytt{FROM t$_i$} \>\mytt{WHERE t$_i$.a>$i$ AND t$i$.a IN ($Q_{i+1}$)}
+\end{tabbing}
+
+\setlength{\tabcolsep}{3pt}
+\begin{wrapfigure}{r}{8cm}
+\vspace{-0.7cm}
+	\centering
+	{\small
+	\begin{tabular*}{8cm}{rrrrrrr}
+		\hline
+		$n$ & \mytt{{\em SQL\_to\_DL}} & \mytt{{\em DL\_to\_CLP}} & $solve$ & Total & DB2 & Oracle \\
+		\hline 
+		 10 &     3 &	0 &	1 &	   65 &    169 &    111 \\
+		 20 &    11 &	0 &	1 &	  118 &    340 &    200 \\
+		 30 &    28 &	0 &	1 &	  196 &    607 &    631 \\
+		 40 &    63 &	1 &	2 &	  314 &  2,135 &  1,821 \\
+		 50 &   121 &	1 &	2 &	  510 &  4,278 &  4,425 \\
+		 60 &   205 &	1 &	3 &	  753 &  7,990 &  9,292 \\
+		 70 &   307 &	2 &	4 &	1,113 & 15,298 & 18,049 \\
+		 80 &   438 &	1 &	4 &	1,491 & 28,288 & 30,215 \\
+		 90 &   633 &	2 &	4 &	2,050 & 48,314 & 50,350 \\
+		100 & 1,077 &	2 &	7 &	2,639 & 96,139 & 78,292 \\
+		\hline
+	\end{tabular*}
+}
+\vspace{-0.5cm}
+	%\rule{3cm}{7cm}
+\end{wrapfigure}
+For a given $n$, $Q_1$ is the test query involving $n$ correlated base tables, and inheriting the constraints in each table definition.
+The table to the right shows times in milliseconds (got with \mytt{statistics/2} for walltime) for the analysed steps.
+The column `Total' lists the total run time (this includes other tasks such as parsing and processing).
+In addition, for the sake of comparing this total with those of well-known relational database systems, the two final columns `DB2' and `Oracle' show the total run time for IBM DB2 version 11.1.0 and Oracle version 11g via an ODBC connection from the tool.
+As a test platform, we used a Windows 10 64-bits OS running on an Intel Xeon CPU E3-1505M v5 (4 physical cores) running at 2.8 GHz, with 16GiB RAM. 
+We used the source distribution of DES version 6.2 (with a bit of extra code for measuring time) running on SICStus Prolog 4.4.1 64-bits.
+As expected, both translating Datalog to CLP, and solving the CLP program take negligible time, whereas the translation from SQL to Datalog takes a reasonable time.
+Note that \mytt{{\em SQL\_to\_DL}} includes in particular program transformations (folding/unfolding), safety checks, argument mode handling, and simplifications.
+Both DB2 and Oracle do not seem to scale well with this kind of queries.
+Other database systems at hand (MySQL 5.7.13 and MS SQL Server 2014) could not handle so many nested levels (with a limit of 64 and 18, respectively).
+%Figure \ref{table-performance}
+%
+
+
+\subsection{Supported Semantic Errors}
+\label{sect:errors}
+
+This section lists and briefly describes our approach to deal with all the supported semantic errors (identified by numbers in \cite{Brass:2006:SES:1183058.1183064}) in our implementation.
+The analysis incorporates the bindings produced along a successful CLP program solving.
+
+\begin{itemize}
+\item Error 1: Inconsistent condition. 
+If the evaluation of the CLP program fails, a warning is issued.
+This can be easily extended to display the source condition corresponding to the failing constraint by annotating each constraint with its corresponding condition.
+\item Error 2: Unnecessary \mytt{DISTINCT}. 
+A warning is issued if the query returns no duplicates and includes this modifier with respect to the primary keys in the involved relations.
+\item Error 3: Constant output column.
+As a consequence of CLP solving, a column can become ground.
+\item Error 4: Duplicated column values.
+Two or more columns can be assigned to the same logical variable representing its output.
+\item Error 5: Unused tuple variable.
+An unaccessed single relation in the FROM list from the root query (Error 27 captures all other cases).
+\item Error 6: Unnecessary join.
+Check if no column in a join is used in addition to its correlation, if any.
+Foreign keys are taken into account, otherwise, false positives might be raised.
+\item Error 7: Tuple variables are always identical.
+A warning is issued if two or more relations produce the same tuples.
+This is accomplished by testing if the same goal occurs more than once with the same variables.
+\item Error 8: Implied or tautological condition. 
+The original Error 8 included an inconsistent condition, which is checked in Error 1 above.
+Checking this is based on testing whether the complement of the condition fails,
+meaning that the condition is trivially true.
+\item Error 9: Comparison with \mytt{NULL}. 
+This is performed in the SQL syntax tree by looking for comparisons with null values.
+\item Error 11: Unnecessary general comparison operator.
+A warning is issued if \mytt{LIKE '\%'} occurs, which is equivalent to \mytt{IS NOT NULL} by inspecting the SQL syntax tree.
+Additionally it issues a warning about trivially true (resp. false) conditions as \mytt{cte LIKE '\%'} (resp. \mytt{NOT LIKE}).
+This might also be checked by a string solver in Error 1.
+\item Error 12: \mytt{LIKE} without wildcards.
+Again, this error is straightforwardly checked by inspecting the SQL syntax tree.
+\item Error 13: Unnecessarily complicated \mytt{SELECT} in \mytt{EXISTS}-subquery.
+Detect patterns different from \mytt{SELECT *} as the root in an existential subquery.
+\item Error 16: Unnecessary DISTINCT in aggregation function.
+A warning is issued if either \mytt{MIN} or \mytt{MAX} is used with a \mytt{DISTINCT} argument, as well as if other aggregate is used with a \mytt{DISTINCT} expression involving key columns.
+In both cases, the Datalog translation is inspected.
+\item Error 17: Unnecessary argument of \mytt{COUNT}.
+A warning is issued if \mytt{COUNT} is applied to an argument that cannot be null as a primary key.
+Metadata is used to determine non-null arguments.
+\item Error 27: Missing join condition.
+A warning is issued if two relations are not joined by a criterium.
+This includes Error 5 for a single unused relation.
+\item Error 32: Strange \mytt{HAVING}.
+A warning is issued if a \mytt{SELECT} with \mytt{HAVING} does not include a \mytt{GROUP BY} by inspecting the SQL syntax tree.
+\item Error 33: \mytt{SUM(DISTINCT ...)} or \mytt{AVG(DISTINCT ...)}. 
+A warning is issued if duplicate elimination is included for the argument of either \mytt{SUM} or \mytt{AVG}.
+If included, this might not be an error, but it is suspicious because duplicates are usually relevant for these aggregates.
+
+\end{itemize}

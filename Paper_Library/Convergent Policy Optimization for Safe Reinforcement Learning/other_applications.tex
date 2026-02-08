@@ -1,0 +1,191 @@
+
+
+\section{Other applications}
+\label{sec:other_applications}
+
+
+
+
+\subsection{Constrained Parallel Markov Decision Process}
+
+We consider the parallel MDP problem \cite{kretchmar2002parallel,
+  nair2015massively, chen2018communication} where we have a
+single-agent MDP task and $N$ workers, where each worker acts as an
+individual agent and aims to solve the \emph{same} MDP problem.  In
+the parallel MDP setting, each agent is characterized by a tuple
+$(\cS, \cA, P, \gamma, r^i, d^i, \mu^i)$, where each agent has the
+same but individual state space, action space, transition probability
+distribution, and the discount factor.  However, the reward
+function, cost function, and the distribution of the initial state
+$s_0\in \cS$ could be different for each agent, but satisfy
+% drawn from the same distribution, i.e.
+$\EE[r^i(s,a)] = r(s,a)$, $\EE[d^i(s,a)] = d(s,a)$,
+and $\EE[\mu^i(s,a)] = \mu(s,a)$. Each agent $i$ generates its own
+trajectory $\{s^i_0, a^i_0, s^i_1, a^i_1, \dots\}$ and collects its own
+reward/cost value $\{r^i_0, d^i_0, r^i_1, d^i_1, \dots \}$.
+
+The hope is that by solving the single-agent problem using $N$ agents
+in parallel, the algorithm could be more stable and converge much
+faster \cite{mnih2016asynchronous}. Intuitively, each agent $i$ may
+have a different initial state and will explore different parts of the
+state space due to the randomness in the state transition distribution
+and the policy.  It also helps to reduce the correlation between
+agents' behaviors.  As a result, by running multiple agents in
+parallel, we are more likely to visit different parts of the
+environment and get the experience of the reward/cost function values
+more efficiently. This mimics the strategy used in tree-based supervised learning algorithms \cite{breiman2001random, he2019xbart, he2019scalable}. 
+
+Following the settings in \cite{chen2018communication}, we have $N$
+agents (i.e., $N$ workers) and one central controller in the
+system. The global parameter is denoted by $\theta$, and we consider
+the constrained parallel MDP problem where the goal is to solve the
+following optimization problem:
+\begin{equation}
+\begin{aligned}
+\label{eq:constrained_parallel_MDP}
+&\mathop{\textrm{minimize}}_{\theta} 
+~~J(\theta) =  \sum_{i=1}^N  \EE_{\pi_{\theta} } \biggl [ - \sum_{t\geq 0} \gamma ^t \cdot r^i(s^i_t, a^i_t) \biggr ], \\
+&\text{subject to} 
+~~D (\theta) =   \EE_{\pi_{\theta} } \biggl [  \sum_{t\geq 0} \gamma ^t \cdot  d^i(s^i_t, a^i_t) \biggr ]  \leq  D_0, 
+~~i \in \cN.
+\end{aligned}
+\end{equation}
+During the estimation step, the controller broadcasts the current
+parameter $\theta_k$ to each agent and each agent samples its own
+trajectory and obtains estimators for function value/gradient of the
+reward/cost function. Next, each agent uploads its estimators to the
+central controller and the central controller takes the average over
+these estimators, and then follow our proposed algorithm to solve for
+the QCQP problem and update the parameter to $\theta_{k+1}$. This
+process continues until convergence.
+
+
+
+\subsection{Constrained Multi-agent Markov Decision Process}
+
+A natural extension of the (single-agent) MDP is to consider a model
+with $N$ agents termed multi-agent Markov decision process (MMDP).
+Recently this kind of problem has been attracting more and more
+attention.  See \cite{busoniu2008comprehensive} for a comprehensive
+survey.  Most of the work on multi-agent MDP problems consider the
+setting where the agents share the same global state space, but each
+with their own collection of actions and rewards
+\cite{boutilier1996planning, wai2018multi, zhang2018finite}.  In each
+stage of the system, each agent observes the global state and chooses
+its own action individually. As a result, each agent receives its
+reward and the state evolves according to the joint transition
+distribution.  An MMDP problem can be fully collaborative where all
+the agents have the same goal, or fully competitive where the problem
+consists of two agents with an opposite goal, or the mix of the two.
+
+Here we consider a slightly different setting where each agent has its
+own state space.  The only connection between the agents is that the
+global reward is a function of the overall states and actions.
+Furthermore, each agent has its own constraint which depends on its
+own state and action only.  This problem is known as
+Transition-Independent Multi-agent MDP and is considered in
+\cite{scharpff2016solving}.  Specifically, each agent's task is
+characterized by a tuple $(\cS^i, \cA^i, P^i, \gamma, d^i, \mu^i)$
+with each component defined as usual.  Note that
+$P^i \colon \cS^i \times \cA^i \rightarrow \cP(\cS^i)$ and
+$d^i \colon \cS^i \times \cA^i \rightarrow \RR$ are functions of each
+agent's state and action only and do not depend on other agents.
+Denote $\cS = \Pi_{i \in \cN} \cS^i$ and $\cA = \Pi_{i \in \cN} \cA^i$
+as the joint state space and action space. The global reward function
+is given by $r \colon \cS \times \cA \rightarrow \RR$ that depends on
+the joint state and action.  Here we consider the fully collaborative
+setting where all the agents have the same goal.
+%$\cS$ is the state space shared by all the agents, 
+%$\cA^i$ is the collection of the possible actions that agent $i$ can take where we denote $\cA = \Pi_{i \in \cN} \cA^i$ as the joint action space, 
+%$P \colon \cS \times \cA \rightarrow \cP(\cS)$ is the transition probability distribution, 
+%$\gamma \in (0,1)$ is the discounted factor,
+%$r^i \colon \cS \times \cA \rightarrow \RR$ is the reward function of agent $i$, 
+%$d^i \colon \cS \times \cA^i \rightarrow \RR$ is the cost function of agent $i$, and 
+%$\mu \in \cP(\cS)$ is the distribution of the initial state $s_0\in \cS$. 
+%Note that both the transition distribution $P$ and the reward function $r^i$ of agent $i$ depend on the joint action space $\cA$, while the cost function $d^i$ of agent $i$ depends on its own action space $\cA^i$ only. 
+Under this setting, the policy set of each agent is parameterized as
+$\{ \pi^i_{\theta^i} \colon \cS^i \rightarrow \cP(\cA^i)\}$ and we
+denote $\theta = [\theta^1, \ldots, \theta^N]$ as the overall
+parameters and $\pi_{\theta}$ as the overall policy.
+% The reward and cost function for each agent $i$ is defined as
+In the following, we use $\cN = \{1, 2, \ldots, N\}$ to denote the $N$
+agents.
+% In this section we consider a constrained multi-agent Markov
+% decision process where each agent has its own cost function and
+% constraint.  This constrained MMDP Furthermore, each agent has it
+% own constraint.
+Denote $a^i_t$ as the action chosen by agent $i$ at stage $t$ and
+$a_t = \Pi_{i \in \cN} ~ a^i_t$ as the joint action chosen by all the
+agents.  The goal of this constrained MMDP is to solve the following
+problem
+\begin{equation}
+\begin{aligned}
+\label{eq:constrained_MMDP}
+&\mathop{\textrm{minimize}}_{\theta} 
+~~J(\theta) =  \EE_{\pi_{\theta} } \biggl [ - \sum_{t\geq 0} \gamma ^t \cdot r(s_t, a_t) \biggr ], \\
+&\text{subject to} 
+~~D^i (\theta^i) =   \EE_{\pi_{\theta^i} } \biggl [  \sum_{t\geq 0} \gamma ^t \cdot  d^i(s^i_t, a^i_t) \biggr ]  \leq  D^i_0, 
+~~i \in \cN.
+\end{aligned}
+\end{equation}
+Inspired by the parallel implementation (\cite{liu2018stochastic},
+Section V), our algorithm applies naturally to constrained MMDP
+problem with some modifications.  This modified procedure can also be
+viewed as a distributed version of the original algorithm.  The
+overall problem \eqref{eq:constrained_MMDP} can be viewed as a large
+``single-agent" problem where the constraints are decomposable into
+$N$ parts. In this case, instead of solving a large QCQP problem in
+each iteration, each agent could solve its own QCQP problem in a
+distributed manner which is much more efficient.  As before, we denote
+the sample negative reward and cost function as
+\begin{equation*}
+   J^*(\theta) = -
+\sum_{t\geq 0} \gamma ^t \cdot r(s_t, a_t) \qquad \text{and}\qquad
+D^{i,*}(\theta^i) = \sum_{t\geq 0} \gamma ^t \cdot d^i(s^i_t, a^i_t).
+\end{equation*}
+In each iteration with $\theta_k = [\theta^1_k, ..., \theta^N_k]$, we approximate $J(\theta)$ and $D(\theta)$ as 
+\begin{align}
+\label{eq:quadratic_appriximation_J_MMDP}
+\tilde J^i(\theta^i, \theta_k, \tau ) & = \frac{1}{N} J^{*}(\theta_k) + \la \nabla_{\theta^i} J^{*}(\theta_k), \theta^i - \theta^i_k \ra + \tau \| \theta^i - \theta^i_k \|_2^2,  \\
+\label{eq:quadratic_appriximation_MMDP}
+\tilde D^{i}(\theta^i, \theta_k, \tau ) &= D^{i,*}(\theta^i_k)  +  \la \nabla _{\theta^i} D^{i,*}(\theta^i_k), \theta^i - \theta^i_k \ra + \tau  \| \theta^i - \theta^i_k \|_2^2.  
+\end{align}
+Note that the constraint function is naturally decomposable into $N$
+parts. We also ``manually" split the objective function into $N$
+parts, so that each agent could solve its own QCQP problem in a
+distributed manner.  As before, we define
+\begin{align*}
+\overline J^{i, (k)} (\theta^i) = (1 - \rho_k) \cdot \overline J^{i,(k-1)} (\theta^i) + \rho_k \cdot \tilde J^i(\theta^i, \theta_k, \tau), \\
+\overline D^{i, (k)} (\theta^i) = (1 - \rho_k) \cdot \overline
+D^{i,(k-1)} (\theta^i) + \rho_k \cdot \tilde D^i(\theta^i, \theta_k,
+\tau).   
+\end{align*}
+With this surrogate functions, each agent then solves its own convex
+relaxation problem
+\begin{equation}
+\label{eq:QCQP_MMDP}
+\overline \theta^i_k = \argmin _{\theta^i }~ \overline J^{i,(k)} (\theta^i) \qquad \text{subject to}\qquad \overline  D^{i,(k)} (\theta^i) \leq D^i_0,  
+\end{equation}
+or, alternatively, solves for the feasibility problem if
+\eqref{eq:QCQP_MMDP} is infeasible
+\begin{equation}
+\label{eq:QCQP_alternative_MMDP}
+\overline \theta^i_k = \argmin _{\theta^i, \alpha^i }~ \alpha^i \qquad \text{subject to}\qquad \overline  D^{i,(k)} (\theta^i) \leq D^i_0 + \alpha^i.
+\end{equation}
+This step can be implemented in a distributed manner for each agent and
+is more efficient than solving the overall problem with the overall
+parameter $\theta$. Finally, the update rule for each agent $i$ is as
+usual
+\[
+\theta^i_{t+1} = ( 1- \eta_k) \cdot \theta^i_k + \eta_k \cdot \overline \theta^i_k.
+\]
+This process continues until convergence.
+
+
+
+
+
+
+%%% Local Variables:
+%%% TeX-master: "paper"
+%%% End:

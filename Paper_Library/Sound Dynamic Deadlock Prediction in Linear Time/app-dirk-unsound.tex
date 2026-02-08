@@ -1,0 +1,53 @@
+%!TEX root = ./main.tex
+
+\section{Unsoundness Of \dirk}
+\applabel{unsound-dirk}
+In this section we provide two example programs that showcase the unsoundness of \dirk.
+\exref{dirk-unsound1} discusses a program which is a modified version of the Transfer benchmark.
+\dirk reports a false deadlock in this example due to that it is aiming to relax the standard definition of correct
+reorderings and allow a read event to read from a different write than in the original trace.
+Note that this relaxation enables \dirk to predict deadlocks in the benchmarks Transfer and Deadlock, which are missed by $\SyncPDOffline$ and \seqc. 
+However, this relaxation is not fully formalized and the implementation of it contains errors.
+\exref{dirk-unsound2} discusses a crafted program in which \dirk is reporting a false deadlock due to missing that a common lock protects an otherwise deadlock pattern.
+
+\begin{example}
+\exlabel{dirk-unsound2}
+	\figref{dirk-unsound-2} displays a program in which \dirk makes a false deadlock report. 
+	The program spawns three threads \texttt{T1}, \texttt{T2}, and \texttt{T3} and  
+	there exist three locks \texttt{L1}, \texttt{L2}, and \texttt{L3} which are used in these threads.
+	In the program, \texttt{T1} acquires the lock \texttt{L1} and then forks \texttt{T2}, and it holds the lock \texttt{L1} until \texttt{T2} is joined.
+	Even though the locks \texttt{L2} and \texttt{L3} are acquired in a cyclic manner 
+	in the threads  \texttt{T2} and \texttt{T3}, 
+	this program does not exhibit a deadlock due to the common lock \texttt{L1}.
+	Therefore, this program does not exhibit a deadlock.
+	However, \dirk fails to recognize the common lock \texttt{L1} and reports a false deadlock.
+	This observed behavior is not an implementation error, but it is in alignment with the underlying theory of \dirk~\cite{Kalhauge2018}.
+	In particular, \dirk makes SMT queries to decide the existence of deadlocks, but its encoding unsoundly neglects the condition that deadlocking events must have disjoint lock sets.  
+\end{example}
+
+\begin{example}
+\exlabel{dirk-unsound1}
+	\figref{dirk-unsound-1} displays a program in which \dirk makes a false deadlock report. 
+	This program is a modified version of the Transfer benchmark, which was used as a running example to explain \dirk~\cite{Kalhauge2018}.
+	The example contains the classes \texttt{Transfer1}, \texttt{Transfer2}, \texttt{Store} and \texttt{UserObject}. 
+	The \texttt{Store} class contains two synchronized methods, \texttt{transferTo} and \texttt{add}.
+	The \texttt{transferTo} takes another \texttt{Store} object as argument and calls the \texttt{add} method by using this object.
+	Notice that if two different \texttt{Store} objects simultaneously call the \texttt{transferTo} 
+	method by passing each other as the argument, then this can potentially lead to a deadlock.
+	Observe that in the given program there exists such a scenario where \texttt{transferTo} is called 
+	with opposite \texttt{Store} objects in the classes \texttt{Transfer1} and \texttt{Transfer2}.
+	However, in this case the program can never actually deadlock.
+	The reason is that the \texttt{transferTo} method in \texttt{Transfer2} class can only be executed if the \texttt{UserObject.data} can be cast to an integer value.
+	The \texttt{UserObject.data} is a volatile variable that is shared by the classes \texttt{Transfer1} and \texttt{Transfer2}. 
+	This variable is initialized to a string value and an integer value is assigned to this variable only after the
+	\texttt{transferTo} method has been executed in \texttt{Transfer1}. 
+	Hence, this program does not exhibit a deadlock.
+	However, \dirk reports a deadlock in this program.
+	The reason is that \dirk unsoundly concludes that reading the value of \texttt{UserObject.data} at Line $54$ does not affect the control flow of the program.
+	Hence, in case the value of \texttt{UserObject.data} object in Line $54$ is read from the write event on Line $39$, 
+	\dirk ignores this dependency and concludes that Lines $38$ and $54$ can execute concurrently and reports a false deadlock. 
+\end{example}
+
+
+
+\input{figures/dirk_unsound}

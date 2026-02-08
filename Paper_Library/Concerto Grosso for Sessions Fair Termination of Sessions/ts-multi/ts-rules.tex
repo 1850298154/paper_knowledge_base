@@ -1,0 +1,239 @@
+\beginbass
+%
+\begin{figure}[t]
+	\framebox[\textwidth]{
+  \begin{mathpar}
+    \inferrule[tm-done]{\mathstrut}{
+          \wtp[n]\EmptyCtx\pdone
+        } \defrule[tm-done]{}
+        \and
+        \inferrule[tm-call]{
+          \wtp[n]{\seqof{u : S}}{P\subst{\seqof{u}}{\seqof{x}}}
+        }{
+          \wtp[n+m]{\seqof{u : S}}{\pinvk{A}{\seqof u}}
+        }~ \tass{A}{\seqof{S}}{n}, \Definition{A}{\seqof x}{P} \defrule[tm-call]{}
+        \and
+        \inferrule[tm-wait]
+        {
+          \wtp[n]{\Ctx}{P}
+        }{
+          \wtp[n]{\Ctx, u : \End[\In]}{\pwait{u}{P}}
+        } \defrule[tm-wait]{}
+        \and
+        \inferrule[tm-close]{\mathstrut}
+        {
+          \wtp[n]{u : \End[\Out]}{\pclose{u}}
+        } \defrule[tm-close]{}
+        \and
+        \inferrule[tm-channel-in]{
+        \wtp[n]{\Ctx, u : T, x : S}{P}
+        }{
+        \wtp[n]{\Ctx, u : \rolep\In{S}.T}{\pich{u}{\rolep}{x}{P}}
+        } \defrule[tm-channel-in]{}
+        \and
+        \inferrule[tm-channel-out]{
+        \wtp[n]{\Ctx, u : T}{P}
+        }{
+        \wtp[n]{\Ctx, u : \role\Out{S}.T , v : S}{\poch{u}{\rolep}{v}{P}}
+        } \defrule[tm-channel-out]{}
+        \\
+        \inferrule[tm-tag]
+        {
+          \forall i\in I:
+          \wtp[n]{\Ctx, u : S_i}{P_i}
+        }{
+          \textstyle
+          \wtp[n]{
+            \Ctx, u : \Tags\rolep\Pol \Tag_i.S_i
+          }{
+            \pbranch[i \in I]{u}{\role}{\Pol}{\Tag_i}{P_i}
+          }
+        } \defrule[tm-tag]{}
+        \and
+        \inferrule[tm-choice]{
+          \wtp[n_1]\Ctx{P_1}
+          \\
+          \wtp[n_2]\Ctx{P_2}
+        }{
+          \wtp[n_k]\Ctx{P_1 \choice P_2}
+        } ~ k \in \set{1,2}
+        \and
+        \inferrule[tm-cast]{
+          \wtp[n]{\Ctx, u : T}{P}
+        }{
+          \wtp[m+n]{\Ctx, u : S}{\pcast{u}{P}}
+        }
+        ~ S \subt[m] T \defrule[tm-cast]{}
+        \and
+        \inferrule[tm-par]{
+          \forall i\in\set{1,\dots,h}:
+          \wtp[n_i]{\Ctx_i, \ep{s}{\role_i} : S_i}{P_i}
+        }{
+          \wtp[1+n_1+\cdots+n_h]{
+            \Ctx_1, \dots, \Ctx_h
+          }{
+            \pres{s}{P_1 \parop \cdots \parop P_h}
+          }
+        }
+        ~ \coherent\set{\Map{\role_i} S_i}_{i=1..h} \defrule[tm-par]{}
+        \and
+        \infercorule[com-tag]{
+          \wtp[n]{\Ctx, u : S_k}{P_k}
+        }{
+          \textstyle
+          \wtp[n]{\Ctx, u : \Tags\rolep\Pol \Tag_i.S_i}{\pbranch[i \in I]{u}{\role}{\Pol}{\Tag_i}{P_i}}
+        }~ k \in I \defrule[com-tag]{}
+        \and
+        \infercorule[com-choice]{
+          \wtp[n]{\Ctx}{P_k}
+        }{
+          \wtp[n]{\Ctx}{P_1 \pchoice P_2}
+        } ~ k \in \set{1,2}  \defrule[com-choice]{}
+  \end{mathpar}
+  }
+  \caption{Typing rules}
+  \label{fig:ts_multi}
+\end{figure}
+%
+The typing rules are shown in \Cref{fig:ts_multi} as a \emph{generalized inference
+system} (see \Cref{sec:gis})
+in which, we recall, the singly-lined rules are interpreted coinductively
+and the called \emph{corules} are interpreted inductively. 
+For more details about the interpretation, we refer to \Cref{sec:gis}.
+%
+We type check a program $\set{\Definition{A_i}{\seqof{x_i}}{P_i}}_{i\in I}$
+under a global set of assignments $\set{\tass{A_i}{\seqof{S_i}}{n_i}}_{i\in I}$
+associating each process name $A_i$ with a tuple of session types $\seqof{S_i}$,
+one for each of the variables in $\seqof{x_i}$, and a rank $n_i$. The program is
+well typed if $\wtp[n_i]{\seqof{x_i : S_i}}{P_i}$ is derivable for every $i\in
+I$, establishing that the tuple $\seqof{S_i}$ corresponds to the way the
+variables $\seqof{x_i}$ are used by $P_i$ and that $n_i$ is a feasible rank
+annotation for $P_i$. We now describe the typing rules in detail.
+
+%%%%%%%%%%%%%
+%%% RULES %%%
+%%%%%%%%%%%%%
+
+The rule \refrule{tm-done} states that the terminated process is well typed in
+the empty context, to make sure that no unused channels are left behind. Note
+that $\pdone$ can be given any rank, since it performs no casts and it creates
+no new sessions. 
+%
+The rule \refrule{tm-call} checks that a process invocation
+$\pinvk{A}{\seqof{u}}$ is well typed by unfolding $A$ into the process
+associated with $A$. The types associated with $\seqof{u}$ must match those of
+the global assignment $\tass{A}{\seqof{S}}{n}$ and the rank of the process must
+be no greater than that of the invocation. The potential mismatch between the
+two ranks improves typeability in some corner cases.
+%
+The rules \refrule{tm-wait} and \refrule{tm-close} concern processes that exchange
+termination signals. The channel being closed is consumed and, in the case of
+\refrule{tm-wait}, no longer available in the continuation $P$. Again,
+$\pclose{u}$ can be typed with any rank whereas the rank of $\pwait{u}P$
+coincides with that of $P$.
+%
+The rules \refrule{tm-channel-in} and \refrule{tm-channel-out} deal with the
+exchange of channels in a quite standard way. As in \Cref{ssec:ts_bin_rules}, 
+note that the actual type of the
+exchanged channel is required to coincide with the expected one. In particular,
+no covariance or contravariance of input and output respectively is allowed.
+Relaxing the typing rule in this way would introduce implicit applications of
+subtyping that may compromise fair termination (see \Cref{ex:invariant_ch}). In our
+type system, each application of subtyping must be explicitly accounted for as
+we will see when discussing \refrule{tm-cast}.
+%
+Rule \refrule{tm-tag} deals with the exchange of tags. Channels that are not used for such
+communication must be used in the same way in all branches, whereas the type of
+the channel on which the message is exchanged changes accordingly. All branches
+are required to have the same rank, which also corresponds to the rank of the
+process. Unlike other presentations of this typing rule \citep{GayHole05}, we
+require the branches in the process to be matched exactly by those in the type.
+Again, this is to avoid implicit application of subtyping, which might
+jeopardize fair termination. 
+%
+The rule \refrule{tm-choice} deals with non-deterministic choices and requires
+both continuations to be well typed in the same typing context. The judgment in
+the conclusion inherits the rank of one of the processes, typically the one with
+minimum rank. As we will see in \Cref{ex:pms_ts}, this makes it possible to
+model finite-rank processes that may create an unbounded number of sessions or
+that perform an unbounded number of casts.
+
+The rule \refrule{tm-cast} models the substitution principle induced by fair
+subtyping: when $S \subt[m] T$ (\Cref{fig:fsub_multi}), a channel of type $S$ can be used where a
+channel of type $T$ is expected or, in dual fashion \citep{Gay16}, a process
+using $u$ according to $T$ can be used in place of a process using $u$ according
+to $S$. To keep track of this cast, the rank in the conclusion is augmented by
+the weight $m$ of the subtyping relation between $S$ and $T$.
+%
+Note that the typing rule guesses the target type of the cast.
+
+Finally, the rule \refrule{tm-par} deals with session creation and parallel
+composition. This rule is inspired to the \emph{multiparty cut} rule found in
+linear logic interpretations of multiparty session
+types \citep{CarboneLMSW16,CarboneMontesiSchurmannYoshida17} and provides a
+straightforward way for enforcing deadlock freedom. Each process in the
+composition must be well typed in a slice of the typing context augmented with
+the endpoint corresponding to its role. The session map of the new session must
+be coherent (\Cref{def:coherence}), implying that it fairly terminates. 
+The rank of the composition is
+one plus the aggregated rank of the composed processes, to account for the fact
+that one more session has been created. Recall that coherence is a property
+expressed on the LTS of session maps (\Cref{def:coherence}) in line with the
+approach of \cite{ScalasYoshida19}.
+
+The typing rules described so far are interpreted \emph{coinductively}. That is,
+in order for a rank $n$ process $P$ to be well typed in $\Ctx$ there must be a
+\emph{possibly infinite} derivation tree built with these rules and whose
+conclusion is the judgment $\wtp[n]\Ctx{P}$. But in a generalized inference
+system like the one we are defining, this is not enough to establish that $P$ is
+well typed. In addition, it must be possible to find \emph{finite} derivation
+trees for all of the judgments occurring in this possibly infinite derivation
+tree using the discussed rules \emph{and possibly} the corules, which we are
+about to describe. 
+%
+Since the additional derivation trees must be finite, all of their branches must
+end up with an application of \refrule{tm-done} or \refrule{tm-close}, which are
+the only axioms in \Cref{fig:ts_multi} corresponding to the only terminated processes
+in \Cref{fig:proc_syntax_multi}. So, the purpose of these finite typing derivations is
+to make sure that in every well-typed (sub-)process there exists a path that
+leads to termination. On the one hand, this is a sensible condition to require
+as our type system is meant to enforce fair process termination. On the other
+hand, insisting that these finite derivations can be built using only the typing
+rules discusses thus far is overly restrictive, for a process might have
+\emph{one} path that leads to termination, but also alternative paths that lead
+to (recursive) process invocations. In fact, all of the processes we have
+discussed in \Cref{ex:bsc_multi,ex:2bsc_multi,ex:pms_multi} are structured like this. The two
+corules \refrule{com-choice} and \refrule{com-tag} in \Cref{fig:ts_multi} establish
+that, whenever a multi-branch process is dealt with, it suffices for \emph{one}
+of the branches to lead to termination. A key detail to note in the case of
+\refrule{com-choice} is that the rank of the non-deterministic choice coincides
+with that of the branch that leads to termination. This makes sense recalling
+that the rank associated with a process represents the overall effort required
+for that process to terminate.
+
+Let us recap the notion of well-typed process resulting from the typing rules of
+\Cref{fig:ts_multi}.
+
+\begin{definition}[Well-typed process]
+  \label{def:wtp_multi}
+  We say that $P$ is \emph{well typed} in the context $\Ctx$ and has rank $n$ if
+  \begin{enumerate}
+  \item There exists an arbitrary (possibly infinite) derivation tree obtained
+  using the rules in \Cref{fig:ts_multi} and whose conclusion is
+  $\wtp[n]\Ctx{P}$
+  \item For each judgment in such tree there is a finite
+  derivation obtained using the rules and the corules
+  \end{enumerate}
+\end{definition}
+
+Now we can prove a strong soundness result for our type system, stating that 
+well-typed, closed processes can always successfully terminate no matter how they reduce.
+We analyze the proof in details in \Cref{sec:ts_multi_corr}.
+
+\begin{theorem}[Soundness]
+	\label{thm:ts_multi_sound}
+	If $\wtp[n]\EmptyCtx P$ and $P \wred Q$, then $Q \wred\pcong \pdone$.
+\end{theorem}
+
+The implications of \Cref{thm:ts_bin_sound} that we presented in \Cref{sec:ts_bin_ts}
+still hold. Notably, the proof schema of \Cref{thm:ts_multi_sound} follows that of \Cref{thm:ts_bin_sound}.

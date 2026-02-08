@@ -1,0 +1,123 @@
+\section{Problem Statement}
+
+\vspace{-.5em}
+
+Consider a MA-STL specification $\Psi$ on $N$ agents $\mathcal{N}= \{1,2,\ldots,N\}$, where each agent is at a position $\position[t]{i} \in \positionspace \subset \R^n$ with $n$ being 2 or 3 for 2D or 3D environments respectively.
+Assume that each state $\state[t]{i}$ of agent $i$ can be directly mapped to its position $\position[t]{i}$, say the first $n$ elements of $\state[t]{i}$ by a function $\filterstate: \statespace \rightarrow \positionspace$.
+Similar to \citet{zhang_gcbf_2024}, we include a LiDAR based observation of $\nrays > 0$ for each agent measuring the distance to the nearest obstacle in the environment with a sensing radius $R > 0$.
+The $j$-th ray of agent $i$ is denoted as $\yray[j]{i}(t)$, where $\yray[j]{i}(t) \in \mathbb{R}^+$ is the distance to the nearest obstacle in the direction of the $j$-th ray at time $t$.
+
+% Along the lines of \citep{Sun2022}, assume that we have a controller to follow these paths within a $\epsilon$-bound, 
+% ensuring that any trajectory with these plans satisfies $\Psi$ within our error-bound 
+% and focus on creating these plans for use by the controller.
+
+\paragraph{The MA-STL motion planning problem}
+\label{sec:stl-mamp}
+We now establish the problem of motion planning for MA-STL in multi-agent systems. 
+Essentially, the objective is to identify a set of reference goals that when followed satisfy a given MA-STL specification, 
+while ensuring that there are no collisions between the agents.
+Suppose there are $N$ agents involved, and the time bound is denoted by $T_h$. 
+The planner $\plannn{i}$ generates a sequence of goals $\traj_{\goal{i}} = (\goal[0]{i}, \goal[1]{i}, \ldots, \goal[T]{i})$
+ for agent $i$ with a given plan length $T < T_h$.
+Each agent has a size radius represented by $r$, where $r > 0$. 
+This means that when an agent is at position $p \in \mathcal{W}$, it is entirely contained within a ball of radius $r$ centered at $p$, 
+denoted as $B_{r}(p)$. 
+With these considerations, we can define the planning problem as follows:
+
+\begin{definition}[Motion Planning in MA-STL]
+	For a given MA-STL specification $\Psi = \bigwedge_{i=1}^N \phi_i$ and a set of $N$ agents $\agents$, the motion planning problem is finding a distributed
+	control policy $\pi_i$ and a planner $\plannn{i}$ for each agent $i$ such that the following conditions are satisfied for closed-loop trajectories of agents in $\mathcal{N}$ with length $T_h$:
+\begin{itemize}
+	\item (Safety - Agents) For all $t \in [0, T_h]$, and for all $i, j \in \mathcal{N}$ where $i \neq j$, $||p_i(t) - p_j(t)|| \geq 2r$.
+	\item (Safety - Obstacles) For all $t \in [0, T_h]$, and for all $i \in \mathcal{N}$, $\yray[j]{i} (t) \geq 2r$ for all $j \in [n_{rays}]$.
+	\item (STL Satisfaction) 
+	% Async STL satisfaction
+	There exists $t_0, t_1, \ldots, t_{T}$ such that $t_i \in \{0, \ldots, T_h\}$ and $t_0 < t_1 < \ldots < t_{T}$ 
+	% Sync STL satisfaction (choose one)
+	% TODO: Explain the difference between the two
+	such that the closed-loop trajectories $\tau = (s(t_0), s(t_1), \ldots, s(t_{T}))$
+	of the agents satisfy the MA-STL specification $\Psi$ i.e. $\rho(\Psi, \tau) \geq 0$.
+
+ \item (Achievability) For all $i\in \agents$, given the goal trajectory $\traj_{\goal{i}}$  of length $T$ from $\plannn{i}$, the gap  $\trajdist{\traj_i}{\traj_{\goal{i}}} = \sum_{t'=0}^{T} \norm{\filterstate(\state[t_{t'}]{i}) - \filterstate(\goal[t']{i})}_2 < \epsilon$  for a small %N $\epsilon>0$, 
+ $\epsilon \in \R^+$. %Say is low? Quantify? < \eps?
+\end{itemize}
+\label{def:ps-STL-MA}
+\end{definition}
+\vspace{-1.5em}
+
+%\begin{definition}[Motion Planning in MA-STL]
+%	A motion planning problem in MA-STL is defined by a tuple
+%	\begin{equation}
+%		\langle p^\text{init}_1, \cdots, p^\text{init}_N, \Psi \rangle,
+%	\end{equation}
+%	where $p^\text{init}_i \in \mathcal{W}$ represents the initial position of agent $i$, and $\Psi$ is an MA-STL formula. The objective is to find a group of reference paths $(p_1, \cdots, p_N)$ that satisfy the following conditions:
+%	\begin{enumerate}
+%		\item (Initial conditions) $p_i(0) = p^\text{init}_i$, for all $i \in [N]$.
+%		\item (No inter-agent collisions) For all $t \in [0, T]$, and for all $i, j \in [N]$ where $i \neq j$, $B_{s_i+\epsilon}(p_i(t)) \cap B_{s_j+\epsilon}(p_j(t)) = \emptyset$.
+%		\item (STL Satisfaction) The reference paths $(p_1, \cdots, p_N)$ are $\epsilon$-robust with respect to $\Psi$.
+%	\end{enumerate}
+%	\label{def:STL-MAMP}
+%\end{definition}
+%
+%Instead of searching for the reference paths among all possible time-based functions, the proposed approach restricts the search space to piece-wise linear (PWL) paths. Throughout the paper, we refer to the reference PWL path for agent $i$ as $\pwl_i$. 
+%
+%
+%\begin{definition}[Piece-wise Linear Path]
+%	A piece-wise linear path $\pwl_i$ in the workspace $\mathcal{W}$ is a function $\pwl_i: \nnreals \rightarrow \mathcal{W}$ that maps a time instant $t$ to a position $\pwl_i(t) \in \mathcal{W}$. It is constructed from a sequence of waypoints ${(t_{i,k}, p_{i,k})}_{k=0}^{K_i}$, where each waypoint is associated with a specific time stamp and position.
+%	
+%	The path $\pwl_i(t)$ is defined as follows within each time interval $[t_{i,k-1}, t_{i,k}]$:
+%	\begin{equation}
+%		\pwl_i(t) = p_{i,k-1} + \frac{p_{i,k} - p_{i,k-1}}{t_{i,k} - t_{i,k-1}} (t - t_{i,k-1}),
+%	\end{equation}
+%	where $p_{i,k-1}$ and $p_{i,k}$ are the positions at the previous and current waypoints, respectively.
+%	
+%	The sequence of waypoints has associated time stamps $t_{i,k}$ and positions $p_{i,k}$. The waypoints are arranged in increasing order of time stamps, denoted as $0=t_{i,0} \leq t_{i,1} \leq \cdots \leq t_{i,K}$, where $K_i$ is the total number of waypoints for path $S_i$. Each time interval $[t_{i,k-1},t_{i,k}]$ corresponds to a segment of $\pwl_i$, denoted as $\pwl^{(k)}_i$.
+%	
+%\end{definition}
+
+\paragraph{Scaling STL for Multi-agent Systems}
+\label{sec:ps-stl}
+% \joe{Do we need this motivation? Piece-wise linear planners are only mentioned in this section.}
+
+\begin{wraptable}{t}{0.5\textwidth}
+	\centering
+	\begin{tabular}{c|c|c}
+		N & Spec. 1 / Spec. 2 & Planning Time (s)  \\
+		\hline
+		3 & 1 seq / 2 seq & 11 / 292 \\
+		5 & 1 seq / 2 seq & 211 / - \\
+	\end{tabular}
+	\caption{Planning when considering disjoint time or space \citep{Sun2022}, a PWL plan with $K=6$  segments (1 \seq~) / $K=10$ segments (2 \seq). The $X$ \seq~ spec. has $X$ sequential waypoints.}
+	\label{tab:disj_time_or_space}
+\end{wraptable}
+
+Given an MA-STL specification $\Psi$ on a system of $N$-agents we would like to provide a decentralized algorithm 
+to execute a policy satisfying the specification with high probability. While we might assume a plan-then-execute technique~\citep{Sun2022} that finds a Piece-Wise Linear (PWL) path for each agent with $K$ segments,
+such an approach quickly fails to scale with specification complexity and number of agents 
+ when considering collisions between agents at planning time.
+We posit this is primarily due to its collision avoidance mechanism that introduces $\mathcal{O}({C^N_2}*K^2)$ new variables, which quickly blows up (where $C^N_2 = N(N-1)/2$).
+Consider two goal regions $A$ and $B$ and a sequential STL specification requiring agents to visit $A$ (viz. 1 \seq) or to visit $A$ then $B$ (viz. 2 \seq) while avoiding collisions.
+Table \ref{tab:disj_time_or_space} demonstrates this by timing out (over 50 minutes) for a simple STL specification with $N=5$ agents in a 2-D environment with Single Integrator dynamics as well as all specifications and number of agents considered in this work (Sec. \ref{sec:exp-setup}, App. \ref{app:stl-specs}) .  %\joe{claim tested on a few}
+
+% \begin{table}[h!]
+% 	\centering
+	
+% 	\begin{tabular}{c|c|c}
+% 		N & spec1 / spec2 & time to plan (s)  \\
+% 		\hline
+% 		3 & 1 seq / 2 seq& 11 / 292\\
+% 		5 & 1 seq / 2 seq& 211 / -\\
+% 		% instead of / use latex
+% 	\end{tabular}
+% 	\caption{Planning when considering disjoint time or space \citep{Sun2022}, a PWL plan w/ $K=6$  segments (1 seq) / $K=10$ segments (2 seq).
+% 	The $X$ seq spec. has $X$ sequential waypoints.
+% 	% Notably the planner times out for $N=5$ agents with 2 sequential waypoints.
+% 	}
+% 	\label{tab:disj_time_or_space}
+% \end{table}
+% \vspace{-2em}
+
+Accounting for collision-avoidance independent of the objective is not novel  \citep{qin2021learning, yu2022learning}, but, as we argue in this paper,  in order to satisfy 
+an STL specification, one must account for the temporal nature of the specification simultaneously with performing any collision-avoidance maneuvers.
+An alternative, as we propose, is to plan for the objectives while adjusting for collision avoidance by means of an iterative training procedure involving the safety controller (such as \gcbfp) and the planner.
+% Substantiate this with results on these methods failing for STL specs

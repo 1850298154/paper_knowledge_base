@@ -1,0 +1,116 @@
+%!TEX root = main.tex
+
+\subsection{Verifying Deadlock Patterns}
+\seclabel{verify-patterns}
+
+Given a deadlock pattern, we check if it constitutes a sync-preserving deadlock
+by constructing the sync-preserving closure (\lemref{spclosure-deadlock}) in linear time.
+Based on \defref{spclosure}, this can be done in 
+an iterative manner. 
+%start with the set of strict predecessors
+%of events in the deadlock pattern, and in each iteration, add
+%$\tho{}$ and $\rf{}$ predecessors of the current set of events,
+%and additionally identify the release events that must be added to the set.
+We 
+(i)~start with the set of $\tho{}$ predecessors of the events in the deadlock pattern, and
+(ii)~iteratively  add
+$\tho{}$ and $\rf{}$ predecessors of the current set of events.
+Additionally, we identify and add the release events that must be included in the set.
+% 
+% \defref{spclosure} suggests that the closure can be computed in
+% an iterative manner as follows --- starting with the set of strict predecessors
+% of the events in the deadlock pattern,  until a fixpoint is reached,
+% in each iteration, we can add events that are $\tho{}$
+% or $\rf{}$ predecessors of the current set of events,
+% and additionally, identify the release events that must be added to the set.
+%In order to ensure that the \emph{entire} fixpoint computation is
+%performed in linear time, we use \emph{timestamps}.
+%\hunkar{
+We utilize \emph{timestamps} to ensure that the \emph{entire} fixpoint computation is
+performed in linear time.
+%}
+% to ensure that indeed each iteration is performed in time 
+% proportional to only the number of events actually added in that iteration.
+
+\newcommand{\TS}[1]{\mathsf{TS}_{\tr}}
+
+\myparagraph{Thread-read-from timestamps}{
+	Given a set $\threads{}$ of threads, a timestamp 
+	is simply a mapping $T : \threads{} \to \nats$.
+	Given timestamps $T_1, T_2$, we 
+	use the notations 
+	$T_1 \cle T_2$ and $T_1 \mx T_2$ for pointwise comparison
+	and pointwise maximum, respectively.
+	% $T_1 \cle T_2 \equiv \forall p \in P, T_1(p) \leq T_2(p)$
+	% and
+	% $T_1 \mx T_2 = \lambda p \in P, \max\set{T_1(p), T_2(p)}$.
+	For a set $U$ of timestamps, we write $\bigsqcup U$ to denote the
+	pointwise maximum over all elements of $U$.
+	% Further, for a set $U$ of $\threads{}$-indexed timestamps, we write $\bigsqcup U$ to denote
+	% $\lambda p \in P, \max\set{T(p)}_{T \in U}$.
+	Let $\trf{\tr}$ be the reflexive transitive closure
+	of the relation $(\tho{\tr} \cup \setpred{(\rf{\tr}(e), e)}{\exists x \in \vars{\tr}, \OpOf{e} = \rd(x)})$;
+	observe that
+	$\trf{\tr}$ is a partial order.
+	We define the 
+	% threads-read-from
+	 timestamp $\TS{\tr}^e$ of an event $e$ in $\tr$
+	to be a $\threads{\tr}$-indexed timestamp as follows: $\TS{\tr}^e(t) = |\setpred{f}{f \trf{\tr} e}|$.
+	% such that for every $t \in \threads{\tr}$,
+	% \[
+	% 	\TS{\tr}^e(t) = |\setpred{f}{f \trf{\tr} e}|
+	% \]
+	This ensures that
+	for two events $e, e' \in \events{\tr}$,
+	$e \trf{\tr} e'$ iff $\TS{\tr}^e \cle \TS{\tr}^{e'}$.
+	For a set $S \subseteq \events{\tr}$, we overload the notation
+	and say the timestamp of $S$ is $\TS{\tr}^S = \bigsqcup \set{\TS{\tr}^e}_{e \in S}$.
+	% Observe that, for a set $S$ that is $\trf{\tr}$-downward closed, we have $\TS{\tr}^e \cle \TS{\tr}^S$ is true iff $e \in S$.
+	% In other words, timestamps allow for a succinct representation of 
+	%$\trf{\tr}$-downward closed sets.
+	Given a trace $\tr$ with $\NumEvents$ events and
+	$\NumThreads$ threads we can compute these timestamps for all the events in $O(\NumEvents \cdot \NumThreads)$ time, using a simple vector clock algorithm~\cite{Mattern89,Fidge91}.
+}
+
+
+\myparagraph{Computing sync-preserving closures}{
+	Recall the basic template of the fixpoint computation.
+	In each iteration, we identify the set of release events
+	that must be included in the set, together with their $\trf{\tr}$-closure.
+	In order to identify such events efficiently, for every
+	thread $t$ and lock $\lk$, we maintain
+	a FIFO queue $\AcqLst_{t, \lk}$ (\emph{critical section history} of $t$ and $\lk$) 
+	to store 
+	the sequence of events that acquire $\lk$ in thread $t$.
+	In each iteration, we traverse each list
+	to determine the last acquire event that belongs to the current set.
+	For a given lock, we need to add the matching release events of
+	all thus identified events to the closure, 
+	except possibly the matching release event of the latest acquire event (see~\defref{spclosure}).
+	This computation is performed using timestamps, as shown in \algoref{compute-closure}.
+	Starting with a set $S$, the algorithm
+	runs in time $O(|S|\cdot\NumThreads + \NumThreads\cdot\NumAcquires)$,
+	where $\NumThreads$ and $\NumAcquires$ are respectively
+	the number of threads and acquire events in $\tr$.
+}
+
+\begin{minipage}{0.45\textwidth}
+	\input{algo-closure}
+\end{minipage}
+\hfill ~ %\unskip\ \vrule\ \hfill
+\begin{minipage}{0.48\textwidth}
+	\input{algo-abstract-pattern}
+\end{minipage}
+
+
+
+\myparagraph{Checking a deadlock pattern}{
+	After computing the timestamp $T$ of
+	the closure (output of \algoref{compute-closure}, starting with the set of events in the given deadlock pattern),
+	determining whether a given deadlock pattern
+	$D = e_0, \ldots, e_{k-1}$ is a sync-preserving deadlock 
+	can be performed in time $O(k\cdot\NumThreads)$ --- simply check if  $\forall i, \TS{\tr}(e_i) \not\cle T$.
+	This gives an algorithm for checking if a deadlock pattern
+	of length $k$ is sync-preserving that runs in time 
+	$O(\NumThreads\cdot \NumEvents + k\cdot\NumThreads + \NumThreads\cdot \NumAcquires) = O(\NumEvents\cdot \NumThreads)$.
+}

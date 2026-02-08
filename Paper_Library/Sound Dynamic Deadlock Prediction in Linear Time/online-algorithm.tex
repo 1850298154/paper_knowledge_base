@@ -1,0 +1,77 @@
+%!TEX root = main.tex
+
+\section{On-the-fly Deadlock Prediction}
+\seclabel{otf}
+
+Although $\SyncPDOffline$ is efficient, both theoretically (\thmref{syncp_offline})
+and in practice (Table~\ref{tab:expr-results}),
+it runs in two passes, akin to other predictive deadlock-detection methods~\cite{Kalhauge2018,Cai2021}.
+%In other words, it is \emph{offline} and requires access to the input trace $\tr$ upfront.
+In a runtime monitoring setting, it is desirable to operate in an \emph{online} fashion.
+Recall that $\checkAbsDeadP(\cdot)$ indeed operates online (\secref{verify-abstract-patterns}),
+while the offline nature of $\SyncPDOffline$
+is tied to the offline construction of the abstract lock graph $\lkevgraph{\tr}$.
+% , and performs cycle detection in order to find abstract deadlock patterns.
+%We note that $\lkevgraph{\tr}$ may also be maintained online, and be periodically checked for cycles, as, e.g., in~\cite{Havelund2000,Agarwal2005,Cai2020}.
+%However, this operation becomes costly when there are many cycles.
+%as there can be many cycles of short length, while long cycles take long to discover.
+To achieve the golden standard of online, linear-time, 
+sound deadlock prediction, we focus on deadlocks of size $2$.
+This focus is barely restrictive as most deadlocks in the wild have size $2$~\cite{Lu08}.
+Further, deadlocks of size $2$ enjoy the following computational benefits:
+\begin{enumerate*}[label=(\alph*)]
+\item cycles of length $2$ can be detected instantaneously without performing graph traversals, and
+\item \emph{every} cycle of length $2$ is an abstract deadlock pattern.
+\end{enumerate*}
+
+
+\myparagraph{Algorithm $\SyncPDOnline$}{
+% We are now ready to outline our algorithm $\SyncPDOnline$ for the online detection of all sync-preserving deadlocks of size 2. 
+%For completeness we refer to \appref{app_online} for the pseudocode.
+The algorithm $\SyncPDOnline$ maintains all abstract acquires of the form $\eta=\tuple{t, \lk_1, \{\lk_2\}, F}$,
+i.e., we only focus on one lock $\lk_2$ that is protecting each such acquire.
+When a new acquire event $e=\ev{t,\acq(\lk_1)}$ is encountered, 
+the algorithm iterates over all the locks $\lk_2\in\lheld{\tr}(e)$ that are held in $e$,
+and append the event $e$ to the sequence $F$ of the corresponding abstract acquire $\eta=\tuple{t, \lk_1, \{ \lk_2 \}, F}$; $F$ is maintained as FIFO queue.
+Recall that we use timestamps on the acquire events in $F$ to determine membership in our closure computation.
+Our online algorithm computes these timestamps on-the-fly and stores them in these queues together with the events.
+%together
+%, instead of storing the actual event.
+% \Andreas{@Umang: I am missing some logic about vector clocks here, please update accordingly}
+Then the algorithm calls $\checkAbsDeadP(C)$ on the abstract deadlock pattern $C$ formed between $\eta$ and $\eta'=\tuple{t'\neq t, \lk_2, \{ \lk_1 \}, F'}$, in order to check for sync-preserving deadlocks between the deadlock patterns in $F\times F'$.
+If $\checkAbsDeadP(C)$ reports no deadlock, the contents of $F'$ are emptied
+%as the monotonicity of \corref{pattern-monotone} 
+as we are guaranteed that $F'$ will not cause a sync-preserving deadlock with any further acquire of thread $t$ on lock $\lk_1$.
+% 
+For a trace with $\NumEvents$ events, $\NumThreads$ threads and $\NumLocks$ locks.
+The algorithm calls $\checkAbsDeadP$ for each of the $O(\NumThreads^2\cdot \NumLocks^2)$ abstract
+deadlock patterns of size $2$, each call taking $O(\NumEvents\cdot \NumThreads)$ time.
+
+\input{algo-online}
+
+$\SyncPDOnline$ is shown in detail in \algoref{online}.
+The pseudocode contains handlers for processing the different events of $\tr$ in a streaming fashion, as well as a helper function for checking deadlocks.
+The main data structures of the algorithm are
+(i)~vector clocks $\Cc_t$, $\LW_x$, and $\view{\Ii}{}{\tuple{t_1, \lk_1, t_2, \lk_2}}$,
+(ii)~scalar $\gId_\lk$, and
+(iii)~FIFO queues of vector clocks $\view{\AcqLst}{t, \lk}{\tuple{t_1, \lk_1, t_2, \lk_2}}$ and $\view{\DPLst}{t, \lk_1, \lk_2}{\tuple{u}}$,
+where $t, t_1, t_2, u$ range over threads, $x$ ranges over variables, and $\lk, \lk_1, \lk_2$ range over locks.
+$\Cc_t$ stores the timestamp $\TS{\tr}^e$ where $e$ is the last event in thread $t$.
+%(Lines \ref{line:clkctw},  \ref{line:clkrel}, \ref{line:clkacq}, \ref{line:clkrd}).
+$\LW_x$ keeps track of the $\TS{\tr}^e$ where $e$ is the last event such that $\OpOf{e} = \wt(x)$. %(\cref{line:clkwt}).
+$\view{\Ii}{}{\tuple{t_1, \lk_1, t_2, \lk_2}}$ stores the computed sync-preserving closures for every tuple $\tuple{t_1, \lk_1, t_2, \lk_2}$.
+%(\cref{line:checkdlk}).
+The scalar variable $\gId_\lk$ keeps track of the index of the last acquire event on lock $\lk$. %(\cref{line:gidlk}).
+Similar to \cref{algo:compute-closure}, the FIFO queue $\view{\AcqLst}{t, \lk}{\tuple{t_1, \lk_1, t_2, \lk_2}}$ is maintained to keep track of the critical section history of thread $t$ and lock $\lk$.
+Lastly, for an acquire event $e$, $\view{\DPLst}{t, \lk_1, \lk_2}{\tuple{u}}$ maintains a queue of tuples of the form $\tuple{C_{\prev{}}, \Cc_t}$ where $C_{\prev{}}$ and $\Cc_t$ are the timestamps of $\prev{\sigma}(e)$ and $e$, respectively
+%(\cref{line:acqhist}).
+These tuples are utilized when checking for deadlocks (\cref{line:checkdlk}).
+}
+
+\begin{restatable}{theorem}{syncponline}
+\thmlabel{syncp_online}
+Consider a trace $\tr$ of $\NumEvents$ events, $\NumThreads$ threads and $\NumLocks$ locks.
+The online $\SyncPDOnline$ algorithm reports all sync-preserving deadlocks of size $2$ of $\tr$ in $O(\NumEvents\cdot  \NumThreads^3\cdot \NumLocks^2)$ time.
+%$O(\NumEvents\cdot \NumThreads+ \NumThreads^3\cdot \NumLocks^2\cdot \NumAcquires)$ time.
+\end{restatable}
+

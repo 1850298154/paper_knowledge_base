@@ -1,0 +1,148 @@
+\section{An Algorithm for Fine-tuning Graph Neural Networks}\label{sec_alg}
+
+A common practice to apply deep networks on graphs is to fit pretrained GNNs, which can be fine-tuned on a target task.
+Typically, only a small amount of data is available for fine-tuning.
+Thus, the fine-tuned model may overfit the training data, incurring a large generalization gap. %
+A central insight from our analysis is that maintaining a small perturbed loss ensures lower generalization gaps.
+Motivated by this observation, we design an algorithm to minimize the perturbed risk of GNN.
+
+Let $f$ denote a GNN and $\tilde \ell(f)$ be the perturbed loss of $f$, with noise injected inside $f$'s weight matrices.
+Recall from step \eqref{eq_perturb} that $\tilde \ell(f)$ is equal to $\ell(f)$ plus several expansion terms.
+In particular, minimizing the expectation of $\tilde \ell(f)$ is equivalent to minimizing $\hat\cL(f)$ plus the trace of the Hessian matrix.
+To estimate this expectation, we sample several noise perturbations independently.
+Because Taylor's expansion of $\tilde \ell(f)$ also involves the gradient, we cancel this out by computing the perturbed loss with the negated perturbation. 
+Algorithm \ref{alg_nso} describes the complete procedure.
+
+We evaluate the above algorithm for fine-tuning pretrained GNNs.
+Empirical results reveal that this algorithm achieves better test performance compared with existing regularization methods for five graph classification tasks.
+The code repository for reproducing the experiments is at \url{https://github.com/VirtuosoResearch/Generalization-in-graph-neural-networks}.
+
+\subsection{Experimental setup}
+
+
+We focus on graph classification tasks, including five datasets from the MoleculeNet benchmark \cite{wu2018moleculenet}.
+Each dataset aims to predict whether a molecule has a certain chemical property given its graph representation. 
+We use pretrained GINs from \citet{hu2019strategies} and fine-tune the model on each downstream task. Following their experimental setup, we use the scaffold split for the dataset, and the model architecture is fixed for all five datasets. Each model has $5$ layers; each layer has $300$ hidden units and uses average pooling in the readout layer.
+We set the parameters, such as the learning rate and the number of epochs following their setup.
+
+
+\begin{algorithm}[t!]
+	\caption{Algorithms for fine-tuning graph neural networks}\label{alg_nso}
+	\begin{small}
+		\textbf{Input}: A training dataset $\{(X_i, G_i, y_i)\}_{i=1}^{N}$ with node feature $X_i$, graph $G_i$, and graph-level label $y_i$, for $i = 1, \dots, N$.
+  
+        \vspace{0.02in}%
+		\textbf{Require}: Number of perturbations $m$, noise variance $\sigma^2$, learning rate $\eta$, and number of epochs $T$.
+
+        \vspace{0.02in}%
+		\textbf{Output}: A trained model $f^{(T)}$.
+  
+		\begin{algorithmic}[1]
+			\STATE At $t = 0$, initialize the parameters of $f^{(0)}$ with pretrained GNN weight matrices.
+            \vspace{0.02in}
+			\FOR{$1 \le t \le T$}
+                \FOR{$1 \le i \le m$}
+                    \vspace{0.02in}
+                    \STATE Add perturbation $\cE_i$ drawn from a normal distribution with mean zero and variance $\sigma^2$.
+                    \vspace{0.02in}
+                    \STATE Let $\tilde \cL_i(f^{(t-1)})$ be the training loss of the model $f^{(t-1)}$ with weight matrix perturbed by $\cE_i$.
+                    \vspace{0.02in}                    
+                    \STATE Let $\tilde \cL_i^{'}(f^{(t-1)})$ be the training loss of the model $f^{(t-1)}$ with weight matrix perturbed by $-\cE_i$.
+                    \vspace{0.02in}
+                \ENDFOR
+			    \STATE Use stochastic gradient descent to update $f^{(t)}$ as $f^{(t-1)} -  \frac{\eta}{2m} \sum_{i=1}^m 
+			    \big(\nabla \tilde{\cL}_i\bigbrace{f^{(t-1)}}
+			    + \nabla \tilde{\cL}_i^{'}\bigbrace{f^{(t-1)}}\big )$.
+                \vspace{0.05in}
+			\ENDFOR
+		\end{algorithmic}
+	\end{small}
+\end{algorithm}
+
+We compare our algorithm with previous regularization methods that serve as benchmark approaches for improving generalization.
+This includes early stopping, weight decay, dropout, weight averaging \cite{izmailov2018averaging}, and distance-based regularization \cite{gouk2020distance}.
+For implementing our algorithm, we set the number of perturbations as $10$ and choose the noise standard deviation $\sigma$ with a grid search in $\{0.01, 0.02, 0.05, 0.1, 0.2, 0.5\}$.
+
+\subsection{Experimental results}\label{sec_empirical}
+
+
+Table \ref{tab_molecule_pred} reports the test ROC-AUC performance averaged over multiple binary prediction tasks in each dataset. 
+Comparing the average ranks of methods across datasets, our algorithm outperforms baselines on all five molecular property prediction datasets. 
+The results support our theoretical analysis that the noise stability property of GNN is a strong measure of empirical generalization performance. 
+Next, we provide details insights from applying our algorithm.
+
+First, we hypothesize that our algorithm is particularly effective when the empirical generalization gap is large.
+To test the hypothesis, we vary the size of the training set in the BACE dataset; we compare the performance of our algorithm with early stopping until epoch $100$. 
+We plot the generalization gap between the training and test losses during training, shown in Figure \ref{fig_exp_N1}-\ref{fig_exp_N2}. 
+As the trend shows, our algorithm consistently reduces the generalization gap, particularly when the training set size $N$ is $600$.  
+
+Second, we hypothesize that our algorithm helps reduce the trace of the Hessian matrix (associated with the loss).
+We validate this by plotting the trace of the Hessian as the number of epochs progresses during training, again using the BACE dataset as an example.
+Specifically, we average the trace over the training dataset.
+Figure \ref{fig_exp_tr} shows the averaged trace values during the fine-tuning process.
+The results confirm that noise stability optimization reduces the trace of the Hessian matrix (more significantly than early stopping).
+We note that noise stability optimization also reduces the largest eigenvalue of the Hessian matrix, along with reducing the trace.
+This can be seen in Figure \ref{fig_exp_eig}.
+
+Lastly, we study the number of perturbations used in our algorithm. While more perturbations would lead to a better estimation of the noisy stability, we observe that using $10$ perturbations is sufficient for getting the most gain.
+We also validate that using negated perturbations consistently performs better than not using them across five datasets.
+This is because the negated perturbation cancels out the first-order term in Taylor's expansion.
+In our ablation study, we find that adding the negated perturbation performs better than not using it by 1\% on average over the five datasets.
+
+\begin{remark}\normalfont %
+We note that noise stability optimization is closely related to sharpness-aware minimization (SAM) \cite{foret2020sharpness}.
+Noise stability optimization differs in two aspects compared with SAM.
+First, SAM requires solving constrained minimax optimization, which may not even be differentiable \cite{daskalakis2021complexity}.
+Our objective remains the same after perturbation.
+Second, SAM reduces the largest eigenvalue of the Hessian matrix, which can be seen from Taylor's expansion of $\tilde \ell(f)$.
+We reduce the trace of the Hessian matrix, thus reducing the largest eigenvalue.
+There is another related work that regularizes noise stability in NLP \cite{hua2021noise}.
+Their approach adds noise perturbation to the input and regularizes the loss change in the output. Our approach adds perturbation to weight matrices.
+\end{remark}
+
+\begin{table*}[!t]
+\centering
+\begin{footnotesize}
+\caption{Test ROC-AUC (\%) score for five molecular property prediction datasets with different regularization methods. The reported results are averaged over five random seeds.}\label{tab_molecule_pred}
+\begin{tabular}{@{}lcccccc@{}}
+\toprule
+Dataset & SIDER & ClinTox & BACE & BBBP & Tox21 \\ 
+\# Molecule Graphs & 1,427 & 1,478 & 1,513 & 2,039 & 7,831 \\
+\# Binary Prediction Tasks & 27 & 2 & 1 & 1 & 12 \\ \midrule
+Early Stopping       & 61.06$\pm$1.48 & 68.25$\pm$2.63 & 82.86$\pm$0.95 & 67.80$\pm$1.05 & 77.52$\pm$0.23 \\
+Weight Decay         & 61.30$\pm$0.21 & 67.43$\pm$2.88 & 83.72$\pm$0.99 & 67.98$\pm$2.41 & 78.23$\pm$0.35 \\
+Dropout              & 63.90$\pm$0.90 & 73.70$\pm$2.80 & 84.50$\pm$0.70 & 68.07$\pm$1.30 & 78.30$\pm$0.30 \\
+Weight Averaging     & 63.67$\pm$0.34 & 78.78$\pm$1.49 & 83.93$\pm$0.36	& 70.26$\pm$0.24 & 77.59$\pm$0.11 \\
+Distance-based Reg. & 64.36$\pm$0.48 & 76.68$\pm$1.19 & 84.65$\pm$0.48 & 70.37$\pm$0.44 & 78.62$\pm$0.24 \\
+\midrule
+\textbf{Ours (Alg. \ref{alg_nso})} & \textbf{65.13$\pm$0.18} & \textbf{80.18$\pm$0.82} & \textbf{85.07$\pm$0.43} & \textbf{71.22$\pm$0.36} & \textbf{79.31$\pm$0.24} \\ \bottomrule
+\end{tabular}
+\end{footnotesize}
+\end{table*}
+
+\begin{figure*}[!t]
+    \centering
+	\caption{In Figures \ref{fig_exp_N1} and \ref{fig_exp_N2}, we show that our algorithm is particularly effective at reducing the generalization gap for small training dataset sizes $N$.
+	In Figures \ref{fig_exp_tr} and \ref{fig_exp_eig}, we find that both the trace and the largest eigenvalue of the loss Hessian matrix decreased during training.}
+	\begin{subfigure}[b]{0.24\textwidth}
+		\centering
+		\includegraphics[width=0.975\textwidth]{./figures/hessian_generalization_err_epochs_1200.pdf}
+		\caption{$N=1200$}\label{fig_exp_N1}
+	\end{subfigure}\hfill
+	\begin{subfigure}[b]{0.24\textwidth}
+		\centering
+		\includegraphics[width=0.975\textwidth]{./figures/hessian_generalization_err_epochs_600.pdf}
+		\caption{$N=600$}\label{fig_exp_N2}
+	\end{subfigure}\hfill
+	\begin{subfigure}[b]{0.24\textwidth}
+		\centering
+		\includegraphics[width=0.975\textwidth]{./figures/hessian_trace_epochs.pdf}
+		\caption{Trace}\label{fig_exp_tr}
+	\end{subfigure}\hfill
+	\begin{subfigure}[b]{0.24\textwidth}
+		\centering
+		\includegraphics[width=0.975\textwidth]{./figures/hessian_eigenvalue_epochs.pdf}
+		\caption{Largest Eigenvalue}\label{fig_exp_eig}
+	\end{subfigure}%
+    \label{fig_ablate_sample_size} 
+\end{figure*}

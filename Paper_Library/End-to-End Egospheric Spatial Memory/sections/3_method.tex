@@ -1,0 +1,87 @@
+\section{Method}\label{sec:method}
+
+In this section, we describe our main contribution, the egospheric spatial memory (ESM) module, shown in Figure \ref{fig:projection_pipeline}. The module operates as an Extended Kalman Filter (EKF), with an egosphere image $\mu_t\in\mathbb{R}^{h_s \times w_s \times (2+1+n)}$ and its diagonal covariance $\Sigma_t\in\mathbb{R}^{h_s \times w_s \times (1+n)}$ representing the state. The egosphere image consists of 2 channels for the polar and azimuthal angles, 1 for radial depth, and $n$ for encoded features. The angles are not included in the covariance, as their values are implicit in the egosphere image pixel indices. The covariance only represents the uncertainty in depth and features at these fixed equidistant indices, and diagonal covariance is assumed due to the large state size of the images. Image measurements are assumed to come from projective depth cameras, which similarly store 1 channel for depth and $n$ for encoded features. We also assume incremental agent pose measurements $u_{t}\in\mathbb{R}^6$ with covariance $\Sigma_{u_t}\in\mathbb{R}^{6\times6}$ are available, in the form of a translation and rotation vector. The algorithm overview is presented in Algorithm 1.
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=\textwidth]{figures/ESM_pipeline.png}
+  \caption{Overview of the ESM module. The module consists of projection and quantization steps, used to bring the belief from the previous agent frame to the current agent frame.}
+  \label{fig:projection_pipeline}
+\end{figure}
+
+\begin{wrapfigure}[12]{R}{0.38\textwidth}
+    \vspace{-15pt}
+    \IncMargin{1em}
+    \begin{algorithm}[H]
+      \caption{ESM Step \label{alg:ekf}}
+      \SetAlgoLined
+      Given: $f_m, F_m, f_o, F_o$ \\
+      $\bar{\mu}_t = f_m(u_t, \mu_{t-1})$ \\
+      $\bar{\Sigma}_t = F_m(u_t, \mu_{t-1}, \Sigma_{t-1}, \Sigma_{u_t})$ \\
+      $\hat{\mu}_t = f_o((v_{ti}, p_{ti})_{i \in I})$ \\
+      $\hat{\Sigma}_t = F_o((v_{ti}, p_{ti}, V_{ti}, P_{ti})_{i \in I})$ \\
+      $K_t = \bar{\Sigma}_t \left[\bar{\Sigma}_t + \hat{\Sigma}_t\right]^{-1}$\\
+      $\mu_t = \bar{\mu}_t + K_t[\hat{\mu}_t - \bar{\mu}_t]$ \\
+      $\Sigma_t = \left[I - K_{t}\right]\bar{\Sigma}_t$ \\
+      return $\mu_t, \Sigma_t$
+    \end{algorithm}
+\end{wrapfigure}
+
+
+First, the motion step takes the state from the previous frame $\mu_{t-1}, \Sigma_{t-1}$ and transforms this into a predicted state for the current frame $\bar{\mu}_t, \bar{\Sigma}_t$ via functions $f_m$, $F_m$ and the incremental pose measurement $u_{t}$ with covariance $\Sigma_{u_t}$. Then in the observation step, we use measured visual features $(v_{ti}\in\mathbb{R}^{h_{vi} \times w_{vi} \times (1+n)})_{i \in \{1, ..., m\}}$ with diagonal covariances $(V_{ti}\in\mathbb{R}^{h_{vi} \times w_{vi} \times (1+n)})_{i \in \{1, ..., m\}}$ originated from $m$ arbitrary vision sensors, and associated pose measurements $(p_{ti}\in\mathbb{R}^6)_{i \in \{1, ..., m\}}$ with covariances $(P_{ti}\in\mathbb{R}^{6 \times 6})_{i \in \{1, ..., m\}}$, to produce a new observation of the state $\hat{\mu}_t\in\mathbb{R}^{h_s \times w_s \times (2+1+n)}$, again with diagonal covariance $\hat{\Sigma}_t\in\mathbb{R}^{h_s \times w_s \times (1+n)}$, via functions $f_o$ and $F_o$. The measured poses also take the form of a translation and rotation vector.
+ 
+Finally, the update step takes our state prediction $\bar{\mu}_t, \bar{\Sigma}_t$ and state observation $\hat{\mu}_t, \hat{\Sigma}_t$, and fuses them to produce our new state belief $\mu_t, \Sigma_t$. We spend the remainder of this section explaining the form of the constituent functions. All functions in Algorithm 1 involve re-projections across different image frames, using forward warping. Functions $f_m$, $F_m$, $f_o$ and $F_o$ are therefore all built using the same core functions. While the re-projections could be solved using a typical rendering pipeline of mesh construction followed by rasterization, we instead choose a simpler approach and directly quantize the pixel projections with variance-based image smoothing to fill in quantization holes. An overview of the projection and quantization operations for a single ESM update step is shown in Fig. \ref{fig:projection_pipeline}.
+
+% \begin{figure}[h!]
+% \centering
+% \includegraphics[scale=0.11]{figures/ESM_pipeline.png}
+%   \caption{Algorithm overview, and visualization of the projection and quantization steps, used to bring the belief from the previous agent frame to the current agent frame in the ESM module.}
+%   \label{fig:projection_pipeline}
+% \end{figure}
+
+\subsection{Forward Warping}
+
+Forward warping projects ordered equidistant homogeneous pixel co-ordinates ${pc}_{f1}$ from frame $f_1$ to non-ordered non-equidistant homogeneous pixel co-ordinates $\tilde{pc}_{f2}$ in frame $f_2$. We use $\tilde{\mu}_{f2} = \{\tilde{\phi}_{f2}, \tilde{\theta}_{f2}, {\tilde{d}_{f2}, \tilde{e}_{f2}}\}$ to denote the loss of ordering following projection from $\mu_{f1} = \{\phi_{f1}, \theta_{f2}, {d_{f1}, e_{f2}}\}$, where $\phi$, $\theta$, $d$ and $e$ represent polar angles, azimuthal angles, depth and encoded features respectively. We only consider warping from projective to omni cameras, which corresponds to functions $f_o, F_o$, but the omni-to-omni case as in $f_m, F_m$ is identical except with the inclusion of another polar co-ordinate transformation.
+
+The encoded features are assumed constant during projection $\tilde{e}_{f2} = {e_{f1}}$. For depth, we must transform the values to the new frame in polar co-ordinates, which is a composition of a linear transformation and non-linear polar conversion. Using the camera intrinsic matrix $K_1$, the full projection is composed of a scalar multiplication with homogeneous pixel co-ordinates ${pc}_{f1}$, transformation by camera inverse matrix $K_1^{-1}$ and frame-to-frame $T_{12}$ matrices, and polar conversion $f_p$:
+
+\vspace{-3mm}
+\begin{equation}\label{depth_to_coords}
+\{\tilde{\phi}_{f2}, \tilde{\theta}_{f2}, \tilde{d}_{f2}\} = f_p(T_{12}  K_1^{-1} \lbrack pc_{f1} \odot d_{f1} \rbrack)
+\end{equation}
+
+Combined, this provides us with both the forward warped image $\tilde{\mu}_{f2} = \{\tilde{\phi}_{f2}, \tilde{\theta}_{f2}, \tilde{d}_{f2}, \tilde{e}_{f2} \}$, and the newly projected homogeneous pixel co-ordinates $\tilde{pc}_{f2} = \{k_{ppr}\tilde{\phi}_{f2}, k_{ppr}\tilde{\theta}_{f2}$, \textbf{1}\}, where $k_{ppr}$ denotes the pixels-per-radian resolution constant. The variances are also projected using the full analytic Jacobians, which are efficiently implemented as tensor operations, avoiding costly autograd usage.
+
+\vspace{-3mm}
+\begin{equation}
+\hat{\tilde{\Sigma}}_2 = J_V V_1 J_{V}^T + J_P P_{12} J_{P}^T
+\end{equation}
+
+\subsection{Quantization, Fusion and Smoothing}
+
+Following projection, we first quantize the floating point pixel coordinates $\tilde{pc}_{f2}$ into integer pixel co-ordinates $pc_{f2}$. This in general leads to quantization holes and duplicates. The duplicates are handled with a variance conditioned depth buffer, such that the closest projected depth is used, provided that it's variance is lower than a set threshold. This in general prevents highly uncertain close depth values from overwriting highly certain far values. We then perform per pixel fusion based on lines 6 and 7 in Algorithm 1 provided the depths fall within a set relative threshold, otherwise the minimum depth with sufficiently low variance is taken. This again acts as a depth buffer.
+
+Finally, we perform variance based image smoothing, whereby we treat each $N\times N$ image patch $(\mu_{k,l})_{k\in\{1,..,N\},l\in\{1,..,N\}}$ as a collection of independent measurements of the central pixel, and combine their variance values based on central limit theory, resulting in smoothed values for each pixel in the image $\mu_{i,j}$. Although we use this to update the mean belief, we do not smooth the variance values, meaning projection holes remain at prior variance. This prevents the smoothing from distorting our belief during subsequent projections, and makes the smoothing inherently local to the current frame only. The smoothing formula is as follows, with variance here denoted as $\sigma^2$:
+
+\vspace{-3mm}
+\begin{equation}\label{mean_smoothing}
+\mu_{i,j} = \frac{\sum_k \sum_l \mu_{k,l} \cdot \sigma^{-2}_{k,l}}{\sum_k \sum_l \sigma^{-2}_{k,l}}
+\end{equation}
+
+Given that the quantization is a discrete operation, we cannot compute it's analytic jacobian for uncertainty propagation. We therefore approximate the added quantization uncertainty using the numerical pixel gradients of the newly smoothed image $G_{i,j}$, and assume additive noise proportional to the $x$ and $y$ quantization distances $\Delta pc_{i,j}$:
+
+\vspace{-3mm}
+\begin{equation}\label{mean_smoothing}
+\Sigma_{i,j} = \tilde{\Sigma}_{i,j} + G_{i,j} \Delta pc_{i,j}
+\end{equation}
+
+\subsection{Neural Network Integration}
+
+The ESM module can be integrated anywhere into a wider CNN stack, forming an Egospheric Spatial Memory Network (ESMN). Throughout this paper we consider two variants, ESMN and ESMN-RGB, see Figure \ref{fig:simplified_networks}. ESMN-RGB is a special case of ESMN, where RGB features are directly projected into memory, while ESMN projects CNN encoded features into memory. The inclusion of polar angles, azimuthal angles and depth means the full relative polar coordinates are explicitly represented for each pixel in memory. Although the formulation described in Algorithm \ref{alg:ekf} and Fig \ref{fig:projection_pipeline} allows for $m$ vision sensors, the experiments in this paper all involve only a single acquiring sensor, meaning $m=1$. We also only consider cases with constant variance in the acquired images $V_t = k_{var}$, and so we omit the variance images from the ESM input in Fig \ref{fig:simplified_networks} for simplicity. For baseline approaches, we compute an image of camera-relative coordinates via $K^{-1}$, and then concatenate this to the RGB image along with the tiled incremental poses before input to the networks. All values are normalized to $0-1$ before passing to convolutions, based on the permitted range for each channel.
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=\textwidth]{figures/simplified_networks.png}
+  \caption{High level schematics of the ESM-integrated network architectures ESMN-RGB and ESMN, as well as other baseline architectures used in the experiments: Mono, LSTM and NTM.}
+  \label{fig:simplified_networks}
+\end{figure}

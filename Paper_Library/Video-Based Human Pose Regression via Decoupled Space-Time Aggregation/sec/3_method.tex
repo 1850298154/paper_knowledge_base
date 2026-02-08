@@ -1,0 +1,141 @@
+\section{Method}
+\label{sec:method}
+
+%----------------------------------------
+% Overview
+\subsection{Overview}
+\label{sec:overview}
+
+Given a  video frame $\mathcal{I}(t)$ at time $t$ containing multiple persons, we are interested in estimating locations of pose joints for each person. To enhance pose estimation for the  frame $\mathcal{I}(t)$, we 
+leverage the temporal dynamics from a consecutive frame sequence $\mathbf{\mathcal{S}}=\langle\mathcal{I}({t-T}),\dots,\mathcal{I}(t),\dots,\mathcal{I}({t+T})\rangle$, where $T$ is a predefined temporal span. Our method follows the top-down paradigm. 
+Initially, we use an human detector to identify individual persons in the frame $\mathcal{I}(t)$. Subsequently, each detected bounding box is expanded by 25\% to extract the same individual across the frame sequence $\mathbf{\mathcal{S}}$, resulting in a cropped video clip $\mathbf{\mathcal{S}}_i=\langle\mathcal{I}_i({t-T}),\dots,\mathcal{I}_i(t),\dots,\mathcal{I}_i({t+T})\rangle$ for every individual $i$. The goal of estimating human pose for individual $i$ within the specified video frame $\mathcal{I}(t)$ can then be denoted as
+\begin{equation*}
+      \{ \textbf{x}_i^j(t)  \}_{j=1}^n  = \text{HPE}({\mathcal{S}}_i),
+\end{equation*}
+where $\text{HPE}(\cdot)$ denotes the human pose estimation module, $\textbf{x}_i^j(t)$ is the $j$-th pose joint for the individual $i$ in video frame $\mathcal{I}(t)$, and $n$ represents the number of joints for each person, \textit{e.g.}, $n=15$ for PoseTrack datasets~\cite{PoseTrack2017_CVPR2017,PoseTrack2018_CVPR2018,PoseTrack21_CVPR2022}. %, while $n=14$ for HiEve dataset. 
+For simplicity in the following description of our algorithm, unless otherwise specified, we will refer to a specific individual $i$.
+
+\begin{figure*}
+    \centering
+    \includegraphics[width=1.0\linewidth]{pipeline.jpg}
+    \caption{The pipeline of the proposed Decoupled Space-Time Aggregation (DSTA). The goal is to detect the human pose of the key frame $\mathcal{I}_i(t)$. Given a video sequence $\langle\mathcal{I}_i({t-T}),\dots,\mathcal{I}_i(t),\dots,\mathcal{I}_i({t+T})\rangle$, DSTA uses a backbone network to extract their feature maps. From these maps, Joint-centric Feature Decoder (JFD) extracts feature tokens to individually represent each joint. Space-Time Decoupling (STD) then models the temporal dynamic dependencies and spatial structural dependencies of joints separately, producing aggregated space-time features for the current key frame. Each of these aggregated features is  utilized to regress the coordinates of the corresponding joint.}
+    \label{fig:pipeline}
+    \vspace{-2mm}
+\end{figure*}
+
+
+We adopt the regression-based method to implement the human pose estimation module $\text{HPE}(\cdot)$. Compared to the heatmap-based method, the regression-based method offers several advantages: i) It eliminates the need for high-resolution heatmaps, resulting in reduced computation and storage demands. This makes it more apt for real-time video applications and facilitates deployment, especially on edge devices. ii) It provides continuous outputs, avoiding the quantization issues inherent in heatmap methods. In the regression-based pose estimation module $\text{HPE}(\cdot)$, the global feature maps extracted by a CNN backbone are fed into a regression module, which then directly produces the coordinates of the joints, \textit{i.e.},  
+\begin{equation}
+    \{ \textbf{x}_i^j(t)  \}_{j=1}^n = \text{REG}(\hat{\mathcal{S}}_i),
+\end{equation}
+where $\text{REG}(\cdot)$ denotes the regression module and $\hat{\mathcal{S}}_i=\langle\mathcal{F}_i({t-T}),\dots,\mathcal{F}_i(t),\dots,\mathcal{F}_i({t+T})\rangle$. Here, $\mathcal{F}_i(t')$ with $t'\in[t-T,t+T]$ is the global feature maps extracted by the CNN backbone from the cropped image $\mathcal{I}_i(t')$. Note, when regressing the pose joints at the current frame time $t$, we aim to utilize the temporal feature information across the video clip $\mathbf{\mathcal{S}}_i$, rather than solely relying on the feature information from the current frame $\mathcal{I}_i(t)$.
+
+Prior work, such as Poseur~\cite{Poseur_ECCV2022}, has demonstrated that the spatial dependencies among pose joints can be naturally captured by applying the self-attention mechanism~\cite{Attention_NIPS2017} over them. It follows that we can also employ the self-attention mechanism on the global pose features in the temporal sequence $\hat{\mathcal{S}}_i$ to discern the temporal dependency of individual's pose over the time interval $[t-T, t+T]$.
+As depicted in Fig.~\ref{fig:demo}(b), each pose joint exhibits a relatively independent temporal trajectory. Hence, it's more appropriate to model the temporal dependency at the joint level rather than for the entire pose. To this end, extra efforts are required to convert each global feature  $\mathcal{F}_i(t')$ into a set of joint-aware feature embeddings. This procedure is finished in
+the Joint-centric Feature Decoder (JFD) , which
+can be denoted as
+\begin{equation}
+    \{  \mathcal{F}_i^j(t')  \}_{j=1}^n = \text{JFD}(\mathcal{F}_i(t')), \quad t'\in[t-T, t+T],
+\end{equation}
+where $\mathcal{F}_i^j(t')$, termed a feature token, represents the feature embedding of the $j$-th joint of the pose at the video frame of time $t'$. 
+Let's represent the feature tokens for each joint of the pose over the time span $[t-T, t+T]$ as $\Tilde{\mathcal{S}}_i$. That is, $\Tilde{\mathcal{S}}_i =  \langle \{  \mathcal{F}_i^j({t-T})  \}_{j=1}^n,\dots,\{  \mathcal{F}_i^j({t})  \}_{j=1}^n,\dots,\{  \mathcal{F}_i^j({t+T})  \}_{j=1}^n  \rangle.$
+We subsequently utilize the feature tokens in $\Tilde{\mathcal{S}}_i$ to model the spatiotemporal dependencies of pose joints via Space-Time Decoupling (STD),
+\begin{equation}
+    \{  \textbf{f}_i^j(t)  \}_{j=1}^n = \text{STD}(\Tilde{\mathcal{S}}_i),
+\end{equation}
+where $\textbf{f}_i^j(t)$ is the aggregated space-time feature for the $j$-th joint of the pose at the current video frame $t$, which is then fed to a joint-wise fully connected feed-forward network to produce the coordinates of the joint. 
+
+Our proposed Decoupled Space-Time Aggregation Network (DSTA) is composed of three primary modules: the backbone, $\text{JFD}(\cdot)$, and $\text{STD}(\cdot)$. We learn DSTA by training the backbone, $\text{JFD}$,  $\text{STD}$ modules in an end-to-end manner.
+The architecture and workflow of DSTA are depicted in Fig.~\ref{fig:pipeline}. Subsequent sections delve into the specifics of the JFD, STD, and the computation of the loss function.
+
+%----------------------------------------
+% Overview
+\subsection{Joint-centric Feature Decoder}
+\label{sec:JFD}
+
+As shown in Fig.~\ref{fig:pipeline}, the purpose of JFD is to extract the feature embedding for each joint from the given global feature maps $\mathcal{F}_i(t')$ with $t'\in[t-T,t+T]$. As suggested by~\cite{Poseur_ECCV2022}, one potential approach to construct the joint embedding is as follows: initially, a traditional regression method such as~\cite{RLE_ICCV2021} is utilized to regress the joint coordinates from $\mathcal{F}_i(t')$. For each joint, its $x$-$y$ coordinates are converted into position embedding using sine-cosine position encoding~\cite{Attention_NIPS2017}. Concurrently, a learnable class embedding is designated for every joint type. The final feature embedding for each joint is derived by summing its position embedding with the respective class embedding. However, this approach loses crucial contextual information of the joints within the pose that is learned in the global feature maps $\mathcal{F}_i(t')$. Though we can augment each joint with relevant contextual feature from the global feature maps, such as the approach in~\cite{Poseur_ECCV2022} which uses the joint's embedding as a query and applies a multi-scale deformable attention module to sample features for each joint from the feature maps, this method incurs significant computational costs.
+
+%not only involves computational complexity but also loses some crucial contextual information of the joints within the pose that is embedded in the global feature map $\mathcal{F}_i(t')$.
+
+We employ a straightforward yet efficient approach to construct the joint embeddings from the provided global feature maps $\mathcal{F}_i(t')$.
+Given the global feature maps produced by the backbone, previous heatmap-based methods convolve these maps via convolution layers to generate a heatmap feature for each joint~\cite{PoseWarper_NIPS2019,DCPose_CVPR2021}. 
+We follow this strategy, deriving the feature embedding for each joint from $\mathcal{F}_i(t')$ through a convolution layer or a fully connected layer (FC). 
+%As illustrated in Fig.~$\diamond$, 
+In our setup, the ResNet backbones (like ResNet50 or ResNet152) are followed by a global average pooling layer and a FC layer. The FC layer comprises $2048 \times K$ neurons. Here, 2048 represents the dimensionality of $\mathcal{F}_i(t')$ after undergoing global average pooling and flattening. Meanwhile, $K$ is calculated as $n \times 32$, where $n$ indicates the number of pose joints, and 32 signifies the dimension of the joint embedding.
+The output of the FC layer is the feature embedding for each joint, where the output is evenly divided into 
+$n$ parts, denoted as $\{  \mathcal{F}_i^j(t')  \}_{j=1}^n$, with each part representing a feature embedding for a joint. Further implementation details regarding more backbones (\textit{e.g.}, HRNet backbone) can be found in the supplementary material.
+
+\subsection{Space-Time Decoupling}
+\label{sec:STD}
+
+STD is designated to model the spatial and temporal dependencies between joints based on their embeddings over the time span $[t-T, t+T]$,  \textit{i.e.}, all feature tokens in $\Tilde{\mathcal{S}}_i =  \langle \{  \mathcal{F}_i^j({t-T})  \}_{j=1}^n,\dots,\{  \mathcal{F}_i^j({t})  \}_{j=1}^n,\dots,\{  \mathcal{F}_i^j({t+T})  \}_{j=1}^n  \rangle$. 
+In numerous applications~\cite{Bert_NAACL2019,Poseur_ECCV2022}, the self-attention mechanism's proficiency in capturing long-distance dependencies within sequences has been thoroughly demonstrated~\cite{Attention_NIPS2017}. Thus, a direct approach to  capturing the spatio-temporal dependencies between joints is to apply the self-attention module to the sequence of feature tokens in $\Tilde{\mathcal{S}}_i$,
+\begin{equation}
+\label{eqn:simple_dependency}
+ \{  \mathcal{\hat{F}}_i^j({t})  \}_{j=1}^n =   \text{S-ATT}(\Tilde{\mathcal{S}}_i),
+\end{equation}
+where $\text{S-ATT}(\cdot)$ denotes the self-attention module~\cite{Attention_NIPS2017}, and $\mathcal{\hat{F}}_i^j({t})$, which encodes the spatial and temporal information learned by the S-ATT module, represents the updated feature token for the $j$-th joint at the current video frame $t$. 
+In our implementation, the S-ATT module adheres to the conventional Transformer architecture~\cite{Attention_NIPS2017}. In our setup, $4$ identical layers are stacked sequentially. 
+Each layer comprises two sub-layers: the first one employs a multi-head self-attention mechanism, and the second one utilizes a simple, token-wise, fully connected feed-forward network. The input feature tokens  pass through these modules in sequence, each producing an updated version that serves as the input for the subsequent layer. Additionally, each of the initial input feature tokens is equipped with a learnable position embedding, and their  sum forms the final input. 
+
+%\noindent\textbf{Decoupling Space-Time Aggregation.} 
+\subsubsection{Decoupled Space-Time Aggregation}
+\label{sec:dsta}
+However, as illustrated in Fig.~\ref{fig:demo}(b), despite the inherent spatial correlation among adjacent joints of the human pose, the temporal trajectory of each individual joint tends to be rather independent. So, as shown in Fig.~\ref{fig:pipeline}, our proposed DSTA models the temporal dynamic dependencies and spatial structure dependencies separately, instead of modeling spatial and temporal dependencies together as in Eq.~\ref{eqn:simple_dependency}. This approach allows for a more nuanced capture of the unique dependency characteristics that joints exhibit separately in both the temporal and spatial dimensions.
+Then, by fusing the captured spatial and temporal information, an aggregated spatio-temporal feature for each joint of current frame $t$, \textit{i.e.}, $\textbf{f}_i^j({t})$, is derived:
+\begin{equation}
+\label{eqn:decouple_dependency}
+ \{ \textbf{f}_i^j({t})  \}_{j=1}^n =   \text{SD}(\Tilde{\mathcal{S}}_i) \bigoplus \text{TD}(\Tilde{\mathcal{S}}_i),
+\end{equation}
+where $\bigoplus$ denotes the concatenation operation, which is individually applied to each pair of corresponding updated feature tokens associated with each joint. 
+By utilizing the local-awareness attention introduced below (Sec.~\ref{sec:local_attention}), the $\text{SD}(\cdot)$ module learns the spatial dependencies between adjacent joints and correspondingly generates an updated feature token for each joint in the current frame.  Concurrently,  the $\text{TD}(\cdot)$ module discerns the temporal dependencies of each joint, resulting in another updated feature token for each joint in the current frame.
+Subsequently, the aggregated features of joints  
+$\{ \textbf{f}_i^j({t})  \}_{j=1}^n$ are fed into a joint-wise fully connected feed-forward network, 
+producing the coordinates of the joints $\{ \textbf{x}_i^j(t)  \}_{j=1}^n$:
+\begin{equation}
+    \{ \textbf{f}_i^j({t})  \}_{j=1}^n \xrightarrow[\text{feed-forward network}]{\text{joint-wise fully connected}} \{ \textbf{x}_i^j(t)  \}_{j=1}^n.
+\end{equation}
+
+%\noindent\textbf{Local-awareness Attention.} 
+\subsubsection{Local-awareness Attention}
+\label{sec:local_attention}
+From a temporal perspective, each joint is intimately connected only with its corresponding joints in preceding and succeeding frames, having no relevance with other joints. From a spatial perspective, the structure dependencies of joints are primarily manifested between adjacent joints within a single frame. Therefore, we introduce a joint-wise local-awareness attention mechanism, ensuring that each joint only attends to those that are structurally or temporally relevant. This local-awareness attention mechanism is elaborated upon, demonstrating its application in implementing the aforementioned $\text{SD}(\cdot)$ and $\text{TD}(\cdot)$ modules.
+
+In the $\text{TD}$ module, we capture the temporal dynamic dependency for each joint $j$ at the current frame $t$. To this end, our proposed local-awareness attention selectively applies the self-attention module $\text{S-ATT}$ in Eq.~\ref{eqn:simple_dependency} across the corresponding joints over the time span $[t-T, t+T]$, 
+\begin{equation}
+\label{eqn:time}
+  \mathcal{\dot{F}}_i^j({t}) = \text{S-ATT}( \Tilde{\mathcal{S}}_i^j ), \quad j=1,2,\dots,n,
+\end{equation}
+where $\Tilde{\mathcal{S}}_i^j=\langle \mathcal{F}_i^j({t-T}),\dots, \mathcal{F}_i^j({t}),\dots,\mathcal{F}_i^j({t+T}) \rangle$, and $\mathcal{\dot{F}}_i^j({t})$ denotes the updated feature token for the $j$-th joint at the current video frame $t$, encoding the temporal dependency information of this joint embedded within the sequence $\Tilde{\mathcal{S}}_i^j$. 
+Since the sequence $\Tilde{\mathcal{S}}_i^j$ only includes the feature tokens of joint $j$ over the time span $[t-T, t+T]$, the temporal dependency encoded in $\mathcal{\dot{F}}_i^j({t})$ is solely related to the joint itself, without any relevance to other joints.
+
+In the $\text{SD}$ module, we capture the spatial structure dependency among joints within the current frame $t$. A straightforward way is to directly apply the self-attention module $\text{S-ATT}$ from Eq.~\ref{eqn:simple_dependency} to all joints in the current frame. 
+To allow each joint to focus more closely on the adjacent joints that are intimately associated with it in structure, we divide the joints into $K$ groups according to the semantic structure of the human pose, as shown in the top right of Fig.~\ref{fig:pipeline}. Our proposed local-awareness attention conducts the self-attention module $\text{S-ATT}$ separately for each group,
+\begin{equation}
+\label{eqn:space}
+ \{ \mathcal{\ddot{F}}_i^{j}({t}) \}_{j \in G(k)}  = \text{S-ATT}( \langle  {\mathcal{F}}(t)_i^{j}  \rangle_{j \in G(k)} ),\quad k=1,\dots,K,
+\end{equation}
+where $G(k)$ represents the set of joint indices in group $k$, and $\mathcal{\ddot{F}}_i^{j}({t})$ denotes the updated feature token for the $j$-th joint at the current video frame $t$, encapsulating the spatial structure dependencies of this joint within the pose. 
+%For joints that belong to multiple groups, their updated feature tokens are finally determined by taking the average of each.
+
+Through the modules $\text{TD}$ and $\text{SD}$ , we have captured the spatial and temporal contexts for each joint in the current frame, obtaining the corresponding updated feature tokens, $\mathcal{\dot{F}}_i^{j}({t})$ and $\mathcal{\ddot{F}}_i^{j}({t})$.  Consequently, the spatio-temporal aggregated feature $\textbf{f}_i^j({t})$ for each joint $j$ at the current frame $t$, as per Eq.~\ref{eqn:decouple_dependency}, can be explicitly computed as follows:
+\begin{equation}
+\label{eqn:feature_aggregation}
+  \textbf{f}_i^j({t})  =   \mathcal{\dot{F}}_i^{j}({t}) \oplus \mathcal{\ddot{F}}_i^{j}({t}),\quad j=1,2,\dots,n,
+\end{equation}
+where $\oplus$ denotes the concatenation operation. 
+
+\textbf{Discussion: } Compared with the \textit{global} attention method as defined in Eq.~\ref{eqn:simple_dependency}, our proposed \textit{ local-awareness} attention ensures that each joint only attends to those that are structurally or temporally relevant. This approach not only avoids the undesired conflation of spatiotemporal dimensions but also reduces computational overhead. 
+For example, the computational cost of the \mbox{S-ATT} module is mainly determined by the multi-head self-attention mechanism~\cite{Attention_NIPS2017}, where the computational complexity is proportionate to the square of the quantity of feature tokens. 
+Consequently, the computational complexity of the global attention method delineated in Eq.~\ref{eqn:simple_dependency} is approximately \( O((n \times (2T+1))^2) = O(4n^2T^2+4n^2T+n^2) \). In contrast, the total computational complexity of our local-awareness attention methods, corresponding to Eqs.~\ref{eqn:time} and \ref{eqn:space}, is approximately \( O( n \times (2T+1)^2 + K \times (\frac{n}{K})^2 ) = O(4nT^2+4nT+n+\frac{n^2}{K}) \). In the experiment, the value of $T$ is quite small, for instance $T=1$, thus our local-awareness attention method reduces the time complexity from \(  O(9n^2) \) to \( O(\frac{n^2}{K}+9n) \) with $K=5$ in our implementation, thereby achieving a speedup close to 45 times.
+
+\subsection{Loss Computation}
+\label{sec:loss}
+During training, the entire model undergoes end-to-end optimization, aiming to minimize the discrepancy between the coordinates of the predicted joints and the ground truth joints in the current frame $t$. To boost the regression performance, we employ the residual log-likelihood estimation loss (RLE) as proposed in~\cite{RLE_ICCV2021}, in lieu of the conventional regression loss ($l_1$ or $l_2$). We extend the RLE loss, originally designed for image-based pose regression, to the context of video-based pose regression.
+Given an input cropped video clip, $\mathcal{S}_i$, for individual $i$, we calculate a  distribution, $P_{\theta,\phi}( \{ \textbf{x}_i^j(t) \}_{j=1}^n | \mathcal{S}_i )$, which reflects the likelihood  that the ground truth at the current frame $t$ appears at the predicted locations $\{ \textbf{x}_i^j(t)  \}_{j=1}^n$. Here, $\theta$ represents the parameters of our model, and $\phi$ represents the parameters of a flow model. The flow model is not required to operate during inference, thereby introducing no additional overhead at test time. The learning process involves the simultaneous optimizations of the model parameters $\theta$ and $\phi$, aiming to maximize the probability of observing the ground truth $\mu_g$. This is achieved by defining the RLE loss as follows:
+\begin{equation}
+    \mathcal{L}_{rle}= -P_{\theta,\phi}( \{ \textbf{x}_i^j(t) \}_{j=1}^n | \mathcal{S}_i) \Big|_{ \{ \textbf{x}_i^j(t) \}_{j=1}^n = \mu_g }.
+\end{equation}
+For a more detailed discussion and further information about the  RLE loss, we refer readers to~\cite{RLE_ICCV2021}.
+
+

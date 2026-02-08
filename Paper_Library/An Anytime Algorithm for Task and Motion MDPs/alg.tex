@@ -1,0 +1,152 @@
+\section{Overall Algorithmic Framework}
+\label{sec:alg}
+\begin{algorithm}[t]
+\begin{small}
+\SetKwFunction{estimatePathCosts}{estimatePathCosts} \SetKwFunction{ancestors}{ancestors} \SetKwFunction{refinePath}{refinePath}
+\SetKwFunction{randomUniform}{randomUniform} \SetKwFunction{computeProportionRefined}{computeProportionRefined}
+\SetKwData{None}{None}
+\KwData{domain $\mathcal{D}$, problem $\mathcal{P}$, motionPlanner $MP$,  SSP Solver $SSP$}
+\KwIn{threshold $t$}
+\KwResult{Task and motion policy for $\langle \mathcal{D}, \mathcal{P}\rangle$}
+\nl policyTree $\leftarrow$ $SSP$.getContingentPlan($\mathcal{P}$.$\vec{f_{0}}$, $\mathcal{D}$, $\mathcal{P}$)\; 
+\nl currentState $\leftarrow$ $\mathcal{P}$.$\vec{f_{0}}$; proportionRefined $\leftarrow$ 0.0; replanBias $\leftarrow$ 0.5\; 
+\nl partialTraj $\leftarrow$ \None\;
+\nl leafQueue $\leftarrow$ \estimatePathCosts{policyTree, partialTraj}\;
+\nl \While{resource limit not reached {\bf and} leafQueue.size() $\neq$ 0 {\bf and} proportionRefined $<$ $t$}
+{
+   \nl  pathToRefine $\leftarrow$ \ancestors{leafQueue.pop()}\;
+   \nl  \While{resource limit not reached {\bf and} pathToRefine.length() $\neq$ 0}
+    {
+       \nl  (success, partialPathTraj, failureNode, failureReason) $\leftarrow$ \refinePath{pathToRefine, partialTraj, policyTree, $MP$}\;
+       \nl  \If{{\bf not} success {\bf and} failureReason $\ne$ \None} {
+           \nl  policyTree $\leftarrow$ $SSP$.replan(failureNode, failureReason)\;
+           \nl  {\bf break}\;
+        } \Else {\nl \If{ not success}{
+            \nl \For{node $\in$ partialPathTraj} {
+                \nl partialTraj[node] $\leftarrow$ partialPathTraj[node]
+            	}
+            }
+        }
+    }
+    \nl leafQueue $\leftarrow$ \estimatePathCosts{policyTree, partialTraj}\;
+    \nl proportionRefined $\leftarrow$ \computeProportionRefined{policyTree, partialTraj}
+}   
+
+\caption{\small Anytime Task and Motion MDP (ATM-MDP)}\label{alg:overall}
+\end{small}
+\end{algorithm}
+
+The ATM-MDP algorithm (Alg.\,\ref{alg:overall}) presents the main outer loop of our approach for computing a task and motion policy. It assumes the availability of an SSP solver that can generate tree-structured policies (starting at a given initial state) for solving an SSP, a motion planner for refinement of actions within the policy, and a module that determines the reason for infeasibility of a given  motion planning problem. The overall algorithm operates on  root-to-leaf paths in the SSP solution.
+
+The main computational problem is that the number of possible paths to refine grows exponentially with the time horizon. Waiting for a complete refinement would result in a lot of wasted time as most paths may correspond to outcomes that are unlikely to be encountered. Every path is associated with the probability $p$ that an execution would follow that path; and a cost $c$ of refining that pat. Ideally, we would like to compute an ordering of these paths so that at every time instant, we compute as many of the most likely paths as can be computed up to that time instant. Unfortunately, achieving this would be infeasible as it would require solving multiple \emph{knapsack} problems. Instead, we order the paths by the ratio $p/c$ for refinement (lines 4-15). 
+
+\begin{theorem} Let $t$ be the time since the start of the algorithm at which the refinement of any root-to-leaf path is completed. If path costs are accurate and constant  then the total probability of unrefined paths at time $t$ is at most $1 - opt(t)/2$, where $opt(t)$ is the best possible refinement (in terms of the probability of outcomes covered) that could have been achieved in time $t$.
+\end{theorem}
+The proof follows from the fact that the greedy algorithm achieves a 2-approximation for the knapsack problem. In practice, the true cost of refining a path cannot be determined prior to refinement. We therefore estimate the cost as the product of the parameter ranges covered by the generator of each action in the path. This results in lower bounds on the ratios $p/c$ modulo constant factors, since a path could be refined before all the generator ranges are exhausted. In this way it doesn't over-estimate the relative value of refining a path. As we show in the empirical section, the resulting algorithm yields the concave performance profiles desired of anytime algorithms.
+
+ 
+%For example, for actions that require calls to the motion planner, our heuristic cost is proportional to the volume of the space bounding the endpoints of our trajectory; a larger volume corresponds to a more difficult search problem in trajectory space. The total cost of a path is computed as the sum of these action costs.
+
+The \emph{while} loop iterates over these paths while recomputing the priority queue keys after each iteration. Within each iteration, the algorithm tries to compute a full motion planning refinement of the path. First, the entire path (\emph{pathToRefine}) is extracted from the leaf (line 6). 
+%This path extends from the selected leaf to its deepest ancestor that has already been refined. Because the SSP solution is tree-structured, refining a path from the root to a leaf also creates partial solutions for all paths to leaves that have ancestors on the refined path. 
+%All partial trajectories corresponding to a particular subtree of the solution have to be consistent with the root of that subtree, so the intial conditions of \emph{pathToRefine} are defined by the end state of this deepest refined ancestor. 
+The \emph{refinePath} subroutine attempts to find a motion planning refinement (concretization) for \emph{pathToRefine}. If it is unable to find a complete refinement for this path, it either (a) returns with a reason for failure along with a partial trajectory going up to the deepest node in the path for which it was able to compute a feasible motion plan, or (b) backtracks to return a partial trajectory that will result in a future refinePath call for a parent node of a node for which a motion planning refinement couldn't be found. 
+%When partial paths are returned, the \emph{leafQueue} is recomputed to exclude the cost and probability mass of the refined portions of the tree. At any iteration, the queue is keyed on the probability-to-cost ratio of the path from each leaf to its deepest refined ancestor.
+
+\begin{algorithm}[t]
+\begin{small}
+\SetKwFunction{head}{head} \SetKwFunction{extractPose}{extractPose} \SetKwFunction{targetPoseGen}{targetPoseGen} 
+\SetKwFunction{getNext}{getNext} \SetKwFunction{GetMotionPlan}{GetMotionPlan}
+\SetKwData{None}{None} \SetKwData{False}{False} \SetKwData{True}{True}
+\KwIn{pathToRefine, partialTraj, policyTree, motionPlanner}
+\KwOut{success: indicator of successful refinement; partialPathTraj: refined path up to the first failure; failureNode, failureReason: failure information}
+\nl node $\leftarrow$ \head{pathToRefine}; partialPathTraj $\leftarrow$ \None\;
+\nl \For{node $\in$ pathToRefine} {
+    \nl a $\leftarrow$ policyTree[node]\;
+    \nl \eIf{partialTraj = \None} {
+        \nl $pose_1$ $\leftarrow$ InitialPose\;  
+    } {\nl $pose_1$ $\leftarrow$ \extractPose{partialTraj[parent(node)]}\;
+	\nl \While{resource limit not reached {\bf and} partialPathTraj[node] = \None}{    
+    \nl $pose_2$ = \targetPoseGen{a}\;
+    \nl \If{\GetMotionPlan{$pose_1$, $pose_2$} succeeds} {
+        \nl partialPathTraj[node] $\leftarrow$ ComputePath\;
+       \nl {\bf break}\;
+    } }
+    \nl \If{partialPathTraj[node] = \None}{
+    	\nl \eIf{Bernoulli(replanBias).sample()}
+    		{
+        		\nl return (\False, partialPathTraj, node, FailureReason)\;}
+        	{
+        		\nl partialPathTraj.remove(node.parent())\;
+        		\nl return (\False, partialPathTraj, node.parent(), None )
+        	}
+    }
+}}
+return (\True, partialPathTraj, \None, \None)\;
+\caption{Subroutine refinePath}\label{alg:refine}
+\end{small}
+\end{algorithm}
+
+
+
+For partial trajectories under (a) (line 9), Alg.\,\ref{alg:overall} calls an SSP solver after adjusting its initial state and domain definitions to include the \emph{FailureReason}. The policy computed by the SSP solver is then merged with the existing policy and the while loop continues. For partial trajectories  along case (b) (line 12), the path is added back to the queue with a partial, successful trajectory that results in backtracking. 
+
+If \emph{refinePath} is successful in computing a full refinement, the while loop continues with an updated priority queue. 
+%The queue needs to be updated because many paths to leaves in the tree may share common prefixes and we wish to capture the effect of partial solutions on the estimate of the complexity of computing refinements. 
+In each iteration of the while loop, we compute the total probability of refined paths -- this probability gives us the likelihood of being able to successfully execute the policy in its current state of refinement.
+
+
+The \emph{refinePath} subroutine (Alg.\,\ref{alg:refine}) attempts to compute a motion plan for each action in a given path. 
+%It assumes that every abstract action corresponds to a set of concrete actions with specific choices for the abstract arguments. 
+More precisely,  it uses a generator to sample the possible concretizations for each action and test their feasibility. A feasible solution to any one of these motion planning problems is considered a feasible refinement of that abstract action. \emph{refinePath} starts by selecting the first node in the path that needs to be refined in line 1 (Alg.\,\ref{alg:overall} may result in situations where a prefix of a path has already been refined by a prior call to \emph{refinePath}, due to line 14 in that algorithm).
+
+It then iterates over possible target poses for the selected action (lines 8 through 11). If a feasible motion plan is found, then the algorithm refines the next action in the path. If not, it stochastically chooses to either re-invoke the SSP by returning a \emph{FailureReason}, or to backtrack by invalidating the current node's path (line 15) by removing it from \emph{partialPathTraj} and returning to follow lines 12-13 in Alg.\,\ref{alg:overall}.
+
+Though a backtracking search through all possible motion plans is required to guarantee the completeness of the algorithm, we find in practice that replanning with a new initial state and replacing the subtree rooted at a failed node with a new SSP solution is often more time efficient. This is because backtracking to an ancestor of the failed node invalidates the motion plans associated with all paths passing through that ancestor, often causing a large amount of previously completed work to be thrown out. This situation is illustrated in Figure \ref{fig:backtracking}. For this reason, we stochastically choose between backtracking and replanning and settle for \emph{probabilistic} completeness of the search algorithm.
+
+\begin{figure}[t]
+\centering
+\includegraphics[height=1in]{figures/backtrack.png}
+\caption{Left: Backtracking from node B invalidates the subtree rooted at A. In doing so, the work done in refining the node A's left child, in gray, is lost. Right: In some cases, replanning from node B requires less work than re-refining the invalidated subtree.}
+\label{fig:backtracking}
+\end{figure}
+
+
+
+\paragraph{Properties of the Algorithm}
+Our algorithm solves the dual problems of synthesizing a strategy as well as computing motion plans while ensuring that the computed strategy has a feasible motion plan.  It factors a hybrid planning problem into a succession of discrete SSPs and motion planning problems. The algorithm can compute solutions even when most discrete strategies have no feasible refinements. A few additional salient features of the algorithm are:
+\items{
+\item The representational mechanisms for encoding SSPs do not require discretization, thus providing scalability.
+\item The SSP model dynamically improves as the motion planning problems reveal errors in the high-level model in terms of \emph{FailureReason}s.
+\item Prioritizing paths of relative value gives the algorithm a desirable anytime performance profile. This is further evaluated in the empirical section.
+}
+
+
+
+
+
+
+
+
+
+
+
+
+%% \begin{figure}
+%% \centering
+%% \includegraphics[scale=0.3]{figures/n10-h10.png}
+%% \caption{Percentage of refined nodes and accumulated probability mass over time at noise level 10\%}\label{fig:n5h10}
+%% \end{figure}
+
+%% \begin{figure}
+%% \centering
+%% \includegraphics[scale=0.3]{figures/n15-h10.png}
+%% \caption{Percentage of refined nodes and accumulated probability mass over time at noise level 15\%}\label{fig:n5h10}
+%% \end{figure}
+
+%% \begin{figure}
+%% \centering
+%% \includegraphics[scale=0.3]{figures/n20-h10.png}
+%% \caption{Percentage of refined nodes and accumulated probability mass over time at noise level 20\%}\label{fig:n5h10}
+%% \end{figure}
+

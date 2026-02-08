@@ -1,0 +1,204 @@
+
+\section{Coordination approaches in task allocation to fleet's vehicles }\label{scalabilityTheory}
+In this section, we recall the main (coordination) solution  methods for the task allocation problem in open vehicle fleets in general and the treated assignment problems in particular, categorizing them in  centralized, distributed, and decentralized (Figure \ref{SolutionApproaches}), with special attention to those with the best time complexity. Recall that the static classic assignment problem consists in finding the minimum cost perfect matching of a complete bipartite graph $G=(A \cup T,E)$, with $E=A \times T$ and $n=|A|=|T|$.
+\begin{figure}[ht]
+\begin{center}
+\includegraphics[width=0.8\columnwidth]{Pictures/SolutionApproaches.png}
+\caption{Coordination approach framework for task allocation}
+\label{SolutionApproaches}
+\end{center}
+\end{figure}
+
+\subsection{Centralized coordination approaches}
+There are a huge number of algorithms for the linear assignment problem (LAP). They can be subdivided into {\em primal}, {\em dual} and {\em primal-dual} algorithms. The worst-case time complexity of the best algorithms is $O(n^3)$.
+
+We preliminary recall the mathematical formulation of the dual problem of the linear formulation of the LAP:
+
+\begin{equation}\label{DAPobjective}
+\max \sum_{i=1}^n u_i + \sum_{j=1}^n v_j
+\end{equation}
+subject to
+\begin{equation}\label{dual_constraints}
+u_i + v_j \leq c_{ij},\;\;\; \forall\;i,j \in \{1, \ldots, n\},
+\end{equation}
+
+\noindent where $u_i$ and $v_j$ are the (dual) variables.
+
+\paragraph{Primal algorithms}
+Primal algorithms are in general special implementations of the network simplex algorithm: one of the best primal algorithms is proposed in \cite{akgul1993genuinely} and runs in $O(n^3)$ time.
+
+\paragraph{Dual algorithms}
+Dual algorithms are iterative algorithms which at each iteration maintain a feasible dual solution and only at the final iteration they come up with a primal solution (i.e., a feasible assignment). In this regard also the primal-dual algorithms can be viewed as special dual algorithms. Typical dual algorithms are those based on successive shortest paths, signature, pseudoflow, interior point and auction methods. In the following, we concentrate on the auction methods because from the latter, one can easily derive distributed versions of the same.
+For additional details, the reader is referred to \cite{burkard1999linear,burkard2009}.
+
+For a short survey on the above solution algorithms for the LAP the reader is referred to a not so recent but detailed experimental comparison of some of the algorithms in \cite{dell2000algorithms}.
+Another survey on the state of the art algorithms for the LAP is provided by \cite{burkard2009}.
+
+\paragraph{Auction algorithms}
+The first auction algorithm for the LAP was given by Bertsekas (1981) \cite{bertsekas1981new} and successively improved by Bertsekas and Eckstein \cite{bertsekas1988dual} through a scaling technique providing an algorithm that runs in $O(n^3 \log(nC))$, where $C = \max\{|c_{ij}|\}$. A survey of iterative combinatorial auction algorithms for task allocation in multi-agent systems can be found in, e.g., \cite{tang2010survey,bertsekas2009auction,jiang2015survey,scheffel2011experimental}.
+
+The auction algorithm proposed by Bertsekas in \cite{bertsekas1981new} is an iterative algorithm that at each iteration maintains a triple $(x,(u,v))$ of primal and dual solutions that satisfy the complementary slackness conditions such that the dual solution is feasible. The algorithm terminates when also the corresponding primal solution is feasible. At each iteration,  the dual solution is updated and the corresponding primal solution (with respect to complementary slackness conditions) is found.
+
+In particular, given a dual vector $v$, the optimal (feasible) dual vector $u$ can be obtained by considering
+$u_i = \min_{j}\{c_{ij} - v_j\},$
+\noindent and, hence, the dual problem can be rewritten as
+
+\begin{equation}\label{DAPcompact}
+\max q(v) = \sum_{i=1}^n \min_{j}\{c_{ij} - v_j\} + \sum_{j=1}^n v_j.
+\end{equation}
+
+\noindent Denoting with $j_i = \mbox{arg-min}_{j}\{c_{ij} - v_j\}$, the primal solution $x$, with $x_{i,j_i} = 1$ and 0 for $j \neq j_i$, with $i = 1, \ldots, n$, satisfies the complementary slackness conditions.
+
+The dual problem has a nice economical interpretation. Assume that $p_j = -v_j$ represents the price that any agent will pay for being assigned to task $j$ and $u_i$ is the utility for agent $i$ for being assigned to a task. The dual assignment problem consists in determining $u_i$ and $p_j$ (i.e. $-v_j$) maximizing the agents' total net utility, such that agents' net utilities cannot be greater than the costs $c_{ij}$ they face. LP duality theory states that the maximum agents' total net utility equals the total assignment cost. At optimum, each task is assigned exactly to one agent, and the LP duality theory and complementary slackness conditions in particular assure that each agent $i$ is assigned to the most profitable task $j_i$, which guarantees that agent net utility $u_i - p_{j_i}$ is exactly equal to the assignment cost $c_{i,j_i}$.
+
+From the LP duality theory applied to the AP,  we can derive the following auction algorithm \cite{bertsekas2009auction}. Assume that agents are assigned to tasks through a market mechanism, with agent $i$ acting according to its own best interest. Assume that task prices $p_j = -v_j$ are given. The total agent utility $(\sum_j u_j)$ is maximized if  we set each $u_j$ to its largest value allowed by the dual constraints, that is, $u_i = \min_{j}\{c_{ij} + p_j\}$. From the complementary slackness conditions, it follows that each agent $i$ will bid for the most profitable task $j_i$, i.e., with $c_{ij_i} + p_{j_i} = u_i$ in order to be assigned to it. If no task is bid by more than one agent, we reach an equilibrium and the assignment is optimal, otherwise we may change (increase) task prices $p_j$ in order to discourage agents to bid for the same task. This mechanism may be regarded as a naive auction algorithm that proceeds in rounds and halts if we get an equilibrium. We call it naive because it contains a flaw (as we will
+show next), but it motivates a more sophisticated and correct algorithm.
+
+At each round of the naive auction algorithm we start with a partial assignment and a given set of task prices and repeat the following two steps until all agents are assigned to their desired task (when we are at the equilibrium):
+\begin{enumerate}
+  \item {Bidding step}: Given task prices $p_j$ and a partial assignment of agents to tasks, (i) each unassigned agent $i$ bids for its most profitable task $j_i = \mbox{arg-min}_{j}\{c_{ij} + p_j\}$ with an offer equal to $p_{j_i} + \gamma_i$, with $\gamma_i = \beta_i - \alpha_i$, where $\alpha_i = \min_j \{c_{ij} + p_j\}$ and $\beta_i = \min_{j \neq j_i} \{c_{ij} + p_j\}$, while (ii) each already assigned agent still submits the previous winning bid (without changing their bid offers).
+  \item {Pricing step}: Each task $j$ is assigned to the highest offering bidder (agent) for that target. The price $p_j$ of each task $j$ receiving a new (greater) bid is increased to the highest received offer, i.e., the new price value will be equal to $p_j + \gamma_i$.
+\end{enumerate}
+
+Unfortunately, this naive auction mechanism does not always work. It gets trapped in a cycle when (a) there is at least one unassigned agent and (b) each new winner bidder $i$ submitted an offer for its preferred task $j_i$ at its given target price $p_{j_i}$, i.e., $\gamma_i = 0$, meaning that its first and second best choices have the same cost.
+
+In order to avoid this to happen, we need to keep rising the prices of tasks receiving new bids by at least a small amount $\epsilon > 0$. Therefore, we assume that agent $i$ will bid for its preferred task $j_i$ by offering $p_{j_i} + \gamma_i + \epsilon$.
+
+This means that agent $i$ desires to be assigned to task $j_i$ if
+$c_{ij_i} + p_{j_i} \leq \min_j \{c_{ij} + p_j\} + \epsilon = \alpha_i + \epsilon,$, which therefore is not necessarily its best choice. The above condition is known as $\epsilon$-complementary slackness (see, e.g., \cite{bertsekas2009auction}).
+
+With this correction, the auction algorithm works ending in a finite number of rounds (depending on $\epsilon$), with each task receiving a bid. At the end, we are almost at an equilibrium with agent $i$ assigned to its almost desired task $j_i$. In general, this corresponds to an almost optimal solution for the assignment problem, since complementary conditions are only almost satisfied, while primal and dual complementary solutions are both feasible. It can be proved  that if the cost $c_{ij}$ are integers and $0 < \epsilon < \frac{1}{n}$, then the (corrected) auction algorithm ends with an optimal solution for the assignment problem (see, e.g., \cite{bertsekas2009auction}).
+
+Without loss of generality, let us assume that $c_{ij} \geq 0$, and let $C = \max_{ij}\{c_{ij}\}$. In this case, it can be proved  that the auction algorithm runs in $O(n^3 \frac{C}{\epsilon})$ time (see, e.g., \cite{bertsekas2009auction}). Then, choosing $0 < \epsilon < \frac{1}{n}$, the algorithm returns an optimal solution in $O(n^4 C)$ time.
+By using the scaling technique, Bertsekas and Eckstein in \cite{bertsekas1988dual} proposed a modified version of the above described auction algorithm that runs in $O(n^3 log(nC))$ time.
+In real-world vehicle networks, the quality of solution in localized algorithms for task assignment is related with the communication network quality and range of communication. In \cite{lujak2011communication}, the influence of the communication range  and different strategies of movement on the task assignment value in the auction algorithm was evaluated in simulations in mobile (robot) agent task allocation scenarios.
+
+\paragraph{Primal-dual algorithms}
+Primal-dual algorithms start from a dual feasible solution $(u,v)$. From this solution, a restricted primal problem is defined and solved, consisting in finding the maximum cardinality matching on the bipartite subgraph $G^{\prime}=(A \cup T, E^{\prime})$, where $E^{\prime}=\{(i,j)\in E | c_{ij} - u_i - v_j = 0 \}$. If the optimal matching has size equal to $n$, we are done; otherwise, the dual solution is improved (the dual objective function is increased), while assuring that also the size of $E^{\prime}$ is increased, and the procedure is repeated.
+
+Note that also the auction algorithms for LAP considers simultaneously primal and dual solutions but, differently from primal-dual algorithms, they can improve as well as worsen both the primal and the dual cost through the intermediate iterations, although at the end, the optimal assignment is found (see, e.g., \cite{bertsekas2009auction}).
+
+\paragraph{Hungarian algorithm}
+
+In particular the Hungarian algorithm, proposed by Munkres \cite{munkres1957algorithms} is a primal-dual algorithm. The original version of the algorithm runs in $O(n^4)$ time and was improved to $O(n^3)$ by Lawler in 1976 (see, e.g., \cite{lawler2001combinatorial}) by using successive shortest path technique when finding a new maximum cardinality matching after having updated the dual variables.
+
+In the following we give some insights of the Hungarian algorithm that will be also useful for describing a decentralized version of the same. The Hungarian algorithm proceeds as follows:
+
+\begin{itemize}
+  \item Start with any feasible dual solution $(u,v)$, and any matching $M \subseteq E^{\prime}=\{(i,j)\in E | c_{ij} - u_i - v_j = 0 \}$. For the starting dual solution we can consider $v_j = \min_j\{c_{ij}\}$, with $j = 1, \ldots, n$, and $u_i = \min_i\{c_{ij} - v_j\}$, with $i = 1, \ldots, n$.
+  \item While $M$ is not perfect repeat the following:
+    \begin{enumerate}
+    \item Given $M$ and $G^{\prime}=(A \cup T, E^{\prime})$, find an alternating augmenting path $P$ (i.e., a sequence of an odd number of edges that alternate edges of $E^{\prime}\backslash M$ and edges of $M$, starting and ending with non-matched edges); augment the matching by considering the new matching $M^{\prime} = M \backslash P \cup P \backslash M$. Note that $|M^{\prime}| = |M| + 1$.
+        Update the matching $M$ (with $M^{\prime}$) and repeat until no new alternating augmenting path exists. $M$ is the maximum cardinality matching of $G^{\prime}$.
+    \item If $M$ is not perfect, update the dual solution such that at least a new edge is added to the set of (admissible) edges $E^{\prime}=\{(i,j)\in E | c_{ij} - u_i - v_j = 0 \}$, and continue with a new iteration. In particular, we can achieve this result by updating the values of $u_i$ with $u_i + \delta$ and the values of $v_j$ with $v_j - \delta$, where $\delta = \min\{c_{ij} - u_i - v_j | i \in A^{\prime}, j \in T^{\prime}\}$ with $A^{\prime}$ and $T^{\prime}$ being the subsets of the vertices incident to the edges of the matching.
+    \end{enumerate}
+\end{itemize}
+
+Searching for alternating augmenting path can be done by a graph visiting algorithm that identifies a forest of alternating trees of $G^{\prime}$.
+Note that in each step of the loop we will either be increasing the size of $M$ or the size of $E^{\prime}$ so this process must terminate. Furthermore, when the process terminates, $M$ will be a perfect matching of $G^{\prime}=(A \cup T, E^{\prime})$, whose edge set $E^{\prime}$ is defined according to a feasible dual solution $(u,v)$. Since, the matching is perfect also for the complete bipartite graph $G$, the former represents a feasible primal solution for the assignment problem, respecting complementary constraints (by construction of of $E^{\prime}$), therefore the primal and dual solutions are optimal.
+
+\paragraph{Parallel primal-dual algorithms}
+A certain number of parallel algorithms for the linear assignment problem has been proposed. They are parallelized versions of primal-dual algorithms based on shortest path computations, of the auction algorithm, and of primal simplex-based methods. Among the most efficient parallel algorithms for the LAP is the one proposed by Orlin and Stein \cite{orlin1993parallel} that adopting cost scaling technique solves the problem using $\Omega(n^4)$ processors in $O(\log^3n \cdot \log(max\{cij\}))$ time.
+For a review, the reader is referred to \cite{burkard2009,bertsekas2009auction,bertsekas1998network}.
+
+
+
+\paragraph{Algorithms for the bottleneck assignment problem}
+The bottleneck assignment problem can be solved in polynomial time for example by the so called {\em threshold algorithm} that alternates two phases (see, e.g., \cite{burkard2009,luss2012equitable}. In the first one, a threshold value $\bar{c}_{ij}$ is chosen and in the second phase, it is checked if the bipartite graph $G^{\prime}=(A \cup T,E^{\prime})$ admits a perfect matching or not, where $E^{\prime}=\{(i,j)\in E | c_{ij} \leq \bar{c}_{ij}\}$.
+
+One possible way to implement the first phase is applying a binary search. This leads to a threshold algorithm that runs in $O(T(n) \log n)$ time, where $O(T(n))$ is the time complexity for perfect matching checking. One of the best time complexity algorithms by Punnen and Zhang  see, e.g., \cite{larusic2014asymmetric,punnen2009bottleneck} that runs in $O(m \sqrt{n \log n })$, where $m$ is the number of finite entries of the cost matrix $\{c_{ij}\}$.
+
+
+\paragraph{Algorithms for the fair matching  problem}
+The balanced assignment problem can be solved in polynomial time for example by means of an iterative algorithm based on a feasibility subroutine that runs in $O(k T(n)))$ (see, e.g., \cite{martello1984balanced}), where $k \leq n^2$ is the number of distinct values of $c_{ij}$ and $O(T(n))$ the time required to test if there is a feasible assignment on a subset $\bar{E} \subseteq E$ of the edges of the complete bipartite graph $G=(A \cup T,E)$. Testing if there is a feasible assignment on $\bar{E}$ corresponds to check if the bipartite graph $\bar{G}=(A \cup T,\bar{E})$ admits a perfect matching that can be done by solving the maximum cardinality matching of $\bar{G}$, e.g. in $O(n^{2.5})$ time \cite{hopcroft1973n}. Hence, since $k \leq n^2$, the overall algorithm run in $O(n^{4.5})$ time. Martello {\em et al.} in  \cite{martello1984balanced} improved the algorithm time complexity to $O(n^4)$ with a special refinement of the same.
+
+\paragraph{Algorithms for an on-line bipartite matching}
+Karp et al. in \cite{karp1990optimal} evaluate an on-line algorithm for bipartite matching by comparing its performance by the worst-case ratio of its profit to that of the optimal off-line algorithm.
+%
+They
+propose an optimal online $1 - 1/e$ competitive simple randomized on-line
+algorithm to maximize the size of the matching in an unweighted bipartite graph.
+The best approximation algorithm for this problem is presented in \cite{menshadi2011offline} that applies the power of two choices paradigm, i.e., compute two offline matchings and use them to guide the adaptive online solutions.
+
+Haeupler et al. in \cite{haeupler2011online} study the unrestricted weighted problem in the stochastic arrival model, and present the first approximation algorithms for it. They improve  $1-1/e$ -approximation for the online stochastic weighted matching problem  to a 0.667-approximation. Moreover, they apply a discounted LP technique to give an improved competitive algorithm for the online stochastic matching problem and  use the dual of the tightened LP to obtain a new upper bound on the optimal solution with a competitive ratio of 0.684.  Via   pseudo-matching, they obtain an algorithm with competitive ratio of 0.7036. They also present simple adaptive online algorithms to solve the online
+(weighted) stochastic matching problem optimally for  the union of two matchings.
+
+
+
+
+In \cite{manshadi2012online}, at each time step, a task is sampled independently from the given distribution and it needs to be matched upon its arrival to an agent. The goal is to maximize the number of allocations.
+An online algorithm is presented for this problem with a competitive ratio of 0.702.  A key idea of the algorithm is to collect statistics about the decisions of the optimum offline solution using Monte Carlo sampling and use these statistics to guide the decisions of the online algorithm. The algorithm achieves a competitive ratio of 0.705 when the rates are integral.
+
+
+\paragraph{In summary} While it is possible to solve most  of these problems using the simplex algorithm, each AP variation has specialized more efficient algorithms designed to take advantage of its special structure.
+
+Many centralized algorithms have been developed for solving the assignment problem in  polynomial time (see, e.g., \cite{burkard2009}. One of the first such algorithms was the Hungarian algorithm \cite{munkres1957algorithms}. Other solution approaches include
+augmenting path methods (see, e.g., \cite{jonker1987shortest,mills2007dynamic}), adaptations of the primal simplex method (see, e.g., \cite{orlin1997polynomial}), relaxation methods and auction algorithms (see, e.g., \cite{bertsekas2009auction}),
+and signature methods (see, e.g., \cite{balinski1985signature}).
+
+The complexity of the Hungarian method by using Fibonacci heaps   is $O(mn+n^2 \log n)$ \cite{fredman1987fibonacci}. Duan and Su's approach in \cite{duan2012scaling} give an algorithm whose running time  for integer weights   is $O(m\sqrt n \log N)$, where $m$ and $n$ are the number of edges and vertices and $N$ is the largest weight magnitude. Sankowski in \cite{sankowski2009maximum}
+gave an $\tilde{O}(Wn^\omega)$\footnote[1]{$\tilde{O}$ denotes the so-called ``soft O'' notation} time, where $\omega$ is the matrix multiplication exponent, and $W$ is the highest edge
+weight in the graph.
+
+Duan and Pettie in \cite{duan2014linear} find an $O(m\epsilon^{-1}\log \epsilon^{-1}$ running time algorithm that computes  $(1 - \epsilon)$-approximate maximum weight matching for any fixed $\epsilon$.
+
+
+Dell'Amico and Toth in \cite{dell2000algorithms} consider the classic linear assignment problem with a min-sum objective function, and the most efficient and easily available sequential codes for its solution that include: shortest path algorithms APC, CTCS, and LAPm; shortest augmenting path algorithm with reduction transfer procedure JV,  naive auction and sequential shortest path algorithm NAUCTION SP, two different implementations of the auction method, AFLP and AFR, and
+pseudoflow cost scaling algorithm CSA.
+Based on the results of the computational experiments  obtained on dense instances containing both randomly generated and benchmark problems,  it is not possible to obtain a precise ranking of the
+eight algorithms. However,  APC is the fastest
+code for the two cost class, and has a behavior, on average, similar to that of CTCS
+for the other classes. Algorithm LAPm is the winner for the uniform random and
+the geometric classes, and for the instances from the OR-library. No dominance with
+respect to NAUCTION SP, CTCS and APC exists for the remaining classes. Code JV has a good and stable average performance for all the classes, and it is the best algorithm for
+the uniform random (together with LAPm) and for the single-depot class. CSA performance strongly depends on the class, and it wins
+for no-wait flow-shop classes.
+
+
+\subsection{Distributed coordination approaches}
+By distributed, we consider the algorithms that combine the concepts of centralized and decentralized coordination, and principally {\em market-based approaches}, where solutions are built based on a bidding-auctioning procedure between the bidders (agents) and   coordinators that play the role of auctioneers for allocating tasks to agents. There may be one or more coordinator agents as intermediaries in the task assignment process. The most known such algorithm is the auction algorithm that is presented in the following.
+
+In this section we recall two distributed solution approaches respectively based on auction algorithm and on primal-dual Hungarian method.
+
+The Bertsekas auction algorithm (see, e.g., \cite{bertsekas2009auction}) can be naturally implemented in a decentralized fashion. Zavlanos et al. \cite{zavlanos2008distributed} provide a distributed version of the auction algorithm proposed by Bertsekas for the considered networked systems with the lack of global information due to the limited communication capabilities of the agents. Updated prices, necessary for accurate bidding can be obtained in a multi-hop fashion only by local exchange of information between adjacent agents. No shared memory is available and the agents are required to store locally all the pricing information. This approach calculates the optimal solution in $O(\Delta n^3 C)$ time, with $\Delta \leq n - 1$ being the maximum network diameter of the communication network.
+
+Another market-based algorithm has been proposed more recently by Liu and Shell in \cite{liu2013optimal}, that instead of auctioning via a series of selfish bids from customers (agents) adopts a mechanism from the perspective of a merchant. The algorithm is capable to produce a solution (equilibrium) that satisfies both merchant and customers and is globally optimal; its running time is $O(n^3 \log n)$.
+
+
+Otte et al. in \cite{otte2019auctions} study various auction algorithms for task assignment in the multi-robot context, and study how lossy communication between the auctioneer and bidders affects solution quality. They demonstrate both analytically and experimentally that even though many auction algorithms have similar performance when communication is perfect, they degrade in different ways as communication quality decreases from perfect to nonexistent.  They compare six auction algorithms including: standard implementations of the Sequential Auction, Parallel Auction, Combinatorial Auction; a generalization of the Prim Allocation Auction called G-Prim; and two multi-round variants of a Repeated Parallel Auction. Variants of these auctions are also considered in which award information from previous rounds is rebroadcast by the auctioneer during later round. They conclude that the best performing auction changes based on the reliability of the communication between the bidders and the auctioneer.
+
+
+
+Giordani {\em et al.} in \cite{giordani2010distributed,giordani2013distributed} propose a distributed version of the Hungarian method for solving the LAP, based on the concept of alternating augmenting paths, that are searched by maintaining a forest of alternating trees that is updated during the execution of the algorithm. In particular, given the current bipartite subgraph $G^{\prime}=(A \cup T, E^{\prime})$, where $E^{\prime}=\{(i,j)\in E | c_{ij} - u_i - v_j = 0 \}$, and $A$ and $T$ are agent and task vertices, respectively, the algorithm maintains forest $F_1$ of all the alternating trees rooted at free task vertices. Moreover, it maintains forest $F_2$ of the alternating trees of $G^{\prime}$ rooted at agent vertices containing all the agent/task vertices not contained in $F_1$. Clearly, the alternating trees in $F_2$ are not connected with vertices in $F_1$.
+
+The algorithm involves root agents that initiate message exchange with other agents in the network via a depth-first search, and synchronize the decision rounds (iterations, each containing multiple communication hops) across all agents. Through autonomous calculations and the communication with the (agent) neighbors, with respect to the position of the vertex representing the agent in the spanning alternating forests, agents get and share the information about the position of each task vertex (whether in $F_1$ or $F_2$), the values of dual variables related to tasks, the value of $\delta$ for the dual variables' update, the new admissible edge entering in set of admissible edges of $G^{\prime}$ due to the dual variables' update, and the root agents $r(F_1)$ and $r(F_2)$ of forests $F_1$ and $F_2$ respectively. All these data are locally stored by each agent. In this way, there is no common coordinator or a shared memory of the agent's system. The agents, depending on the positions of the related vertices in the forests, change their roles, and accordingly execute some of the steps of the distributed Hungarian algorithm. The total computational time is $O(n^3)$ as well as the total number of messages exchanged by the robots; nonetheless, the computational time required to perform the local calculation by each robot is $O(n^2)$. Regarding the robustness of the proposed method, if the agent during the execution of the algorithm stops responding, it is considered erroneous and is eliminated from the further calculations. In the case where the agent was unmatched in forest $F_2$, the calculation continues without any modifications, ignoring the agent in question. Otherwise, the algorithm starts from the beginning excluding the same.
+
+
+
+Chopra {\em et al.} in \cite{chopra2017distributed} propose a novel distributed version of the Hungarian method for solving the LAP that des not use any coordinator or shared memory. Specifically, each agent runs a local routine to execute ad-hoc substeps of the centralized Hungarian method and exchanges estimates of the solution with neighboring robots. The authors show that with their approach all agents converge to a common optimal assignment in a finite number ($O(n^3)$) of communication rounds if agents act synchronously. The overall performance of their approaches in terms of running time is only evaluated experimentally.
+
+
+
+%\paragraph{Algorithms for the  classic assignment problem recognizing agent qualification}
+Eiselt and Marianov in \cite{eiselt2008employee} propose a model for the task assignment to employees with heterogeneous capabilities and multiple goals. Employees and tasks are mapped into the skill space where, after finding feasible matchings,  they are assigned to each other by minimizing employee-task distance to minimize assignment cost, boredom, and unfairness between employees' workloads.
+
+Peters and Zelewski in \cite{peters2007assignment} develop two goal programming models for the employee assignment to workplaces according to both their competencies and preferences and the workplace requirements and attributes to ensure effective and efficient task performance.
+%
+A review and classification of the literature regarding workforce planning problems incorporating skills can be found in \cite{de2015workforce}.
+
+The bottleneck assignment problem can be solved in polynomial time for example by the so called {\em threshold algorithm} that alternates two phases (see, e.g., \cite{burkard2009,luss2012equitable}. In the first one, a threshold value $\bar{c}_{ij}$ is chosen and in the second phase, it is checked if the bipartite graph $G^{\prime}=(A \cup T,E^{\prime})$ admits a perfect matching or not, where $E^{\prime}=\{(i,j)\in E | c_{ij} \leq \bar{c}_{ij}\}$.
+
+One possible way to implement the first phase is applying a binary search. This leads to a threshold algorithm that run in $O(T(n) \log n)$ time, where $O(T(n))$ is the time complexity for perfect matching checking. One of the best time complexity algorithms by Punnen and Zhang  (see, e.g., \cite{larusic2014asymmetric,punnen2009bottleneck}) that runs in $O(m \sqrt{n \log n })$, where $m$ is the number of finite entries of the cost matrix $\{c_{ij}\}$.
+%
+Efrat et al. in \cite{efrat2001geometry} propose algorithms that, assuming planar objects, run in roughly $O(n^{1.5}\log n)$ time.
+Pothen and Fan in \cite{pothen1990computing} propose a parallel algorithm with $O(nm)$ time complexity, which is currently among the best practical serial algorithms for maximum matching. However, its performance is sensitive to the order in which the vertices are processed for matching.
+
+In \cite{azad2012multithreaded}, Azad et al. study the performance improvement of augmentation-based parallel matching algorithms for bipartite cardinality matching on multithreaded machines  over  serial algorithms and report extensive results and insights on efficient multithreaded implementations of three classes of algorithms based on their manner of searching for augmenting paths: breadth-first-search, depth-first-search, and a combination of both.
+
+In \cite{efrat2001geometry}, algorithms for the balanced assignment problem and minimum deviation assignment are presented that run in roughly $O(n^{10/3}$ and, as such, are more efficient than
+the algorithms of \cite{martello1984balanced} and \cite{gupta1988minimum} that run in $O(n^4)$ time  on general bipartite graphs.
+%
+Kennington and Wang in \cite{kennington1992shortest} present  a shortest augmenting path algorithm for solving the semi-assignment problem  in which  each iteration during the final phase of the procedure (also known as the end-game) obtains an additional assignment.
+
+
+

@@ -1,0 +1,760 @@
+\section{Introduction}
+\label{sec:introduction}
+
+A concurrent object provides a set of methods for client programs to access the object.
+Given the complexity of writing efficient concurrent code, it is recommended to
+use mature libraries of concurrent objects such as
+\emph{java.util.concurrent} for Java and \emph{std::thread} for C++11.
+The verification of these concurrent libraries is obviously important but intrinsically hard, since they
+are highly optimized to avoid blocking -- thus exploiting more parallelism -- by
+using optimistic concurrency in combination with atomic instructions like
+compare-and-set.
+%
+
+%Moreover, different implementations of concurrent data structures offer different progress guarantees.
+Various liveness properties (progress conditons) have been proposed for concurrent objects.
+%concurrent data structures.
+Lock-freedom, wait-freedom, %lock-freedom,
+deadlock-freedom, starvation-freedom and obstruction-freedom \cite{DBLP:books/daglib/0020056,DBLP:conf/concur/LiangHFS13} are five typical liveness properties.
+A liveness property describes conditions under which method calls are guaranteed to successfully complete in an execution.
+Intuitively, clients of a wait-free library can expect each method call to
+return in finite number of steps.
+%
+Clients using a lock-free library can expect that at any time, at least one
+library method call will return after a sufficient number of steps, while it
+is possible for methods on other processes to never return.
+%
+Deadlock-freedom and starvation-freedom require each fair execution to satisfy
+lock-freedom and wait-freedom, respectively.
+%
+Clients using an obstruction-free library can expect each method call to
+return in a finite number of steps when executed in isolation.
+%
+\forget{ For
+  example, %wait-freedom requires that each call to a library method should return if it is scheduled for a sufficient number of steps, while
+  lock-freedom requires that %some
+  a call to a library method should return if the system executes for a
+  sufficient number of steps, while wait-freedom requires that each call to a
+  library method should return if it is scheduled for a sufficient number of
+  steps.
+%A liveness property guarantees that in certain executions, some method should return in finite number of steps.
+%For example, wait-freedom requires that each call to a library method returns in a finite number of steps, while lock-freedom requires that %in
+%at each point in time there is at least one method that should return in a finite number of steps.
+%
+%Deadlock-freedom and starvation-freedom can be obtained from lock-freedom and
+%wait-freedom respectively by adding assumptions about the fair scheduling of
+%executions.
+%Obstruction-freedom guarantees that each method can return in a finite number of
+%steps if it executes in isolation.
+%There are also bounded versions of progress properties, such as
+%
+%{\color {red}$k$-bounded wait-freedom \cite{DBLP:conf/pldi/PetrankMS09} is a bounded version of wait-freedom. It requires that each call to a library method should return within $k$ steps.}
+%Bounded wait-freedom \cite{DBLP:books/daglib/0020056} %and population-oblivious wait-freedom
+%is a bounded version of wait-freedom. It requires that each call to a library method returns in a number of steps lower or equal to a fixed bound.
+%
+%They require progress properties as well as each method should return within
+%bounded number of steps.
+Deadlock-freedom and starvation-freedom assume fair schedulers. Deadlock-freedom
+(resp., starvation-freedom) requires that each fair execution must satisfy
+lock-freedom (resp., wait-freedom). Obstruction-freedom requires that calls to
+library methods which execute in isolation should return in finite number of
+steps.
+}
+
+% In some cases, a method can not block any other processes. In some cases, a method can block some processes but not all processes. In some cases, the whole systems may be blocked, while from any time point if we choose to execute only one process, that process always proceed. %In a bad implementation, the whole systems may be kept block, even when we select a process in the block configuration and let it run itself.
+%Wait-freedom, lock-freedom and obstruction-freedom \cite{DBLP:books/daglib/0020056,DBLP:conf/concur/LiangHFS13} are three typical liveness properties.
+%They correspond to above first three cases.
+%For example, lock-freedom guarantees that in a infinite execution, there is always a process that will return in finite steps.
+
+%Often times
+It is often that programmers assume that all accesses to the shared memory are
+performed instantaneously and atomically, which is guaranteed only by the
+sequential consistency (SC) memory model \cite{DBLP:journals/tc/Lamport79}.
+However, modern multiprocessors (e.g., x86 \cite{Intel2021}, ARM \cite{ARMv8}
+), and programming languages (e.g., C/C++
+\cite{DBLP:conf/popl/BattyOSSW11}, Java \cite{DBLP:conf/popl/MansonPA05}) do not
+implement the SC memory model. Instead they provide {\em relaxed memory models},
+which allow subtle behaviors due to hardware and compiler optimizations.
+%For instance, in a multiprocessor system implementing the Total Store Order (TSO) memory model \cite{DBLP:conf/tphol/OwensSS09}, each processor is equipped with an FIFO store buffer.
+For instance, in a multiprocessor system implementing the Total Store Order (TSO) memory model \cite{DBLP:conf/popl/AtigBBM10}, each processor is equipped with a FIFO store buffer.
+In this paper we follow the %theoretical
+TSO memory model of~\cite{DBLP:conf/popl/AtigBBM10}
+(similarly
+to~\cite{DBLP:conf/tphol/OwensSS09,DBLP:conf/esop/BouajjaniDM13,DBLP:conf/esop/BurckhardtGMY12}). Although in every realistic
+multiprocessor system implementing the TSO memory model, the buffer is of bounded size, to describe
+the semantics of \emph{any} TSO implementing system it is necessary to consider unbounded size FIFO
+store buffers associated with each process, as in the semantics of~\cite{DBLP:conf/popl/AtigBBM10}. Otherwise, TSO implementations with larger store buffer will not be captured by this theoretical TSO memory model.
+%associates a unbounded size FIFO store buffer with each process. This is clearly a safe over-approximation of any TSO system.
+%{\color {red}of unbounded size}.
+%{\color{orange} GP: This is certainly no true. There can be no unbounded resources in any real system. The model is unbounded, the real system isn't. This is the main criticism that the paper suffered in ESOP.}
+Any write action %operation
+performed by a processor is put into its local store buffer
+first and can then be flushed into the main memory at any time.
+%{\color {red}Although the FIFO store buffer is of bounded size in each detailed TSO chips, since the memory model of \cite{DBLP:conf/tphol/OwensSS09} intends to model all TSO chips, it associates a unbounded size FIFO store buffer with each process.}
+% A read operation first attempts to check the buffer for item of the same
+% memory location, and reads the main memory if failed.
+%{\color {red}Since TSO memory model is a theoretical model and is used to model all multiprocessor system supporting this memory model, TSO memory model of \cite{DBLP:conf/tphol/OwensSS09} associates a unbounded size FIFO store buffer with each process. Many research on TSO assume such unbounded buffer \cite{DBLP:conf/popl/AtigBBM10}.}
+Some libraries %data structure implementations
+are optimized for relaxed memory models.
+For example, some work-stealing queue implementations
+\cite{DBLP:conf/oopsla/LeijenSB09,DBLP:conf/ppopp/MichaelVS09} are specifically
+written to perform well on TSO.
+
+%\lyedt{Even on SC, most decidability problems of concurrent system with unbounded data domains trivially become undecidable. Thus, we restrict data domains to be bounded.}
+To address the problem of decidability of liveness properties, we remark that
+concurrent systems with a bounded number of processes on SC can be expressed
+as %fair discrete system,
+finite state $\textit{labelled transition systems}$ (LTS).
+% All above liveness properties can be expressed as LTL formulas, as shown in \cite{DBLP:conf/pldi/PetrankMS09}.
+Lock-freedom, wait-freedom and obstruction-freedom can be expressed as LTL
+formulas, as shown in \cite{DBLP:conf/pldi/PetrankMS09}. We show that
+deadlock-freedom and starvation-freedom can %also
+be expressed as CTL$^*$ %LTL
+formulas.
+%and all above liveness properties can be expressed as LTL formulas.
+Given that LTL and CTL$^*$ model checking is decidable %in polynomial space
+\cite{DBLP:reference/mc/2018},
+it is known that lock-freedom, wait-freedom, deadlock-freedom,
+starvation-freedom and obstruction-freedom %and {\color {red}$k$-bounded wait-freedom}
+are decidable in this case.
+However, their decidability problem on TSO memory model for a bounded number of
+processes remains open. %, since concurrent system with a bounded number of processes on TSO is a infinite state LTS.
+\forget{
+{\color {red}
+Liveness is an important property of programs, and {\color {blue} using
+  libraries with unsuitable liveness property may cause unintended problematic
+  behaviors.}
+  } }
+%not being able to reason
+%about progress guarantees of programs running under relaxed memory is limits
+%programmers from reasoning about liveness.
+
+% Unaware of liveness may lead programmers to use unsuitable libraries and cause
+% unintended trouble in some situation.
+%Libraries with different progress guarantees can be used in different situations, for example, bounded wait-freedom libraries can be used in real-time situations where each method has a strong progress requirements {\color {red} TODO: add a reference}.
+%However, the decidability of liveness of libraries on TSO memory model for bounded number of processes is still open.
+%Unaware of liveness may lead programmers to use unsuitable libraries and cause unintended trouble in some situation.
+%As a contrast, the problem for the five progress properties is decidable on SC memory model, since its operational is a finite state labelled transition system (LTS), and checking liveness can be done by model checking {\color {red} TODO: add a reference}.
+
+In this paper, we study the decision problem of liveness properties on TSO.
+% and answer related problems of bounded versions of wait-freedom on TSO memory
+% model, and provide a decidability hierarchy for liveness on TSO memory model.
+Our work covers the five typical liveness properties of
+\cite{DBLP:books/daglib/0020056}, which are commonly used in practice.
+Our main findings are:
+%The result of our work is shown in the table below.
+\begin{itemize}
+%\setlength{\itemsep}{0.5pt}
+\item[-] Lock-freedom, wait-freedom, deadlock-freedom and starvation-freedom are
+  \emph{undecidable on TSO}, which reveals that the verification of liveness properties
+  on TSO is intrinsically harder when compared to their verification on SC.
+  %We prove the undecidability of lock-freedom, wait-freedom, deadlock-freedom and starvation-freedom with using the same library.
+  %We use a specific library %,
+  %which is ``immune'' to unfair scheduling,
+  %to prove the undecidability of %both lock-freedom and deadlock-freedom.
+  %lock-freedom, wait-freedom, deadlock-freedom and starvation-freedom.}
+  %Similarly, we use another library to prove the undecidability of both wait-freedom and starvation-freedom.
+
+\item[-] Obstruction-freedom is \emph{decidable on TSO}.
+
+%\item[-] %Given a wait-freedom data structures running on SC memory model for bounded number of processes,
+%  For wait-freedom on TSO with a bounded number of processes, there is no bound for steps of a method from its call to its return. This doesn't hold on SC.% {\color {red}\cite{DBLP:journals/jucs/BritM96}.}
+  %Wait-freedom on SC with a bounded number of processes requires each method
+  %to return within bounded number of commands.
+  %This doesn't hold on TSO.
+\end{itemize}
+
+To the best of our knowledge, ours are the first decidability and
+undecidability results for liveness properties %on TSO.
+on relaxed memory models.
+Let us %know
+now present a sketch of the techniques used in the paper to justify our
+findings.
+\forget{
+{\color{orange} GP: I think the text that follows is too detailed for an
+  introduction: While the machines haven't been defined, the reader is required
+  to imagine all these executions with $M_1$ and $M_2$ without even knowing what
+  they represent. I would postpone this to following sections. Perhaps a couple
+  of paragraphs summarizing what's here could work, but there is far too much now.}
+}
+%
+
+\forget{
+\begin{tabular}{|l|l|l|}
+\hline
+properties & decidability/answer on TSO & decidability/answer on SC \\
+\hline
+lock-freedom & $\times$ & $\checkmark$ {\color {red} TODO:add reference} \\
+\hline
+wait-freedom & $\times$ & $\checkmark$ {\color {red} TODO:add reference} \\
+\hline
+deadlock-freedom & $\times$ & $\checkmark$ {\color {red} TODO:add reference} \\
+\hline
+starvation-freedom & $\times$ & $\checkmark$ {\color {red} TODO:add reference} \\
+\hline
+obstruction-freedom & $\checkmark$ & $\checkmark$ {\color {red} TODO:add reference} \\
+\hline
+$k$-bounded wait-freedom & $\checkmark$ & $\checkmark$ \\
+\hline
+Does each wait-freedom library has \\ a bound ($n$ processes)? & $\times$ & $\checkmark$ \\
+%\hline
+%Is bound computable for wait-free libraries? & $\times$ & $\checkmark$ \\
+\hline
+\end{tabular}
+}
+
+\vspace{5pt}
+\noindent \textbf{Undecidability Proof.}
+%Let us explain our undecidability proof of lock-freedom, wait-freedom, deadlock-freedom and starvation-freedom on TSO memory model for bounded number of processes.
+%Let us take wait-freedom and starvation-freedom as an example to explain our undecidable proof.
+%We choose the formalization of starvation-freedom of \cite{DBLP:conf/concur/LiangHFS13}, which requires that in each fair execution, every method call can finish its execution and return in finite number of steps.
+%Wait-freedom is similarly defined, except that it consider all executions instead of only fair executions.
+%There are three challenges for proving undecidability of these progress properties. %wait-freedom and starvation-freedom.
+%First, they all consider executions of infinite length.
+%Second, some of them, such as starvation-freedom, consider only fair executions.
+%Third, some of them, such as wait-freedom, requires that each method should finish in finite number of steps, irrespective of scheduling.
+%Or we can say, a method can not block any other processes.
+%We use the case of lock-freedom to explain how to solve the first challenge,
+%and this approach can be used similarly for other three progress properties.
+Abdulla \emph{et al.} \cite{DBLP:journals/iandc/AbdullaJ96a} reduce the cyclic
+post correspondence problem (CPCP) \cite{DBLP:journals/acta/Ruohonen83}, a known
+undecidable problem, into checking whether a specific lossy channel machine has
+an infinite execution that visits a specific state infinitely often.
+Our undecidability proof of %lock-freedom
+lock-freedom and wait-freedom is obtained by reducing the checking of
+the lossy channel machine problem into checking lock-freedom and wait-freedom for a specific library,
+based on a close connection of concurrent programs on TSO and lossy
+channel machines \cite{DBLP:conf/popl/AtigBBM10,DBLP:conf/atva/WangLW15}.
+%More precisely,
+%{\color {red}This lossy channel machine contains two phases: a guess phase and a check phase.} %, a guess phase
+%that guesses a solution of CPCP and inserts it into channel, and a check phase
+%that repeatedly checks if the channel content contains a solution of CPCP.
+
+
+We %then
+generate a library template that can be instantiated as a specific library for each instance of CPCP. %This library contains five methods $M_1$, $M_2$, $M_3$, $M_4$ and $M_5$. The collaboration of $M_1$ and $M_2$ simulates one channel of the lossy channel machine, while the collaboration of $M_3$ and $M_4$ simulates the other channel. Thus, the executions of this library simulate the executions of the lossy channel machine.
+The collaboration between methods simulates lossy channel machine transitions.
+Each execution of the lossy channel machine contains (at most) two
+phases. %: a \emph{guess phase} and a \emph{check phase}.
+Each \emph{accepting} infinite execution of the lossy channel machine loops
+infinitely in %check phase.
+the second phase. Thus, we make each method of the library to work differently
+depending on the phase.
+%
+Our library has the following features: if an infinite library execution simulates an accepting infinite
+execution of the lossy channel machine, then it violates lock-freedom, and thus,
+it also violates wait-freedom; if an infinite library execution does not simulate an
+accepting infinite execution of the lossy channel machine, then it satisfies
+wait-freedom, and thus, it also satisfies lock-freedom. This is because any
+execution that satisfies wait-freedom also satisfies lock-freedom.
+Therefore, we reduce checking whether the lossy channel machine has an
+accepting infinite execution, or more precisely CPCP, into checking lock-freedom
+and wait-freedom of the library.
+
+
+\forget{
+We then generate a library template that can be instantiated as a specific library for each CPCP.
+This library contains two methods $M_1$ and $M_2$, and the collaboration of $M_1$ and $M_2$ simulates the lossy channel machine transitions.
+Each execution of the lossy channel machine contains (at most) two phases: a \emph{guess phase} and a \emph{check phase}.
+In a library execution that successfully simulates a lossy channel machine transition, there should be two processes. Process $1$ (resp., $2$) runs $M_1$ (resp., $M_2$).
+$M_1$ does not return until the simulation procedure ends, while
+$M_2$ returns several times (to simulate several receive operations) during the guess phase, but does not return until the simulation procedure ends in the check phase.
+%$M_2$ returns several times during the guess phase, but does not return until the simulation procedure ends in the check phase.
+%{\color{red} In the guess phase, the simulation of channel receive operations requires at least that one method $M_2$ returns.}
+%{\color{orange} GP: I tried to fix this, but the sentence misses something}
+}
+
+\forget{
+Each accepting infinite execution of the lossy channel machine loops infinitely in check phase. %Therefore, the
+The lossy channel machine has an accepting infinite execution
+$t_1$, if and only if the library has an accepting infinite execution
+$t_2$ which simulates $t_1$. Hence, $t_2$ violates lock-freedom since $M_1$
+never returns and the $M_2$ invoked in the check phase does not return either.
+On the other hand, if a library execution fails to simulate lossy channel
+machine transitions, then $M_1$ and $M_2$ will go to trap state.
+% {and a flag will be set.}
+From that point onward,  $M_1$ and $M_2$ both return trivially, and hence such executions
+satisfy lock-freedom.
+If a library execution finishes simulating a finite channel machine execution,
+% {\color{red} GP: removing this as it is TMI at this point }such flag will also be set and the execution thus
+it immediately satisfies lock-freedom.
+}
+\forget{
+{\color {blue}This library contains two methods $M_1$ and $M_2$, and the collaboration of $M_1$ and $M_2$ simulates the lossy channel machine transitions.
+In a library execution that successfully simulates lossy channel machine transitions, $M_1$ runs on process $P_1$, and it does not return until the lossy channel machine execution ends, while $M_2$ runs on process $P_2$, and it behaviors differently in two phase.
+In guess phase, to simulate one lossy channel transition, $M_2$ returns several times.
+In check phase, $M_2$ does not return until the lossy channel machine execution ends.
+Therefore, the lossy channel machine has an infinite execution $t_1$ that visits a specific state $s_1$ infinite often, if and only if the library has an infinite length execution $t_2$ which simulates $t_1$. In $t_2$, $M_1$ never return, and $M_2$ does not return after it goes to check phase, and thus, $t_2$ violates lock-freedom.
+On the other hand, if a library execution fails to simulate lossy channel machine transitions, then $M_1$ and $M_2$ will go to trap state, and from then on $M_1$ and $M_2$ becomes a method that returns trivially, and such executions satisfy lock-freedom.}
+}
+%
+% We use a result of Abdulla \emph{et al.}
+% \cite{DBLP:journals/iandc/AbdullaJ96a}, which reduces the problem of whether a
+% specific cyclic post correspondence problem (CPCP)
+% \cite{DBLP:journals/acta/Ruohonen83} %of sequences $A$ and $B$
+% has a solution into checking whether a specific lossy channel
+% machine %$M_{A,B}$
+% has an infinite execution that visits a specific state infinite often. Then,
+% we reduce the latter problem into whether a specific
+% library %$\mathcal{L}_{(A,B)}$
+% satisfies lock-freedom, based on a close connection of concurrent programs on
+% TSO and lossy channel machines. More precisely, such lossy channel machine
+% contains two phase, a guess phase that guess solution of CPCP and insert them
+% into channel, and a check phase that repeatedly checks if the channel contains
+% a solution of CPCP. Although the channel is lossy, since the channel content
+% is finite in the beginning of the check phase, if the channel is checked
+% correct for infinite times, the channel content contains a solution of PCP.
+%
+%We generate a library template that can be instantiated as a specific library
+%for each CPCP.
+%This library contains two methods $M_1$ and $M_2$, designed to run repeatedly on
+%two process $P_1$ and $P_2$, respectively.
+%The channel is simulated by requiring $M_1$ (resp., $M_2$) to read from a memory
+%location $y$ (resp., $x$) and write to memory location $x$ (resp., $y$), and the
+%loss of channel content is simulated by the case that $M_1$ (resp., $M_2$) may
+%ignore updates made by $M_1$ (resp., $M_2$).
+%In this way, we simulate the executions of the lossy channel machine.
+%To deal with lock-freedom,
+%the two phases of the lossy channel are simulated in
+%a different way.
+%In simulating the guess phase, method $M_2$ returns after it reads content from
+%$x$ and writes it to $y$,
+% as long as simulating one lossy channel machine transition,
+%while in simulating the check phase, $M_2$ does not return unless the simulation
+%procedure of lossy channel machine fails.
+%if the check is still correct in current round.
+%This reduces the existence of specific infinite execution of the lossy channel
+%machine of \cite{DBLP:journals/iandc/AbdullaJ96a} to the existence of an infinite
+%length execution of the library where $M_2$ never returns, a lock-freedom
+%violation.
+%Since CPCP is known undecidable, our reduction of lossy channel machine (generated from CPCP) into lock-freedom lock-freedom reflects that lock-freedom is undecidable on TSO.
+%This reduce the existence of infinite execution of that lossy channel machine (represents a solution of PCP) to existence of a lock-freedom violation, which also consider infinite executions.
+
+Perhaps surprisingly, the same library can be used to show the
+undecidability of deadlock-freedom (resp., starvation-freedom), which requires
+that each infinite fair execution satisfies lock-freedom (resp.,
+wait-freedom). This is because whenever a library execution simulates an
+accepting infinite execution of the lossy channel machine, we require %$M_1$, $M_2$, $M_3$, $M_4$ and $M_5$
+library methods to collaborate and work alternatingly, and thus, such
+library execution must be fair and violates deadlock-freedom, and thus,
+violates starvation-freedom. Therefore, checking the existence of accepting
+infinite executions of the lossy channel machines is reduced into checking
+violations of deadlock-freedom and starvation-freedom.
+
+
+\forget{
+Perhaps surprisingly, the same library can be used to show the undecidability of
+deadlock-freedom, which requires that each fair execution satisfies lock-freedom.
+The reason is that whenever a library execution simulates an infinite lossy
+channel machine execution, we require $M_1$ and $M_2$ to collaborate and work
+alternatingly, and thus, such library execution must be fair. Therefore, the
+accepting infinite executions of the library (if any) are fair and violate deadlock-freedom, and checking their existence is reduced to checking deadlock-freedom.
+}
+
+
+\forget{
+When compared to lock-freedom, deadlock-freedom additionally requires fair
+sche-duling.
+Perhaps surprisingly, the same library can be used to show the undecidability of
+deadlock-freedom.
+It is known that lock-freedom implies deadlock-freedom, and to show that deadlock-freedom of this library implies lock-freedom, we need to show that every lock-freedom violation must be fair. Each lock-freedom violation needs to simulate an infinite execution of the lossy channel machine. %, and to simulate lossy channel machine transitions,
+  %we require $M_1$ (resp., $M_2$) to read from a memory location $y$ (resp., $x$) and write to memory location $x$ (resp., $y$).
+  %To simulate one lossy channel machine transition,
+  To simulate the transitions of this lossy channel machine, %we bind $M_1$ and $M_2$ in process $P_1$ and $P_2$, respectively, and we require $M_1$ and $M_2$ %to execute alternately, and
+  %repeatedly exchange information of buffer content. %by reading from each other's buffer and then writing it to buffer.
+  we require $M_1$ (resp., $M_2$) to repeatedly read from a memory location $y$ (resp., $x$) and write to memory location $x$ (resp., $y$). In this procedure, the processes of $M_1$ and $M_2$ execute alternatingly, and such procedure must be fair.
+%The reason is that this library simulates the lossy channel machine transitions
+%only when $M_1$ and $M_2$ collaborate in a certain manner, and such
+%manner satisfies fair scheduling.
+%For any other cases, the library will finish simulating, and make every method
+%trivially return, and the executions in such cases satisfy both lock-freedom and
+%wait-freedom.
+}
+
+%The second and third challenge is solved by the construction of our library.
+%Our library simulates lossy channel machine only if when $M_1$ and $M_2$ collaborate in a certain manner.
+%For any other scheduling, the library will finish simulating, and change the concurrent system into a situation that only has wait-freedom executions: From that time point, every method will trivially return.
+%Any executions that violates the conditions of second or third challenges do not satisfy this manner, and they will not influence progress properties checking.
+%Or we can say, our construction is unaware of the second and third challenges.
+
+\forget{
+Wait-freedom imposes stronger requirements than lock-freedom. %and requires that each method returns in a finite number of steps.
+For the library above, in most cases, a library execution that satisfies
+lock-freedom implies that it also satisfies wait-freedom. The only exception are library executions that simulate an infinite execution of the lossy channel machine that always loops in the guess phase, and such executions satisfy lock-freedom but violate wait-freedom.
+To make executions in this case satisfy wait-freedom, we modify $M_1$ by making it
+return as long as it simulates one lossy channel machine transition.
+Then, when simulating a lossy channel machine execution, an
+execution of the new library satisfies wait-freedom, if and only if an
+execution of the previous library satisfies lock-freedom.
+Hence, we can prove the undecidability of wait-freedom and starvation-freedom following the argument used to prove lock-freedom and deadlock-freedom.
+}
+
+
+\forget{
+Wait-freedom requires that each method returns in a finite number of steps.
+In the library above, the library execution that simulates an
+  infinite execution of the lossy channel machine that always loops in
+  the guess phase satisfies lock-freedom but violates wait-freedom.
+  To make such an execution satisfy wait-freedom,
+%Method $M_1$ above does not return if the library execution simulates an infinite length execution of lossy channel machine that always loop in guess phase.
+%Such execution should still be wait-freedom.
+%To deal with this situation,
+  {we modify $M_1$ by making it
+%while method $M_1$ above does not return unless the simulation procedure of
+%lossy channel machine fails.
+%To deal with wait-freedom, such that $M_1$
+return as long as it simulates one lossy channel machine transition.
+}
+With this new library we can prove the undecidability of wait-freedom and
+starvation-freedom following the argument used to prove
+  lock-freedom and deadlock-freedom.\\
+}
+
+
+\vspace{5pt}
+\noindent \textbf{Decidability Proof.}
+We introduce a notion called \emph{blocking pair}, coupling a process
+control state and a memory valuation, and capturing a time point from which
+we can generate an infinite execution on the SC memory model, for
+which eventually one process runs in isolation and does not perform any
+return. We reduce checking obstruction-freedom into %finite number of
+the state reachability problem, a known decidable problem
+\cite{DBLP:conf/popl/AtigBBM10}, for configurations that ``contain a blocking
+pair'' and have an empty buffer for each process.
+There are two difficulties here:
+\begin{inparaitem}
+\item[] firstly, the TSO concurrent systems of \cite{DBLP:conf/popl/AtigBBM10} do
+  not use libraries; and
+\item[] secondly, the state reachability problem requires the buffer of each
+  process to be empty for the destination configuration, while such
+  configuration may not exist in a obstruction-freedom violation.
+\end{inparaitem}
+
+The first difficulty is addressed by making each process repeatedly call
+an arbitrary method with an arbitrary arguments for an arbitrarily number of
+times, while transforming each call and return action into internal actions.
+To solve the second difficulty, we show that each obstruction-freedom
+violation has a prefix reaching a configuration that ``contains a blocking
+pair''. By discarding specific actions of the prefix execution and forcing
+some flush actions to happen, we obtain another prefix execution reaching a
+configuration that both ``contains a blocking pair'' and has an empty buffer
+for each process.
+
+
+\forget{
+For this proof we introduce a notion called \emph{blocking pair}, coupling a process
+control state and a memory valuation, and capturing a time point from which
+we can generate an infinite execution on the SC memory model, for
+which eventually one process runs in isolation and does not perform any
+return. With this notion, we reduce checking obstruction-freedom into a
+reachability problem of configurations that ``contain a blocking pair''.
+%an execution such that this process, even when executing in isolation, can't ever return on SC.
+
+
+
+% Let us explain our decidability proof of obstruction-freedom. On SC memory
+% model, a control state $q$ and a memory valuation $d$ is called a blocking
+% pair, if some executions (of one process) from this control state and memory
+% valuation can never return.
+
+Atig \emph{et al.} \cite{DBLP:conf/popl/AtigBBM10} prove that the
+state reachability problem of TSO concurrent systems is decidable. They
+consider systems where several processes run concurrently on TSO, however they
+do no consider the case of processes accessing library methods. Our
+decidability result of obstruction-freedom is obtained by reducing checking
+blocking pairs into the state reachability problem of
+\cite{DBLP:conf/popl/AtigBBM10}. There are two difficulties here:
+\begin{inparaitem}
+\item[] firstly, the TSO concurrent systems of \cite{DBLP:conf/popl/AtigBBM10} do
+  not use libraries; and
+\item[] secondly, checking blocking pairs requires atomically reading the whole
+  memory valuation, while the commands can only atomically read one memory
+  location.
+\end{inparaitem}
+
+
+The first difficulty is addressed by making each process repeatedly
+call an arbitrary method with an arbitrary argument for arbitrarily many
+times, while transforming each call and return action into internal actions.
+To solve the second difficulty, a process can non-deterministically start to
+read the memory valuation atomically in two phases. In the first phase, it
+marks each memory location with special values. In the second phase, it
+ensures the value of each memory location has not been overwritten by other
+processes or memory model actions, and then checks the value of memory
+locations. When a process finishes this check procedure, the result is stored in
+a %new
+memory location %$result$
+and the whole system stops. Therefore, checking
+blocking pairs is reduced into checking if a specific configuration %with $result=1$
+is
+reachable.
+}
+
+%\begin{inparaenum}[(1)]
+
+\forget{
+We slightly extend the TSO semantics to capture the first
+  occurrence of a blocking pair. To that end, we need to be able to read %the control states of the processes,
+  the current memory valuation and the current store buffer atomically.
+Our approach for checking obstruction-freedom on TSO for a bounded number of
+processes is divided into two steps:
+\begin{inparaenum}[(1)]
+\item in the first step, {we reduce checking obstruction-freedom on the original TSO semantics into checking
+  if some configuration that ``contains a blocking pair'' is reachable in the extended TSO semantics.}
+  %, such that the control state of some process and the memory valuation %of this configuration obtained by updating the current memory valuation with this process's buffer content is a blocking pair.
+  %Note that %{\color {red}there are only a finite number of candidate blocking pairs, and the set of blocking pairs are computable by reducing into model checking problem of finite state LTS}.
+  %there are only a finite number of blocking pairs.
+  Since the number of blocking pairs is finite, we observe that there are
+    only a finite number of finite execution problems of this form.
+\item in the second step, we reduce the finite execution problem above into a control
+state reachability problem of a lossy channel machine, which is known decidable.
+}
+
+\forget{
+{A lossy channel machine \redt{$\textit{CM}_i$} is then constructed, which simulates the behavior
+of process $P_i$ in the extended TSO semantics.}
+\redt{$\textit{CM}_i$} contains only one channel to store the pending write actions according to
+the total store orders {in the extended TSO semantics.} %under the extended %original
+%concurrent system.
+%Importantly, call and return actions are considered as internal transitions.
+Then, the finite execution problem can be reduced to a control state
+reachability problem of the product of lossy channel %the
+machines \redt{$\textit{CM}_1^w,\ldots,\textit{CM}
+_n^w$}.
+Each \redt{$\textit{CM}_i^w$} is obtained from \redt{$\textit{CM}_i$} by replacing all of its transitions except
+for write and \textit{cas} with internal transitions.
+We require that each write in a channel contains a run-time snapshot of
+the memory, while always keeping bounded the amount of information that needs to
+be stored as in a perfect channel.
+}
+
+\forget{
+With these specialized lossy channels, missing some intermediate channel
+contents would not break the reachability between control states under perfect
+channels. The reason is that when an item is flushed, its whole snapshot is used to update the memory valuation of \redt{$\textit{CM}_i$}. The result of this flush action will not be influenced if several previous items are missing.
+}
+%\end{inparaenum}
+
+
+
+%The $k$-bounded wait-freedom {\color {red} TODO: add a reference} condition
+%requires wait-freedom and that each method returns within $k$ steps.
+%Let us explain our verification of bounded versions wait-freedom.
+%We investigate the decidability of $k$-bounded wait-freedom {\color {red} TODO: add a reference}, which extends wait-freedom by requiring each method terminates in $k$ steps of the calling process, irrelative with the scheduler.
+
+\forget{
+Given a bound %value
+$k$, we reduce checking bounded wait-freedom on TSO into the state reachability problem of the concurrent system of \cite{DBLP:conf/popl/AtigBBM10}.
+Since the concurrent system of \cite{DBLP:conf/popl/AtigBBM10} does not consider call and return actions, in the reduced concurrent system we consider call and return actions as internal %transitions.
+actions.
+To capture bounded wait-freedom violation, for each process we record if some method of this process has executed more than $k$ steps without return. Since the state reachability problem of the concurrent system of \cite{DBLP:conf/popl/AtigBBM10} is decidable, bounded wait-freedom is decidable.
+}
+
+\forget{
+Given a bound %value
+$k$, our verification of bounded wait-freedom is divided into two steps.
+We reduce checking bounded wait-freedom on TSO into checking whether there
+exists a finite execution, on which a method runs $k+1$ steps without return.
+We then reduce the latter problem into a control state reachability problem of a
+lossy channel machine, similarly to that of obstruction-freedom.\\
+}
+
+\forget{
+\noindent \textbf{Bound in Wait-Freedom.}
+Since wait-freedom is undecidable on TSO while bounded wait-freedom is decidable
+on TSO for each bound $k$, one direct conjecture is that for some wait-free
+library on TSO with a bounded number of processes, there
+is no bound on the numbers of steps of a method from its call to its return. We demonstrate this conjecture by providing an example
+library of a concurrent data structure, which is the library used in undecidability proof of wait-freedom on TSO.
+
+In the guess phase the lossy channel machine guesses a solution of CPCP by nondeterministically inserting elements into channel,
+and in the check phase the lossy channel machine repeatedly checks whether the current channel content is a solution to CPCP.
+Given a bound $k$, we can generate a specific CPCP that has no solution, and its
+lossy channel machine contains an execution of the following form: in the guess
+phase, the lossy channel machine guesses a long enough candidate solution. Then,
+in the check phase, the first round of check is passed by losing channel
+content, while the second round of check fails. Additionally, we require that at
+the end of the first round of check, there are more than $k$ elements in the channels.
+We can generate a library for this lossy channel machine, which is wait-free
+since this CPCP has no solution. Since TSO uses unbounded buffers, there is a
+library execution for the lossy channel machine above, and %the first $M_1$ of the check phase will run for more than $k$ steps.
+the invocation of $M_1$ that simulates the first lossy channel machine
+transition in the check phase will run for more than $k$ steps.
+Such library execution violates bounded wait-freedom.
+By contrast, we prove that each wait-free library on SC has a bound for bounded number of processes.
+}
+
+
+\forget{The reason is as follows:
+during the guess phase the lossy channel machine guesses a solution of CPCP and inserts it into channel,
+and in the check phase the lossy channel machine repeatedly checks if the channel content contains a solution to CPCP.
+Given a library for CPCP that has no solution, and given a bound value $k$, we could guess a long enough candidate solution.
+Then, in the check phase we could make the check pass for one round by losing
+some ``channel content'', and fail in the next round, while in the end of the first round, there should be more than $k$ elements in channel.
+The library for such CPCP is wait-free, and the first $M_1$ of the check phase could run for more than $k$ steps.
+We should note that we assume the TSO buffer size to be unbounded.
+By contrast, we prove that each wait-free library on SC has a bound for bounded number of processes. \\
+}
+
+
+%Assume that some people is given a wait-freedom library and want to obtain the detailed bound of it.
+%With the decidability result of $k$-bounded wait-freedom, one seems-work approach of computing bound for wait-freedom libraries is that, we could tests $1,\ldots$, until some test returns true.
+%However, we prove that this is unrealistic on TSO, and there is no computable function that returns the bound of a library and process number of concurrent system.
+
+
+%We starts from a known undecidable problem, post correspondence problem (PCP) \cite{Post1946A}.
+%Given a Turing machine and its input, the halting problem can be reduced into a specific PCP problem, which uses intervals embraced by $\sharp$ to represent one snapshot of Turing machine computing.
+%Similar to that of CPCP, we reduce this specific PCP into checking whether a specific lossy channel machine has an infinite execution that visits a specific state infinite often, and generate a specific library for this specific lossy channel machine.
+%Here are the differences: in the new library,
+
+
+\forget{
+Two important properties of concurrent data structures are correctness and liveness.
+The correctness property concern if the behaviors of a concurrent object conform to a better understandable sequential specification in some manner.
+$\textit{Linearizability}$ \cite{Herlihy:1990} is accepted as a \emph{de facto} correctness condition %for a concurrent library with respect to its sequential specification
+on the sequential consistency (SC) memory model \cite{Lamport:1979}.
+%Intuitively, linearizability asks whether every individual operation appears to take place instantaneously at some point between its invocation and its return.
+The liveness property concern the condition under which method calls are guaranteed to successfully complete in an execution.
+Wait-freedom, lock-freedom and obstruction-freedom \cite{Herilihy:2008,DBLP:Liang2013concur}are three typical liveness properties.
+For example, lock-freedom guarantees that in a infinite execution, there is always a process that will return in finite steps.
+
+Programmers usually assume that all accesses to the shared memory are performed instantaneously and atomically, which is guaranteed only by the SC memory model.
+However, modern multiprocessors (e.g., x86 \cite{Owens:2009}, POWER \cite{Sarkar:2011}) and programming languages (e.g., C/C++ \cite{Batty:2011}, Java \cite{Manson:2005}) do not comply with the SC memory model.
+As a matter of fact, they provide {\em relaxed memory models}, which allow subtle behaviors due to hardware or compiler optimization.
+For instance, in a multiprocessor system implementing the total store order (TSO) memory model \cite{Owens:2009}, each processor is equipped with an FIFO store buffer.
+Any write operation performed by a processor is put into its local store buffer first and can then be flushed into the main memory at any time.
+%A read operation first attempts to check the buffer for item of the same memory location, and reads the main memory if failed.
+
+Linearizability has been extensively studied for decidability \cite{Alur:1996,Bouajjani:2013,DBLP:Jad2015} and verification approach \cite{DBLP:Liang2010POPL,DBLP:Liang2013PLDI} on SC memory model, as well as variants of linearizability on relaxed memory model \cite{Sebastian:2012,Alexey:2012,Mark:2013} and their verifications \cite{Wang:2015,Wang:2015a,Derrick2014}. It is known that linearizability is decidable on SC for bounded number of processes \cite{Alur:1996}, but undecidable on TSO for bounded number of processes \cite{Wang:2015}.
+The liveness are decidable on SC for bounded number of processes, however, the decidability of liveness on relaxed memory model remains open.
+}
+
+
+
+
+
+% \smallskip
+\vspace{5pt}
+\noindent {\bf Related work.}
+%{\color {red}\noindent Lossy counter machine \cite{DBLP:journals/tcs/Mayr03} and lossy channel machine \cite{DBLP:journals/iandc/AbdullaJ96a} are used to prove decidability and undecidability result for concurrent systems with unreliable channels or store buffers \cite{DBLP:conf/popl/AtigBBM10,DBLP:conf/atva/WangLW15,DBLP:conf/sofsem/WangLW16}.}
+\noindent There are several works on the decidability of verification on TSO. Atig \emph{et al.} \cite{DBLP:conf/popl/AtigBBM10} prove that the state reachability problem is decidable on TSO while the repeated state reachability problem is undecidable on TSO. Bouajjani \emph{et al.} \cite{DBLP:conf/esop/BouajjaniDM13} prove that robustness is decidable on TSO.
+%Wang \emph{et al.}
+Our previous work \cite{DBLP:conf/atva/WangLW15} proves that TSO-to-TSO linearizability \cite{DBLP:conf/esop/BurckhardtGMY12}, a correctness condition of concurrent libraries on TSO, is undecidable on TSO.
+%Wang \emph{et al.}
+Our previous work \cite{DBLP:conf/sofsem/WangLW16} proves that a bounded version of TSO-to-SC linearizability
+\cite{DBLP:conf/wdag/GotsmanMY12} is decidable on TSO.
+None of these works address the decidability of concurrent library liveness on TSO.
+%\label{sec:related work}
+
+Our approach for simulating executions of lossy channel machines with libraries is partly inspired by %Wang \emph{et al.} \cite{DBLP:conf/atva/WangLW15} and
+Atig \emph{et al.} \cite{DBLP:conf/popl/AtigBBM10}. %and %our previous work
+%Wang \emph{et al.} \cite{DBLP:conf/atva/WangLW15}.
+%However, Arig \emph{et al.} use such idea to reduce the reachability problem of lossy channel machine to control state reachability problem on TSO memory model.
+%Their work consider only finite executions, and their TSO concurrent programs have no call or return actions.
+%Our previous work simulates an execution of lossy channel machine with a history of call and return actions on TSO memory model.
+%Our previous work consider only finite executions, and it is mainly used to output transition labels, instead of concerning liveness.
+However, Atig \emph{et al.} do not consider libraries, and their concurrent
+programs do not have call or return actions. Our library needs to ensure that,
+in each infinite library execution simulating an infinite execution of the lossy
+channel machine, methods are ``fixed to process'', in other words, the same
+method must run on the same process. The TSO concurrent systems of
+\cite{DBLP:conf/popl/AtigBBM10} %\redt{state the task}
+do not need to ``fix methods to processes'' since they record the control states
+and transitions of each process.
+%for each process and thus do not need to ``fix methods to processes''. %, while in our paper we need to fix method to process when simulating an accepting infinite execution of the lossy channel machine.
+Both Atig \emph{et al.} and our work store the lossy channel content in
+the store buffer. However, when simulating one lossy channel machine
+transition, methods of Atig \emph{et al.} only require to do one read or write
+action, while methods of our paper require to read the whole channel content.
+It appears that we can not ``fix methods to processes'' with methods in the
+style of \cite{DBLP:conf/popl/AtigBBM10}, unless we use specific command to
+directly obtain the process identifier. %The reason is that methods in the style of \cite{DBLP:conf/popl/AtigBBM10} permit items of one memory location to be stored in store buffers of multiple processes.
+
+Our previous work \cite{DBLP:conf/atva/WangLW15}
+% Wang \emph{et al.}
+considers safety properties of libraries. %, and %they
+Both \cite{DBLP:conf/atva/WangLW15} and this paper %uses
+use the collaboration of two methods to simulate one lossy channel machine transition. %Each method read updates of one memory location from the other process's buffer, and write them into its own buffer as items of another memory location.
+% Method $1$ reads updates from $x$ and writes to $y$, while method $2$ reads updates from $y$ and writes to $x$.
+Our idea for simulating lossy channel machine transitions with libraries extends that of \cite{DBLP:conf/atva/WangLW15}, since each library constructed using the latter contains executions violating liveness, which makes such libraries not suitable for their reduction to liveness.
+\forget{
+The methods in \cite{DBLP:conf/atva/WangLW15}
+% This approach
+induce infinite loops when methods do not observe some key update, and this may occur in simulating each lossy channel machine transition. Although this does not influence safety, when simulating the lossy channel machine of \cite{DBLP:journals/iandc/AbdullaJ96a}, this introduces ``false negatives'' to four liveness properties. In our paper, %we require each method to exhaust the updates of one memory location and do not directly write them back as items of the other memory location, but via a longer procedure, which contains four times of reading updates and writing into buffer, instead of two times in \cite{DBLP:conf/atva/WangLW15}.
+we modify the methods of \cite{DBLP:conf/atva/WangLW15} by exhausting the
+buffered items in each method. This eliminates the ``false negatives''. %We also need to prove that in each infinite library execution simulating an accepting infinite execution of the lossy channel machine, each method is fixed to some process.
+}
+The library of %Wang \emph{et al.}
+\cite{DBLP:conf/atva/WangLW15} contains a method that never returns and thus, do not need to consider ``fixing methods to processes''.
+
+
+
+\forget{
+Wang \emph{et al.} simulate lossy channel machines with libraries in a slightly different manner, and they consider safety properties and not liveness properties.
+Atig \emph{et al.} do not consider libraries, and their concurrent
+programs do not have call or return actions. %Atig \emph{et al.} uses
+They use a TSO
+concurrent program with two processes to simulate a lossy
+channel machine with one channel, while we use libraries running on five processes to simulate
+a lossy channel machine with two channels. Interestingly, it appears that
+one can not prove undecidability of liveness on TSO using lossy channel machine with one channel. We can transform a lossy channel machine $\textit{CM}$ with
+multiple channels into a lossy channel machine $\textit{CM}'$ with one channel, %by using delimiters,
+and use several transitions of $\textit{CM}'$ to simulate one transition of
+$\textit{CM}$. Such $\textit{CM}$ and $\textit{CM}'$ are even trace equivalent. However, it seems that $\textit{CM}$ and $\textit{CM}'$ can be distinguished by liveness properties.
+$\textit{CM}'$ introduces additional infinite executions, say $t$, which repeatedly try to simulate one transition of $\textit{CM}$ but never succeed. When $\textit{CM}$ is the lossy channel machine with two channels in \cite{DBLP:journals/iandc/AbdullaJ96a}, %such additional infinite execution $t$ of $\textit{CM}'$
+$t$ introduces ``false negatives'' to liveness checking, since $t$ does not
+simulate an accepting infinite execution of $\textit{CM}$, and the library
+executions that simulate $t$ violate four of the liveness properties we consider. %lock-freedom, wait-freedom, deadlock-freedom and starvation-freedom.
+% $\textit{CM}'$ introduces ``false negatives'' $t$, which are infinite lossy channel machine executions that repeatedly try to simulate one transition of $\textit{CM}$ but never success, and the library executions that simulate $t$ violate four liveness properties.
+For this reason, %This is the reason why
+we do not transform the lossy channel machine with two channels in \cite{DBLP:journals/iandc/AbdullaJ96a} into lossy channel machine with one channel in our undecidability proof.
+%
+%{\color{orange} GP: I think this sentence is hard to read for someone that hasn't read section 4.}
+%If all delimiters are lost during transition,
+%In some case, $\textit{CM'}$ falls into infinite loop for simulating one transition of $\textit{CM}$. %Such infinite executions do not influence trace equivalence. However,
+%The library executions that simulate such lossy channel machine executions violate all four liveness properties.
+%We discuss in Section \ref{sec:undecidability of lock-freedom and wait-freedom} that why we do not transform such lossy channel machine with two channels into a single channel lossy channel machine.
+%Wang \emph{et al.} simulate lossy channel machines with libraries in a slightly different manner, and they consider safety properties and not liveness properties.
+%Our previous work simulates lossy channel machine executions with call and return actions on TSO, but consider only finite length executions and do not consider liveness properties.
+}
+
+
+%Wang \emph{et al.}
+Our previous work \cite{DBLP:conf/sofsem/WangLW16} verifies bounded TSO-to-SC linearizability by reducing it into another known decidable reachability problem, the control state reachability problem of lossy channel machines.
+That work focuses on dealing with call and return actions across multiple processes, while our verification approach for obstruction-freedom %in this paper
+considers call and return action as internal actions.
+
+
+\forget{
+Our approach of reducing checking %properties (
+obstruction-freedom %and bounded wait-freedom)
+into control state reachability of a lossy channel
+machine is inspired by Atig \emph{et al.} \cite{DBLP:conf/popl/AtigBBM10}, which
+reduces the state reachability of %TSO programs
+TSO concurrent system into control state reachability of
+a lossy channel machine.
+However, Atig \emph{et al.} do not mention libraries, and their lossy channel
+machine %transitions
+cannot directly deal with blocking pairs, since capturing blocking pairs requires reading the memory valuation and buffers atomically. Our previous work
+\cite{DBLP:conf/sofsem/WangLW16} reduces bounded TSO-to-SC linearizability
+\cite{DBLP:conf/wdag/GotsmanMY12} into control state reachability of a lossy
+channel machine.
+Our previous work \cite{DBLP:conf/sofsem/WangLW16} focuses on dealing with call and return actions across multiple
+processes, while in this paper the call and return actions are considered as internal %transitions.
+actions.}
+
+%Brit \emph{et al.} \cite{DBLP:journals/jucs/BritM96} shows that on SC a library for an unbounded number of processes can be wait-free but not bounded wait-free. We prove that on SC any wait-free library for bounded number of processes must have a bound.
+
+\forget{
+{\color{orange} GP: I would leave the acknowledgements for the final version,
+  and not the submission.}
+{\color {red}\noindent \textbf{Acknowledgements:} We are grateful to an anonymous reviewer for his insightful suggestion, which greatly helped to simplify the proof of obstruction-freedom checking.}
+}
+
+%For reducing PCP into problem of lossy channels: Our idea of reducing PCP to an infinite execution problem of lossy channel machine is inspired by Abdulla \emph{et al.} \cite{DBLP:journals/iandc/AbdullaJ96a}, which reduces the cyclic post correspondence problem (CPCP) \cite{DBLP:journals/acta/Ruohonen83} into checking if the lossy channel machine has an execution that visits a specific state infinite times (the recurrent state problem).
+%Our approach generate uses PCP and generates a lossy channel machine that is more easier to understand.
+
+%%% Local Variables:
+%%% mode: latex
+%%% TeX-master: "FSTTCS2021.tex"
+%%% End: 

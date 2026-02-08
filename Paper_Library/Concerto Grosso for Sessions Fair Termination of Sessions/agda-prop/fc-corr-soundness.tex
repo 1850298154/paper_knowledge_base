@@ -1,0 +1,77 @@
+\beginbass
+%
+\GISs provide no canonical way for proving the soundness of the generalized 
+interpretation of an inference system, so we have to handcraft the proof. 
+We start by proving that the inductive interpretation of the inference system 
+with the corules implies the existence of a reduction leading to a successful configuration.
+
+\begin{lstlisting}
+FCompI$\rightarrow$MS : $\forall${Se} $\rightarrow$ FCompI Se $\rightarrow$ MaySucceed Se
+FCompI$\rightarrow$MS (fold (inj$_1$ success , (_ , succ) , refl , _)) = 
+  _ , $\epsilon$ , succ
+FCompI$\rightarrow$MS (fold (inj$_1$ out-inp , (_ , _ , fx) , refl , pr)) =
+  let _ , reds , succ = FCompI$\rightarrow$MS (pr (_ , fx)) in
+  _ , sync (out fx) inp $\triangleleft$ reds , succ
+FCompI$\rightarrow$MS (fold (inj$_1$ inp-out , (_ , _ , gx) , refl , pr)) =
+  let _ , reds , succ = FCompI$\rightarrow$MS (pr (_ , gx)) in
+  _ , sync inp (out gx) $\triangleleft$ reds , succ
+FCompI$\rightarrow$MS (fold (inj$_2$ out-inp , (_ , _ , fx) , refl , pr)) =
+  let _ , reds , succ = FCompI$\rightarrow$MS (pr Data.Fin.zero) in
+  _ , sync (out fx) inp $\triangleleft$ reds , succ
+FCompI$\rightarrow$MS (fold (inj$_2$ inp-out , (_ , _ , gx) , refl , pr)) =
+  let _ , reds , succ = FCompI$\rightarrow$MS (pr Data.Fin.zero) in
+  _ , sync inp (out gx) $\triangleleft$ reds , succ 
+\end{lstlisting}
+
+where \lstinline{$\epsilon$} and \lstinline{red $\triangleleft$ reds} 
+are the constructors of \lstinline{Star}. While the former represents 
+the base case (when there are no reductions), the second
+represents a chain of reductions starting with the single reduction 
+\lstinline{red} followed by the reductions \lstinline{reds}.
+There are two things worth noting here. First, in the union of the two inference 
+systems each rule is identified by a name of the form \lstinline{inj$_1$ n} 
+or \lstinline{inj$_2$ n} where \lstinline{n} is either the name of a rule 
+or of a corule, respectively.
+%
+Also, we use the function \lstinline{pr} to access the premises of a 
+(co)rule by their position. For the plain rules \lstinline{out-inp} 
+and \lstinline{inp-out} the position is the witness \lstinline{fx}
+or \lstinline{gx} that the value exchanged in the synchronization belongs to the 
+domain of the continuation function of the sender. For the corules 
+\lstinline{out-inp} and \lstinline{inp-out}, 
+we use the position \lstinline{Data.Fin.Zero} 
+to access the first and only premise in their list of premises.
+
+The next auxiliary result establishes a ``subject reduction'' property for 
+fair compliance: if $\compliance{R}{S}$ and $\session{R}{S} \wred \session{R'}{S'}$, 
+then $\compliance{R'}{S'}$. Note that this property is trivial to prove when we 
+consider the specification of fair compliance (see \Cref{def:fcomp}), 
+but here we are referring to the predicate defined by the \GIS. 
+The proof consists of a simple induction on the reduction $\session{R}{S} \wred \session{R'}{S'}$.
+
+\begin{lstlisting}
+sr : $\forall${Se Se'} $\rightarrow$ FCompG Se $\rightarrow$ Reductions Se Se' $\rightarrow$ FCompG Se'
+sr fc $\epsilon$ = fc
+sr fc (_ $\triangleleft$ _) with fc .CoInd$\llbracket$_$\rrbracket$.unfold
+sr _ (sync (out fx) inp $\triangleleft$ _) | 
+  success , ((_ , success (out e) _) , _) , refl , _ = 
+  $\bot$-elim (e _ fx)
+sr _ (sync inp (out gx) $\triangleleft$ reds) | inp-out , _ , refl , pr = 
+  sr (pr (_ , gx)) reds
+sr _ (sync (out fx) inp $\triangleleft$ reds) | out-inp , _ , refl , pr = 
+  sr (pr (_ , fx)) reds
+\end{lstlisting}
+
+Note that we have an absurd case, in which a successful configuration apparently reduces,
+which we rule out using false elimination (\lstinline{$\bot$-elim}).
+%
+The soundness proof is a simple combination of the above auxiliary results. We
+use the library function \lstinline{fcoind-to-ind} (see \Cref{fig:fcoind-to-ind})
+to extract an inductive derivation of \lstinline{FCompI Se} from a
+derivation of \lstinline{FCompG Se} in the \GIS for fair
+compliance.
+
+\begin{lstlisting}
+sound : $\forall${Se} $\rightarrow$ FCompG Se $\rightarrow$ FCompS Se
+sound fc reds = FCompI$\rightarrow$MS (fcoind-to-ind (sr fc reds))
+\end{lstlisting}

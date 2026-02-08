@@ -1,0 +1,135 @@
+%!TEX root=./main.tex
+
+\section{Introduction}
+\seclabel{intro}
+
+
+%\begin{itemize}
+%	\item Concurrency and its importance + bugs
+%	\item Deadlocks - define briefly, lead to resource wastage, violation of fairness. In more practical settings, they lead to poor performance of end user apps (like mobile apps hanging etc). x\% of bugs were reported to be deadlock bugs [Shan Lu's paper] \cite{Lu08}. Maybe introduced when resolving other kinds of bugs like races/atomicity violations
+%	\item In this paper: dynamic deadlock detector - what is dynamic deadlock detection
+%	\item In previous works - either goodlock style approaches (unsound), or sound (predictive) approaches based on SMT reasoning or  graph based exhaustive backtracking
+%	\item In this work we make two contributions - we first outline sources of hardness in dynamic deadlock prediction and then propose an efficient yet precise dynamic deadlock prediction algorithm, and show that it works in practice.
+%	\item Contributions: (a) OV and W[1] hardness of checking deadlock patterns, (b) W[1] hardness of 2 thread deadlock prediction \ucomment{We should add this}, (c) notion of syncpreserving deadlock, (d) algorithms - both offline and online + complexity, (e) evaluation
+%\end{itemize}
+
+The verification of concurrent programs is a major challenge due to the non-deterministic behavior 
+intrinsic to them.
+%Unanticipated scheduling patterns lead to concurrency bugs, which are easy to introduce during development but very hard to reproduce during in-house testing, often referred to as \emph{heisenbugs}~\cite{Musuvathi2008}.
+Certain scheduling patterns may be unanticipated by the programmers,
+which may then lead to introducing concurrency bugs.
+Such bugs are easy to introduce during development but can be very hard to
+reproduce during in-house testing, and have been notoriously called \emph{heisenbugs}~\cite{Musuvathi2008}.
+Among the most notorious concurrency bugs are deadlocks, occurring when the system blocks its execution because each thread is waiting for another thread to finish a task in a circular fashion.
+Deadlocks account for a large fraction of concurrency bugs in the wild across various programming languages~\cite{Lu08,Tu2019}
+while they are often introduced accidentally when fixing other concurrency bugs~\cite{Yin2011}.
+
+Deadlock-detection techniques can be broadly classified into static and dynamic techniques.
+As usual, static techniques analyze source code and have the potential to prove the absence of %deadlocks~\cite{Boyapati2002,Williams2005a,Engler2003,Naik2009,Ng2016,Liu2021}.
+deadlocks~\cite{Naik2009,Ng2016,Liu2021}.
+However, as static analyses face simultaneously two dimensions of non-determinism, namely in inputs and scheduling, they  lead to poor performance in terms of scalability and false positives,
+and are less suitable when the task at hand is to help software developers proactively find bugs.
+Dynamic analyses, on the other hand, have the more modest goal of discovering deadlocks by analyzing program executions, allowing for better scalability and few (or no) false positives.
+Although dynamic analyses cannot prove the absence of bugs, 
+they offer \emph{statistical} and \emph{coverage} guarantees.
+These advantages have rendered dynamic techniques a standard practice in 
+principled testing for various bugs,
+such as data races, atomicity violations, deadlocks, and 
+others~\cite{Flanagan09,threadsanitizer,Bensalem2005,Flanagan2008,Mathur2020,Biswas14,Savage97,Pozniansky03}.
+A recent trend in this direction advocates for 
+\emph{predictive analysis}~\cite{Smaragdakis12,Huang14,Kini2017,Flanagan2008,Huang2018,Kalhauge2018,Genc19},
+where the goal is to enhance coverage by additionally reasoning about alternative
+%reorderings of the observed execution trace that \emph{could} have taken place manifesting the bug.
+reorderings of the observed execution trace that \emph{could} have taken place and also manifest the bug.
+% In order to increase coverage, such techniques are often \emph{predictive}, meaning that they try to infer the presence of a bug  even when observing bug-free executions; this is achieved by reasoning about alternative scheduling patterns (i.e., reorderings of the observed trace) 
+
+
+%\Andreas{Do we need to refer to certain tools by name in this paragraph, e.g. deadlock fuzzer?}
+Due to the difficulty of the problem, many dynamic deadlock analyses focus on detecting \emph{deadlock patterns}, broadly defined as cyclic lock-acquisition patterns in the observed execution trace.
+One of the earliest works in this direction is the Goodlock algorithm~\cite{Havelund2000}.
+As deadlock patterns are necessary but insufficient conditions for the presence of deadlocks, subsequent work has focused on refining this notion in order to reduce false-positives~\cite{Bensalem2005,Agarwal2005}.
+Further techniques reduce the size of the lock graph to improve scalability~\cite{Cai2012,Cai2020}.
+To further address the unsoundness (false positives) problem, various works propose controlled-scheduling techniques that attempt to realize deadlock warnings via program re-execution~\cite{Bensalem2006,Joshi2009,Samak2014,Samak2014b,Sorrentino2015}
+and exhaustive exploration of all reorderings~\cite{Joshi2010,Koushik05}.
+
+Fully sound deadlock prediction has traditionally relied
+on explicitly~\cite{Joshi2010,Koushik05} or symbolically (SMT-based)~\cite{Eslamimehr2014,Kalhauge2018} producing all sound witness reorderings.
+The heavyweight nature of such techniques
+limits their applicability to executions of realistic size, 
+which is often in the order of millions of events.
+The first steps for sound, polynomial-time deadlock prediction were made recently with 
+\seqc~\cite{Cai2021}, an extension of M2~\cite{Pavlogiannis2020} that targets data races.
+%\seqc was shown to have the same predictive power as Dirk, but work significantly faster, and even managing to handle input sizes that were far out of reach for Dirk.
+
+This line of work highlights the need for a most-efficient sound deadlock predictor, approaching the golden standard of \emph{linear time}.
+Moreover, dynamic analyses are often employed as runtime monitors, and must thus operate \emph{online}, reporting bugs as soon as they occur. Unfortunately, most existing online algorithms only report \emph{deadlock patterns}, 
+thus suffering false positives.
+%\hcomment{I don't understand this discussion. Here, if we are talking about predictive techniques then there is no such online algorithm. If we are talking about deadlock detectors in general then deadlockfuzzer is online and reports real deadlocks.}
+The lack of such a deadlock predictor is even more pronounced when contrasted to 
+the problem of dynamic race prediction, which has 
+seen a recent surge of sound, online, \emph{linear-time} predictors~(e.g.,~\cite{Kini2017,Roemer20}), and highlights the bigger challenges that deadlocks entail.
+We address these challenges in this work, 
+by presenting the first high-precision, sound dynamic deadlock-prediction algorithm 
+that works online and in linear time.
+
+% The first ingredient towards our algorithm is the 
+% observation that the core technical challenge behind
+% predicting deadlocks is similar to the one behind predicting data races (also observed in prior works such as~\cite{Kalhauge2018,Cai2021}) --- in both these contexts,
+% one attempts to identify whether some well-defined subset of events is \emph{concurrent}, 
+% i.e., can be simultaneously executed by the underlying program. 
+% Thus, algorithmic advances in predicting data races efficiently
+% have the potential of speeding up the task of predicting deadlocks.
+% Towards this, we define the class of \emph{synchronization-preserving deadlocks},
+% inspired recent advances in data race prediction.
+% %inspired from the recent 
+% %notion of \emph{synchronization-preservation}~\cite{Mathur2021} 
+% %in the context of data races.
+% We illustrate synchronization-preserving deadlocks using an example in~\cref{subsec:spd_intro}.
+% % and provide the formal definition in~\secref{syncp}.
+
+The task of checking if a potential deadlock is a real predictable
+deadlock, in general, involves searching for the reordering of the original execution 
+that witnesses the deadlock.
+The first ingredient towards our technique is the notion of 
+\emph{synchronization-preserving reorderings}~\cite{Mathur2021} that help systematize this search space.
+% executions that order two critical sections on the same lock
+% in the same order as they appear in the original observed execution.
+\emph{Synchronization-preserving deadlocks} are then those 
+predictable deadlocks that can be witnessed in some synchronization-preserving reordering.
+We illustrate synchronization-preserving deadlocks using an example in~\cref{subsec:spd_intro}.
+
+This notion of synchronization-preservation, by itself, is not sufficient
+when it comes to deadlock detection as the prerequisite step towards
+predicting deadlocks also involves identifying  \emph{potential deadlock patterns}.
+Unlike data races, where \emph{potential races}
+can be identified in polynomial-time, the identification of deadlock patterns
+is in general, intractable; we prove this in~\secref{lower-bounds}.
+As a result, an approach that works by explicitly enumerating
+cycles in a \emph{lock graph} and then checking if any of these cycles is realizable 
+to a deadlock is likely to be not scalable.
+To tackle this, we propose the novel notion of \emph{abstract deadlock patterns}
+which, informally, represent clusters of deadlock patterns of the same signature. 
+%\hunkar{
+Intuitively, a set of deadlock patterns have the same signature 
+if the threads and locks that participate in the patterns are the same.
+%}
+%and check if there is an abstract deadlock pattern that is realizable as a sync-preserving deadlock.
+Our next \emph{key observation} is that a single abstract deadlock pattern
+can be checked for sync-preserving deadlocks in \emph{linear total time} in the length of the execution, 
+\emph{regardless} of how many concrete deadlock patterns it represents.
+Our first deadlock prediction algorithm \SyncPDOffline builds upon this --- 
+it enumerates all abstract deadlock patterns
+in a first phase and then checks their realizability in a second phase,
+while running in linear time per abstract deadlock pattern.
+Since the number of abstract deadlock patterns
+is typically \emph{far smaller} than the number of (concrete)
+deadlock patterns (see \cref{tab:expr-results} in \secref{experiments}), this approach achieves high scalability.
+Our second algorithm \SyncPDOnline works in a single streaming pass --- it computes abstract deadlock patterns
+that involve only two threads and checks their realizability \emph{on-the-fly} simultaneously in overall linear time in the length of the execution.
+% \SyncPDOffline, on the other hand, explicitly enumerates all abstract deadlock patterns
+% in a first phase and then checks their realizability in a second phase,
+% while running in linear time per abstract deadlock pattern.
+
+\input{sync_preserving_deadlocks_idea}
+
+\input{contributions}

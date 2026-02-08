@@ -1,0 +1,781 @@
+
+\section{Optimal path planning algorithm for a single UAV} \label{sec:single-drone}
+% UAV decisions: start to service a demand, leave a location, charge
+
+In this section, we first design and analyze the optimal path planning algorithm of a single UAV for servicing the dynamically arriving user demands across different spatial locations, which will be shown extendable to the multi-UAV case by taking the cooperation advantage among multiple UAVs into account in later sections. 
+Nevertheless, the dynamic optimization problem for the  single UAV is still challenging due to the curse of dimensionality or huge solution space for spatial routing decision-making over time.
+%multiple UAVs in Section~\ref{sec:multiple-drone}.
+To tackle this challenge, we first analyze the fundamental properties of the UAV routing under optimal path planning, and then identify the critical times at which a routing decision is really necessary. This will substantially reduce the solution space of routing decisions, since now it suffices to make routing actions at a reduced set of time points instead of the whole continuous-time domain. Then, only at each critical time stamp, we need to characterize the \emph{decision state} that determines the optimal routing action.
+Finally, we propose a dimensionality-reduced dynamic programming approach to enumerate all such possible decision states and efficiently compute the optimal path planning.
+
+
+%The optimal path planning contains a series of routing decisions at particular time stamps and it can be regarded as a Markov decision process.
+%Therefore, for each routing decision at some time stamp, we needs to characterize the {decision state} that completely determines the optimal routing action.
+%We propose an efficient representation for the state of the problem, and based on that we propose a dynamic programming approach to find the optimal path planning for a single UAV.
+%
+In the following, we first characterize the UAV movement in an optimal path planning by the following two lemmas.
+%all the demands that it has started to service
+\begin{lemma}\label{lmm:prnc-1}
+At the optimum, once the UAV finishes servicing the on-going demands, it should either immediately travel to another location or
+continue hovering at the current location until servicing a new demand  here.
+\end{lemma}
+\begin{proof}
+%Lemma~\ref{lmm:prnc-1} can be proved as follows. 
+We can prove this by contradiction. If the UAV continues staying at the current location s for a positive time without servicing any demand there, it must be waiting for some new demand to service. Suppose not, then the UAV can always travel to next target location earlier, hence servicing more demands and improving the objective of problem (\ref{eq:obj}).
+%it is better to immediately send the UAV to another location for serving positive demands there. 
+\end{proof}
+%\begin{proof}
+%In the opposite case, the UAV will stay at the current location for some period of time before leaving the location, and during this time period  it does not service any demand at all.
+%Therefore, it is better for the UAV to leave the location earlier and avoid such meaningless waiting time.
+%\end{proof}
+\begin{lemma}\label{lmm:prnc-2}
+If the UAV just arrives at a new location $s'$ (from location $s$) to just find no demand there, it is optimal for the UAV to keep waiting at location $s'$ until a new demand is released in the future.
+%If the UAV arrives at a new user location $s'$ from location $s$ to just find no demand there, it is optimal for the UAV to wait at location $s'$ until a new demand is released to service.
+\end{lemma}
+\begin{proof}
+Consider the other case that the UAV plans to leave location $s'$ to some other location $s''$, without meeting or servicing any demand at location $s'$.
+Then, it is better for the UAV to travel directly from location $s$ to $s''$, which saves travel time according to the triangle inequality in Eq.~\eqref{eq:triangle}.
+\end{proof}
+
+Using the above two lemmas, we conclude that at optimum the UAV decides to leave (or not leave) the current location only at the time point when it just finishes servicing a demand there.
+When the UAV decides to leave the current location at time point $t$, we do not need to make any routing decision during time window $(t-q, t]$, as it takes time $q$ to finish servicing the current demand. 
+Therefore, we can equivalently regard this routing decision of leaving or not to be made at time point $t-q$.
+%at time $t$
+%it cannot accept new demand to service during time $(t-q,t]$,  otherwise the UAV cannot finish this new demand at time $t$ due to the service time $q$.
+%That is to say, the UAV cannot do anything other than servicing the last demand during time $(t-q,t]$.
+%Therefore, in our algorithm we regard this routing decision of leaving at time $t$ is made at time $t-q$.
+
+%In the following, we restrict our proposed algorithm to make UAV routing decisions only at the times when the UAV start to service a demand.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+%A state diagram for UAV flying control is shown in Fig.~\ref{fig:uav-state}.
+
+\iffalse
+\subsection{UAV Movement Characterization.}\label{subsec:uav-action}
+%\myparagraph{UAV Movement Characterization.}
+
+
+\begin{figure}[!t]%[htbp]
+\centering
+%\captionsetup{justification=centering}
+\includegraphics[width = 0.95 \columnwidth]{images/UAV-state-pdf.pdf}
+\caption[12pt]{An illustrative of UAV states where the arrows indicates the events that trigger movement state change.}
+\label{fig:uav-state}
+\end{figure}
+
+In order to service user demands at different locations, the UAV needs to decide the time to leave the current location and the next user location to service.
+
+We characterize the movement of the UAV by three movement states, \textit{Flying},  \textit{Hovering} and  \textit{Charging}.
+In other words, at any time the UAV is either (i) on the way to some target location (\textit{Flying}); (ii) hovering at the current location (\textit{Hovering}); (iii) on the ground for battery charging (\textit{Charging}).
+%
+As illustrated in Fig.~\ref{fig:uav-state},  we model the change in UAV movement state as an action, and the goal of UAV path planning is to generate a series of actions to routing the UAV.
+In the following, we formally define the action that leads to each kind of UAV state.
+
+\begin{definition}\label{def:decision}
+When the UAV is at location $s \in S \cup C $ at time point $t$, it can perform the following actions.
+\begin{itemize}[label={\large\textbullet}]
+\item $Fly(s,t,s',l)$:
+%At time $t$,
+the UAV leaves the current location $s$ and aims to travel to another location $s' \in (S \cup C) \setminus\se{s}$ with flying mode $l \in \se{1,2,..,L}$.
+\item $Hover(s,t,t')$:
+%At time $t$,
+the UAV hovers at the current location $s \in S$ until time $t'$.
+\item $Charge(s,t,t')$:
+%At time $t$,
+the UAV starts to charge battery at the current location $s \in C$ and return to the air at time point $t'$.
+\end{itemize}
+\end{definition}
+
+All other alternative decisions for UAV can be decomposed to the above actions. For example, when the UAV decides to charge the battery, it first travels to a charging station (\emph{$Fly$}) and then starts charging (\emph{$Charge$}).
+
+
+We characterize the UAV movement in an optimal path planning by the following two lemmas.
+\begin{lemma}\label{lmm:prnc-1}
+At the optimum, when the UAV just finishes all the demands that it has started to service, it should either immediately travel to another location or
+continue hovering at the current location until a new user demand is released here.
+\end{lemma}
+\begin{proof}
+In the opposite situation, the UAV will hover at the location without servicing any user demand, which is a waste of energy and hence not optimal.
+\end{proof}
+\begin{lemma}\label{lmm:prnc-2}
+If a UAV arrives at a new user location $s'$ from location $s$ to find no demand there, it is optimal for it to hover at location $s'$ until a new demand is released to service.
+\end{lemma}
+\begin{proof}
+In the opposite situation, the UAV will leave location $s'$ to some other location $s''$, without servicing any demand at location $s'$.
+Then, it is more energy-efficient to travel directly from location $s$ to $s''$, due the triangle inequality in Eq.~\eqref{eq:triangle}.
+\end{proof}
+
+
+Next, we analyze the events that lead to UAV movement state change in the optimal path planning, and according to the above two lemmas, these events can be divided into three categories.
+%
+The time of these events is the time that the UAV need to make an action, and it is important for designing an optimal path planning algorithm because the UAV only needs to make actions at these particular times.
+
+%\begin{lemma}\label{lmm:state-chage}
+The UAV only needs to make actions upon three kinds of events:  the UAV arrives at a new location (\textit{UAV Arrival}), the battery charging process completes (\textit{Charging Completion}) or a demand is serviced (\textit{Demand Completion}).
+We briefly introduce the reasons.
+%\end{lemma}
+%
+%We focus on the events that terminate the current UAV state.
+\begin{itemize}[label={\large\textbullet}]
+\item \textit{Flying}: The flying state ends when the UAV reaches the target location $s'$ (\textit{UAV Arrival}). It starts charging immediately if the target location $s'$ is a charging station, i.e., $s' \in C$. Otherwise, the target location $s'$ is a user location. In this case, the UAV is not allowed to fly to another location without servicing any demand at location $s'$ by Lemma~\ref{lmm:prnc-2}.
+%Because if that happens, the UAV should not choose location $s'$ as a target location in the first place.
+Therefore, the UAV starts to hover immediately at location $s'$ to start servicing a user demand or wait for a new user demand to be released.
+%
+\item \textit{Charging}: When battery charging process is completed (\textit{Charging Completion}), the UAV immediately returns to the air, i.e., it switches to \textit{Flying} state, targeting at some other location.
+%
+\item \textit{Hovering}: When UAV stops hovering at time $t$, it immediately switches to \textit{Flying} state, targeting at some charging station for battery charge or some other user location for servicing user demands.
+Firstly, at time $t$ the UAV must finish all the user demands that it has started to service.
+Secondly, some user demand must be serviced exactly at time $t$ (\textit{Demand Completion}) by the UAV, according to Lemma~\ref{lmm:prnc-1}.
+%However, this only happens if the UAV just finishes servicing some user demand at time $t$ (\textit{Demand Completion}), since otherwise the UAV should stop hovering at an earlier time to save energy.
+\end{itemize}
+
+\fi
+
+
+
+
+
+%\KK{rewrite: start from Q, step-by-step reduce Q}
+\subsection{Dimensionality-reduced decision states in the Markov decision process}\label{subsec:decision-state}
+%In Section~\ref{subsec:uav-action}, we characterize the movement of a UAV by three movement states and decompose the routing problem of a UAV into a series of actions (i.e., Fly, Hover, Charge), where each action changes the movement state of a UAV. In addition, we analyze the time events that lead to UAV movement state change.
+%
+%However, determining the best action at each necessary time stamp requires the current information of the alive demands, location of UAV, remaining energy in battery, etc.
+%In this section, we characterize these necessary information as \emph{Decision State} (define later in Definition~\ref{def:decision-state}), which completely determines the optimal action at each time stamp.
+%(define later in Definition~\ref{def:decision-state})
+The optimal path planning contains a series of routing decisions (e.g., stay at the current location or fly to another location) at critical time stamps, and it can be modeled as a Markov decision process (MDP).
+Therefore, we need to characterize the {decision state} that determines the optimal routing action at each critical time point.
+%
+A \emph{decision state} consists of the state of the UAV and the state of the demands, both of which are necessary for the UAV to make the best routing decision. For example, before flying to a new location, the UAV should know which user demands can be met and serviced there.
+%
+The focus of our dimensionality-reduced dynamic programming approach is to efficiently reduce the possible decision states such that we only consider the decision states that could occur under an optimal path planning.
+%
+We successfully achieve this decision state reduction by comparing the path planning choices and disregarding the choices dominated by the others.
+%
+Next, we first introduce the UAV state as well as the partial feasible path planning, and then the dominant property over different partial feasible path planning choices. 
+%
+Table~\ref{tbl:notation} contains a summary of notations defined below for characterizing the decision state of the problem.
+%
+
+
+
+\begin{definition}[UAV State for the MDP formulation] \label{def:uav-state}
+at time point $t$, the UAV state is represented by a tuple ${U(t)} = \pe{t,i,s}$, indicating that the UAV is at location $s \in S$ at time point $t$ and it has already serviced a number of $i$ demands up to time $t$ (including the possible demands finished exactly by time $t$).
+\end{definition}
+
+%Let $\mathcal{T} = \se{ t~|~ \min_{j \in J} \se{r_j} \le t \le \max_{j \in J} \se{d_j}, t \in \mathbb{N} }$ be the set of times with consideration.
+%.//mobihoc2020/mob.tex
+
+
+\begin{definition}[Partial Feasible Path Planning]\label{def:partial}
+%Let $\mathcal{T}$ be a set of time stamps that are necessary for UAV
+A \emph{partial feasible path planning} up to time $t$ is a set of UAV states $M(t) = \se{U(t') ~|~ t' \in [0,t] }$,
+where $U(t')$ represents the UAV state at time point $t'$.
+\end{definition}
+%\in M(t)
+%\in \se{0,1,...,t}
+
+Before time point $t$, each historical UAV state $U(t') \in M(t)$ contains the location information of the UAV at earlier time $t'$, hence a partial path planning for the UAV up to time $t$ can be defined by set $M(t)$.
+As a result, the serviced demands up to time $t$ can also be derived, which is denoted by the set $J(M(t))$ and is critical in our MDP problem objective. 
+% when the UAV arrives some location $s$ again, 
+%differentiate -> distinguish 
+%distinguish -> tell: %
+Without recording this set, the UAV cannot tell whether a demand $j$ at location $s$ has been previously serviced or not, by using the basic information of demand release time $r_j$ and deadline $d_j$.
+This can indeed happen when demand $j$ has a long waiting time window $[r_j,d_j)$ during which the UAV might have visited location $s$ for several times. 
+Each visit after the first one,
+%For each such visit except the first, %
+the UAV should know that demand $j$ is already serviced at the very first visit. 
+%due to the large waiting deadline $d_j$ of demand $j$.
+%with only the information of the demand (i.e., release time, deadline).
+%Any missed demand from set $J(M(t))$ indicates that this demand can never be serviced by the UAV after time $t$.
+However, directly recording this set $J(M(t))$ leads to exponential solution space due to the combinatorial nature of the serviced demands by the UAV over time.
+%Note that we only use set $J(M(t))$ to identify 
+The key observation in our approach is that the complexity of set $J(M(t))$ can be significantly reduced without the entire information of $M(t)$ but instead with only the latest UAV departure times at the locations.
+%, which will be described and used in the next section.
+%Next, 
+Now, we formally introduce the definition of decision state at a time point $t$  of interest.
+
+%and will be introduced later.
+%With the information of UAV $U(t)$ and information of demands  we define the decision state.
+
+\begin{definition}[Decision State] \label{def:decision-state}
+In a partial feasible path planning defined by $M(t)$,  the decision state at time point $t$ is represented by $\pe{U(t), J(M(t))}$ where $U(t)$ represents the UAV state at time point $t$ and $J(M(t))$ indicates the set of serviced demands up to time $t$.
+\end{definition}
+
+\iffalse
+\begin{table}[ht!]
+\renewcommand{\arraystretch}{1.0}
+\caption{Notations for the states.}
+\label{tbl:notation-state}
+\centering %|p{9cm}|p{6cm}
+\begin{tabular}{ l |  p{10.5cm}}
+\hline
+\hline
+{\bf Math notation} & {\bf Physical Meaning}\\
+\hline
+$U(t)$ & the state of the UAV at time $t$ \\
+\hline
+$M(t)$ & the set of historical UAV states up to time $t$\\
+\hline
+$J(M(t))$ & the set of serviced demands up to time $t$ \\
+\hline
+$\pe{U(t), J(M(t))}$ & the 
+decision state at time $t$ \\
+\hline
+\hline
+\end{tabular}
+\end{table}
+\fi
+%Later in this section we will show how to derive $J(Q(t))$, as well as efficiently encode the decision state $\pe{U(t), J(Q(t))}$.
+We then define the dominance relation between two partial feasible path planning choices and show that dominated path planning choices will not be adopted by optimum.
+
+\begin{definition}[Choice Dominance]\label{def:dominanted}
+Let sets $M(t)$ and $M^{\#}(t^{\#})$ define any two different partial feasible path planning choices respectively, and let
+$U(t) = \pe{t,i,s} \in M(t)$ and
+$U^{\#}(t^{\#}) = \pe{t^{\#},i^{\#},s^{\#}} \in M^{\#}(t^{\#})$ be the UAV states at time point $t$ and time $t^{\#}$ in the two path plannings, respectively. Formally, the path planning defined by $M^{\#}(t^{\#})$ is \emph{dominated} by $M(t)$ {\bf if and only if}
+(i) $s=s^{\#}, i = i^{\#}$; (ii) $J(M(t)) = J(M^{\#}(t^{\#}))$; (iii) $t < t^{\#}$.
+%%\begin{itemize}[label={\textbullet}]
+%\begin{enumerate}[label=(\roman*)]
+%\item $i = i^{\#}, s=s^{\#}$.
+%\item $J(M(t)) = J(M^{\#}(t^{\#}))$.
+%\item $t < t^{\#}$.
+%\end{enumerate}
+%%\end{itemize}
+\end{definition}
+\begin{lemma}\label{lmm:dominated}
+Dominated partial path planning will never be adopted by optimum.
+\end{lemma}
+\begin{proof}
+Comparing the two path plannings defined by $M(t)$ and $M^{\#}(t^{\#})$ in Definition~\ref{def:dominanted}, all state parameters are the same except that $t < t^{\#}$, indicating that when finishing the same objective number $i$ of demands, the former path planning uses less time than the latter and hence has advantage over the latter since the UAV can at least dissipate this extra time via waiting at the current location from time $t$ to time $t^{\#}$ to service more potential demands.
+\end{proof}
+
+
+In the next subsection, we are ready to introduce our dimensionality-reduced dynamic programming algorithm to compute all possible decision states.
+%based on their routing actions.
+
+%State Transition
+\subsection{Low-complexity dynamic programming algorithm}\label{subsec:dp-transition}
+
+In this subsection, we propose a new algorithm to compute the optimal path planning of a single UAV.
+As mentioned in Section~\ref{subsec:decision-state}, the optimal routing decision at each time $t$ can be completely determined by the decision state $\pe{U(t), J(M(t))}$, which corresponds to a partial path planning choice $M(t)$.
+We first show a way to represent this decision state efficiently, without $M(t)$.
+
+%without the entire information of $M(t)$.
+
+
+\begin{lemma}\label{lmm:record-demand}
+At time point $t$, it is sufficient to compute the optimal routing action by recording the last departure time $t^{*}$ at each location $s$, instead of recording the set of all serviced demands $J(M(t))$ up to time $t$.
+%At the optimum, when the UAV leaves location $s \in S$ at time $t$, any user demand that is released no later than time $t-q$ at location $s$ (i.e., demands from $\se{j \in J_s ~|~ r_j \le t-q}$) is either missed or serviced.
+\end{lemma}
+%\textit{Sketch of proof.} 
+\begin{proof}
+Consider the serviced demands at location $s$ up to time $t$, i.e., $J' = J_{s} \cap J(M(t))$. When the UAV just arrives at location $s$ at time point $t$, we focus on an arbitrary demand $j \in J_s$ that is released before time $t$. 
+If $d_j \le t$, this demand is already due by time $t$, and it does not matter whether it has been serviced or not. Otherwise if $r_j < t < d_j$, this demand could possibly already be serviced at some earlier visit of location $s$.
+% given that time $t^{*}$ is the last departure time at location $s$, 
+We claim that demand $j$ is already serviced if $r_j \le t^{*}-q$ and not serviced otherwise.
+Note that by lemmas~\ref{lmm:prnc-1} and \ref{lmm:prnc-2}, the UAV leaves the location at a historical time $t^{*}$ only if it exactly finished some demand at time point $t^{*}$. Hence, demand $j$ can at least be serviced by the UAV during historical time interval $[t^{*}-q,t^{*})$ if $r_j \le t^{*}-q$; and otherwise if $r_j > t^{*}-q$, that is, demand $j$ cannot be finished by time $t^{*}$, and thus it is not serviced yet.
+%the UAV cannot service demand $j$ at any historical time since this demand cannot be finished by time $t^{*}$ due to the service time $q$.
+As a conclusion, with the last departure time $t^{*}$ at location $s$, the UAV is able to differentiate for each demand $j$ from $J_s$ whether the demand is still waiting to be serviced or not.
+\end{proof}
+
+
+\iffalse
+\KK{remove below, rewrite above}
+%the computation of $\pe{U(t), J(Q(t))}$
+Next, we introduce how to derive the set of missed (or serviced) demands $J(M(t))$ from set $M(t)$. We show that only one time stamp is needed to record the serviced or missed demands at each user location.
+\begin{lemma}\label{lmm:record-demand-remove}
+At the optimum, when the UAV leaves location $s \in S$ at time point $t$, any user demand that is released no later than time $t-q$ at location $s$ (i.e., demands from $\se{j \in J_s ~|~ r_j \le t-q}$) is either missed or serviced.
+\end{lemma}
+\begin{proof}
+According to Lemma~\ref{lmm:prnc-1}, the UAV leaves location $s$ at time point $t$ only if it just services a demand at time point $t$ at location $s$.
+In other words, the UAV is servicing at location $s$ during time $[t-q,t)$.
+Then, for any demand $j$ that is released no later than $t-q$ at location $s$, it can at least be serviced during time $[t-q,t)$ unless the demand is already missed at time point $t-q$.
+Therefore, the lemma is proved.
+\end{proof}
+\fi
+
+%Lemma~\ref{lmm:record-demand} indicates that the missed or serviced demands at location $s$ can be easily computed by $t-q$ with time $t$ being the latest departure time of the UAV at location $s$.
+%Since this departure time corresponds to the completion of some demand, it must be included by some UAV state $U(t') \in Q(t)$ and hence can be computed efficiently.
+Lemma~\ref{lmm:record-demand} indicates that whether a demand from location $s$ is waiting to be serviced or not can be easily identified by the last UAV departure time $t^*$ at location $s$.
+This provides opportunities for efficiently encoding the decision state $\pe{U(t), J(M(t))}$, without the entire information from set $M(t)$.
+%
+Based on Lemma~\ref{lmm:record-demand}, we now describe the dimensionality-reduced dynamic programming algorithm as follows.
+
+At time point $t$, we label the latest UAV departure time stamps at all the locations.
+%, as they are sufficient to identify the missed or serviced demands up to time $t$,  as shown in Lemma~\ref{lmm:record-demand}.
+%to label the UAV departure times
+More specifically, we introduce set $Q$, where each tuple $\pe{s^{*},t^{*}} \in Q$ tells that time point $t^{*}$ is the latest time when the UAV leaves location $s^{*}$. 
+%Let $J(Q)$ be the corresponding missed or serviced demands computed from  set $Q$ (according to Lemma~\ref{lmm:record-demand}).
+%
+Therefore, the decision state at time point $t$ can be efficiently represented by $\pe{Q,i,s,t}$, which indicates that the UAV is at location $s$ and  just services an accumulated number $i$ of demands by time $t$ with the constraints of departure times in $Q$.
+%missed or serviced demands $J(Q)$.
+%
+Although set $Q$ still incurs huge solution space, we only need it to extract useful information for optimal decision-making.
+Later in the analysis of computational complexity of our dimensionality-reduced dynamic programming algorithm, we show that the complexity of set $Q$ can be significantly reduced to achieve polynomial complexity.
+%and later we show that $J(Q)$ can be encoded efficiently.
+
+%focus on the actions that transits the state to new state.
+Based on the UAV decision state $\pe{Q,i,s,t}$, we further consider the dominance relation between different states.
+Implied by the dominant property of decision state in Definition~\ref{def:dominanted} and Lemma~\ref{lmm:dominated}, the earlier the UAV services the same demands, the better the path planning choice is.
+We thus aim to design the dimensionality-reduced dynamic programming algorithm to find the path planning choice that can service the same amount of demands as the optimum and minimize the time span to service these demands.
+%
+Accordingly, given particular set $Q$, integer $i \in \se{1,...,n}$ and location $s \in S$, we denote variable $g(Q,i,s)$ as the earliest time $t$ such that some partial feasible path planning reaches decision state $\pe{Q, i,s,t}$, i.e., time $t$ is the earliest time for the UAV to finish $i$ demands under the constraints of departure times $Q$.
+%We restrict our consideration such that
+By this definition, a user demand is indeed serviced exactly at time point $t$, which holds for the optimum.
+The maximum value $i$ such that some state $\pe{Q,i,s,t}$ corresponds to a partial feasible path planning choice indicates an optimal solution to our problem.
+%(i.e., $g(Q,i,s) \not = \infty$)
+The dimensionality-reduced dynamic programming formulation above has the advantage that when multiple optimal solutions exist, it always returns the one with the shortest time to service the same objective number of demands.
+This is consistent with practice that the UAV can stay in the air for a limited amount of time.
+
+
+%tiny,scriptsize,footnotesize,small,normalsize
+
+\begin{algorithm}[!hbt] \small
+\caption{Optimal path planning of a single UAV. }
+\label{alg:one-general}
+%\begin{multicols}{2}
+\begin{algorithmic}[1]
+
+\Require set $J$ of demands, set $S$ of locations.
+
+\Ensure optimal path planning.
+
+%$\textit{Computed} \gets \emptyset$
+\State $g(\cdot) \gets \MX$, $G(\cdot) \gets \emptyset$
+%\Comment{{ Priority Queue $G$}}
+
+%Insert $\pe{\emptyset, \mu(s,\min(R_s)), s, \min(R_s)}$ into $G$
+
+\For{$s \in S$}
+\Comment{{ Initialization}}
+
+\State
+$t \gets \min \se{r_j ~|~j \in J_s}$
+\State
+$i \gets \sum_{j \in J_{s}: r_j = t} 1$
+\State
+$g(\emptyset, i, s) \gets t + q$
+\State
+{Insert} $\pe{\emptyset, s}$ {into} $G(i)$
+\EndFor
+
+
+
+%\For{$i \in \se{1,2,...,n}$}
+\For{$i = 1$ to $n$}
+\Comment{{ Round $i$}}
+\label{alg-line-roundi}
+
+\For {$\pe{Q, s} \in G(i)$}
+\label{alg-line-loop2}
+%{$G \not = \emptyset$}
+
+%\State Pull $\pe{Q, i, s, t}$ from $G$ with smallest $t$.
+%\label{alg-line-extract-min}
+
+%\State ${g}(Q,i,{s}) \gets t$
+\State $t \gets {g}(Q,i,{s})$
+%\State $\textit{Computed} \gets \textit{Computed} \cup \se{(Q,i,{s})}$.
+
+\For{$s' \in S$}
+\label{alg-line-loop3}
+\State
+$\pe{Q',i',s',t'} \gets \textsc{Expand}(\pe{Q,i,s,t}, s')$
+\label{alg-line-expand}
+
+\State
+$Q' \gets \textsc{Trim}(\pe{Q', i',s',t'})$
+\label{alg-line-trim}
+
+
+%\If{$(Q',i',s') \not \in \textit{Computed}$}
+
+\State $g(Q',i',s') \gets  \min \se{g(Q',i',s'), t'}$
+\label{alg-line-update}
+
+\State
+Insert $\pe{Q',s'}$ into $G(i')$
+%\EndIf
+
+\EndFor
+
+\EndFor
+\EndFor
+
+\State
+$Q^{*},i^{*},s^{*} \gets \argmax_{i} \se{g(Q,i,s) \not = \infty}$
+\label{alg-line-opt}
+
+\State
+path planning $\gets$ backtrack from $g(Q^{*},i^{*},s^{*})$
+%%%%%%%%%%%
+
+\;
+%\\\hrulefill
+\Procedure{Expand}{$\pe{Q, i,s,t}$, $s'$}
+\Comment{{ Expand}}
+
+\If{$s = s'$}
+\label{alg-line-stay}
+\State
+$t^{*} \gets \min \se{r_j ~|~ t - q < r_j, j \in J_{s'}}$
+\State
+$Q' \gets {Q}$
+\State
+$ i' \gets i + \sum_{j \in J_{s'}: r_j = t^{*}} 1$
+%\ElsIf{$\exists \pe{s',t^{*}} \in Q$}
+\State
+{\bf Return} $\pe{Q', i',s',t^{*} + q}$
+
+\Else
+
+\State
+$t' \gets t + a(s,s')$
+\label{alg-line-upt}
+\State
+$Q' \gets Q \cup \se{\pe{{s},t}}$
+\label{alg-line-upq}
+
+\If {$\exists~\pe{s',t^{*}} \in Q$}
+\State $i' \gets i + \sum_{j \in J_{s'}: t^{*} - q < r_j \le t' < d_j} 1$
+\label{alg-line-move-i}
+%$Q' \gets (Q \setminus \se{\pe{s',t^{*}}}) \cup \se{\pe{{s},t}}$
+\Else
+\State $i' \gets i + \sum_{j \in J_{s'}: r_j \le t' < d_j} 1$
+\label{alg-line-move-ii}
+\EndIf
+
+%\If{$i'=i$}
+\State
+	{\bf Return} $\textsc{Expand}(\pe{Q',i',s',t' + q}, s')$
+	{\bf If} $(i'=i)$.
+	\label{alg-line-move-iii}
+%\EndIf
+\State
+{\bf Return} $\pe{Q', i',s',t' + q}$
+\label{alg-line-move-ret}
+\EndIf
+
+\EndProcedure
+
+
+%%%%%%%%%%%
+
+\;
+%\\\hrulefill
+\Procedure{Trim}{$\pe{Q,i,s,t}$}
+\label{alg-line-trimcond}
+\Comment{{ Trim}}
+
+\State $Q^{*} \gets \emptyset$
+\For{$\pe{s^*,t^*} \in Q$}
+
+%\State
+%\parbox{0.85\linewidth}
+%{ {\bf Continue If} $s^* = s$  {\bf or} $\exists \pe{s'',t''} \in Q, s^{*} = s'', t^{*} < t'' $  {\bf or} $t^{*} - q + \max_{j \in J_{s^*}} (d_j-r_j) \le t + a(s,s^{*}) $}
+
+%\newline
+\If{{$s^* = s$  {\bf or} $\exists \pe{s'',t''} \in Q, s^{*} = s'', t^{*} < t'' $ {\bf or} $t^{*} - q + \max_{j \in J_{s^*}} (d_j-r_j) \le t + a(s,s^{*}) $}}
+\State {\bf continue}
+\EndIf
+%$Q \gets Q \setminus \se{\pe{s^*,t^*}}$
+\State  $t' \gets \max \se{r_j ~|~ r_j \le t^* - q, j \in J_{s^{*}}}$
+\State $Q^* \gets Q^* \cup \se{\pe{s^*,t' + q}}$
+\EndFor
+
+\State {\bf Return} $Q^*$
+\EndProcedure
+
+\end{algorithmic}
+%\end{multicols}
+\end{algorithm}
+
+%Algorithm~\ref{alg:one-general} shows the computation of variables $g(Q,i,s)$, which adopts the main concept of dijkstra's algorithm for shortest path.
+Algorithm~\ref{alg:one-general} shows how to compute all variables $\se{g(Q,i,s)}$ for the dimensionality-reduced dynamic programming.
+%
+%Time $g(Q,i,s)$ can be expressed in an inductive form.
+Suppose $g(Q,i,s) = t$ is computed, by definition some user demand is serviced exactly at time point $t$.
+This is interpreted as a decision process that the UAV decides at time point $t-q$ to start servicing that demand, i.e., $t-q$ is regarded as a \textit{decision-making time stamp}.
+We enumerate all possible subsequent decisions after time $t-q$ to obtain new partial path planning choices.
+Specifically, we aim to obtain a new partial path planning $\pe{Q',i',s',t'}$ from current $\pe{Q,i,s,t}$, by determining the next location $s'$ for the UAV to visit after time $t - q$.
+We enumerate all such possible choices and divide them into following two cases.
+%Similar to Algorithm~\ref{alg:short}, the algorithm runs in many rounds where in each round $i \in \se{1,2,...,n}$, we consider the feasible solutions that finishes a number $i$ of demands.
+%For each computed $g(Q,i,s)$, we extract a feasible solution $\pe{Q,i,s,t}$, providing that $g(Q,i,s) = t$, i.e., the minimum possible time to finish $i$ demands with parameters $Q$ and $s$.
+%We aim to extend the partial solution to a new feasible solution $\pe{Q', i',s',t'}$ by guessing the next location $s'$ to be visited after time $t$.
+
+\begin{itemize}
+\item
+After time $t - q$, the UAV plans to stay at the same location $s$ to service more demands, i.e., $s' = s$ (see Line~\ref{alg-line-stay} of Algorithm~\ref{alg:one-general}). By Lemma~\ref{lmm:prnc-1} it stays at least until time $t' = t^{*} + q$ with $t^{*} = \min \se{r_j ~|~ t - q < r_j, j \in J_s}$ being the earliest time that the next demand(s) is released at location $s$ after time $t - q$.
+Parameter $Q'$ is updated to be the same as $Q$ about departure time stamps, since the UAV does not leave the current location.
+And the formula $\sum_{j \in J_{s'}: r_j = t^{*}} 1$  contains the additional demand to be serviced at time point $t^{*}$ at location $s'$.
+\item
+Otherwise after time $t - q$, the UAV decides to leave location $s$. Then it leaves at time point $t$ when finishing servicing the demand. 
+%That is to say, the decision of leaving location $s$ is made at time $t-q$.
+During time interval $(t-q,t]$, the UAV cannot start to service any new demand at location $s$, otherwise they will not be finished by time $t$.
+After time $t$, the UAV will arrive the new location $s'$ at time point $t' = t + a(s,s')$ (see Line~\ref{alg-line-upt} of Algorithm~\ref{alg:one-general}).
+%
+To characterize the decision state at time point $t'$, we further divide this case into two sub-cases, depending on whether location $s'$ has been previously visited or not.
+\begin{itemize}
+\item
+If $s'$ is visited before by the UAV, there exists $\pe{s',t^{*}} \in Q$ indicating that the UAV has lastly visited location $s'$ at a previous time $t^{*}$. Note that it takes time $q$ to service a demand, and those demands arriving in time interview $(t^* - q, t^*]$ cannot be serviced at location $s'$. 
+Then the number of new demands that can be serviced by future time $t'$ is $\sum_{j \in J_{s'}: t^{*} - q < r_j \le t' < d_j} 1$ (Line~\ref{alg-line-move-i} of Algorithm~\ref{alg:one-general}), 
+where only a demand $j$ with release time $r_j$ later than $t^*-q$ and before $t'$ will be considered by time $t'$, and demand $j$ should have deadline $d_j$ longer than $t'$ (i.e., not missed). 
+%which excludes the demands that are already serviced before time $t^{*}$.
+%that are  serviced by the UAV
+%previously at time $t^{*}$ or earlier.
+%This case is the major difference with Algorithm~\ref{alg:short}.
+\item
+If not, $\sum_{j \in J_{s'}: r_j \le t' < d_j} 1$ (Line~\ref{alg-line-move-ii} of Algorithm~\ref{alg:one-general}) tells the number of demands that can be serviced by future time $t'$.
+% at location $s'$.
+%, which includes all demands at location $s'$ that can be serviced at time $t'$.
+\end{itemize}
+
+%\indent
+For both sub-cases, the UAV stays at location $s'$ at least until time $t'+q$ to finish the demands started servicing at time point $t'$ (Line~\ref{alg-line-move-ret}). We also update set $Q$ by including one more tuple $\pe{s,t}$, telling that the UAV departs location $s$ at time point $t$ (Line~\ref{alg-line-upq}).
+Moreover, if the UAV finds no new demand at future time $t'$, i.e., $i' = i$ (Line~\ref{alg-line-move-iii}), by Lemma \ref{lmm:prnc-2} the UAV should stay at location $s'$ until a new demand is released.
+Then, we further expand the partial path planning to find the earliest demand to service at location $s'$ after time $t'$.
+%%%%%%In this situation, we first restrict that the UAV stays for at least an amount of $q$ time and recursively expand the partial path planning to find the earliest demand to service.
+\end{itemize}
+
+\noindent
+Using the above procedure of extending partial path planning solutions to future critical time stamps, we are able to compute all variables $\se{g(Q,i,s)}$ in the whole time horizon.
+%
+%since all time labels in the algorithm are only used to count the number of serviced demands.
+% and to identify the next released demand
+%Later in this section, we analyze the computational complexity of Algorithm~\ref{alg:one-general}.
+Next, we first prove the optimality of Algorithm~\ref{alg:one-general} and then analyze its computational complexity.  
+%Due to the page limit, the complete proof of Proposition~\ref{prop:opt-one-general} can be found in our online technical report \cite{wang:2020}.
+
+\begin{proposition}\label{prop:opt-one-general}
+Algorithm~\ref{alg:one-general} computes an optimal path planning choice for the UAV in the whole time horizon.
+
+%Algorithm~\ref{alg:one-general} computes all feasible variables $\se{g(Q,i,s)}$ correctly and hence returns an optimal path planning choice for the UAV in the whole time horizon.
+\end{proposition}
+\begin{proof}
+In Algorithm~\ref{alg:one-general},  decisions are only made at the time $t-q$ when the UAV starts to service a demand at some location $s$. This decision indicates that either after finishing the demand the UAV will leave the location at time $t$ or the UAV continues servicing more demands at the current location after time $t-q$.
+For the former case, we enumerate all possible locations that the UAV is going to visit after time $t$ and apply Lemma~\ref{lmm:prnc-2} to make sure that at least one demand will be serviced at the new location after the arrival of the UAV.
+For the latter case, we apply Lemma~\ref{lmm:prnc-1} to make sure that at least one more new demand will be serviced by the UAV at the current location.
+For both possible decisions, at least one demand will be serviced in the near future, hence the next decision-making time can also be calculated.
+%Any other decisions are not considered in the algorithm since they will not be adopted by the optimal path planning according to Lemma~\ref{lmm:prnc-1} and Lemma~\ref{lmm:prnc-2}.
+
+
+Regarding the optimality achieved by Algorithm~\ref{alg:one-general}, on one hand, for any partial solution $\pe{Q',i',s',t'}$ expanded from $\pe{Q,i,s,t}$, we follow the rule that $t' > t$ and $i' > i$.
+That is to say, given that the UAV finishes some demand at time $t$ at location $s$, time $t'$ is the time when the next demand will be finished (at location $s'$) by the UAV.
+%On the other hand, we have tested every possibility of next location $s'$ that the UAV might visit after time $t$.
+On the other hand, our dynamic programming algorithm enumerate all possible subsequent decisions for the UAV as described above, at least one decision will be exactly the same as the optimum.
+%
+Therefore, by induction, $g(Q',i',s')$ is computed correctly assuming that any $g(Q,i,s)$ with $i < i'$ is computed correctly.
+This can be seen in Line~\ref{alg-line-roundi} of Algorithm~\ref{alg:one-general} that value $i$ is enumerated increasingly from $1$ to $n$.
+
+As a consequence, the maximum vale $i^*$ such that $g(Q^*,i^*,s^*) \not = \infty$ (Line~\ref{alg-line-opt} of Algorithm~\ref{alg:one-general}) for some $Q^*$ and some location $s^* \in S$ indicates the maximum number of demands that the UAV can service in the optimal path planning.
+\end{proof}
+
+
+%Algorithm~\ref{alg:one-general}
+
+
+%This can be seen in Algorithm~\ref{alg:one-general} with two folds:
+%i) we have tested every possibility of the next location $s'$ to be visited by the UAV after time $t$ when expanding the partial solution $\pe{Q,i,s,t}$.
+%ii) the partial solution $\pe{Q,i,s,t}$ extracted from the priority queue (Line~\ref{alg-line-extract-min}) has the smallest value $t$.
+
+Finally, we analyze the computational complexity of Algorithm~\ref{alg:one-general}.
+Generally, the computational complexity relates to the number of variables $g(Q,i,s)$ and the complexity for computing them.
+%In the following, we first introduce our approach to further reduce the space complexity for encoding the set $Q$, which corresponds to Line~\ref{alg-line-trim} of Algorithm~\ref{alg:one-general}.
+%Although the awaiting demands (i.e., not serviced yet) at one location can be identified by a time stamp according to Lemma~\ref{lmm:record-demand}, recording them at all locations still exponentially depends on the number of locations.
+%Therefore, to make our algorithm tractable, we define a parameter $\alpha$ such that the algorithm only needs to record for at most $\alpha$ locations.
+The complexity of our Algorithm~\ref{alg:one-general} still depends on the mobility of the UAV during a demand window as defined below. 
+\begin{definition}\label{asump-demand}
+%Let $\alpha \in [1, |S|]$ be a constant. The maximum number of different locations that the UAV can visit during the maximum waiting time $\max_{j\in J} d_j-r_j$ among all the demands is $\alpha$.
+Let $\alpha \in \se{1,..., |S|}$ be the maximum number of different locations that a UAV can visit during the longest waiting time $\max_{j\in J} d_j-r_j$ among all the demands in set $J$.
+\end{definition}
+%%Kai: make it locally relevant
+
+%$Besides $\alpha$,
+Given the fixed mobility parameter $\alpha$, the computational complexity of Algorithm~\ref{alg:one-general} only depends on the number of demands and the number of locations, instead of the tedious input values of times (e.g., release times) and distances in traditional dynamic programs.
+This is achieved by further trimming set $Q$ (see Line~\ref{alg-line-trim} of Algorithm~\ref{alg:one-general}) to reduce its complexity, which is given in the following Proposition~\ref{prop:time-one-drone}.
+%Due to the page limit, the complete proof of Proposition~\ref{prop:time-one-drone} can be found in our online technical report \cite{wang:2020}.
+
+\begin{proposition}\label{prop:time-one-drone}
+Algorithm~\ref{alg:one-general} has low computational complexity $O(n^{\alpha} |S|^{\alpha+1})$, which is polynomial in both demand number $n$ and location number $|S|$.
+\end{proposition}
+
+\iffalse
+\noindent
+%\textit{Sketch of proof.} 
+%Appendix~\ref{ap:prop-one-drone}.
+%and in the following we only show the {sketch of proof}. 
+As Algorithm~\ref{alg:one-general} has three loops (Line~\ref{alg-line-roundi}, \ref{alg-line-loop2}, \ref{alg-line-loop3}), the overall computational complexity is $O(Q) \cdot O(n |S|^2)$, where $O(Q)$ is the complexity for encoding set $Q$ and $O(|S|)$ is the complexity for computing each variable $g(Q,i,S)$. We only need to show that $O(Q) = O(n ^{\alpha-1} |S| ^{\alpha-1})$.
+%
+Although there are arbitrarily many choices for set $Q$, we only focus on those which are necessary for computing the optimal path planning.
+This is achieved by applying the following two-step trimming process on set $Q$, which is presented in Line~\ref{alg-line-trimcond} of Algorithm~\ref{alg:one-general}.
+%(Line~\ref{alg-line-trim} and Line~\ref{alg-line-trimcond}) as follows.
+
+\begin{enumerate}[label = (\roman*)]
+\item%(i)
+We remove any tuple $\pe{s^{*},t^{*}}$ from $Q$ if $s^{*} = s$ {\bf or} there exists $\pe{s'',t''} \in Q$ such that $s^{*} = s'', t^{*} < t''$ {\bf or} $t^{*} - q + \max_{j \in J_{s^{*}}} (d_j-r_j) \le t + a(s,s^{*})$.
+\item %(ii)
+We replace each $\pe{s^{*},t^{*}} \in Q$ by $\pe{s^{*},t'}$, where $t' - q$ is the largest demand release time such that $t' \le t^{*}$, i.e. $t' - q = \max \se{r_j ~|~ r_j \le t^{*} - q, j \in J_{s^{*}}}$.
+\end{enumerate}
+
+%avoid counting the already serviced demands
+Note that set $Q$ is only used to identify the demands that can be serviced at a particular time, which is only used at Line \ref{alg-line-move-i} of Algorithm~\ref{alg:one-general}.
+%The above trimming process is designed to make sure that they will not affect the result in Line \ref{alg-line-move-i}.
+Intuitively, for the long-time-no-visit locations, there is no need to record the last UAV departure time in $Q$ since all previously serviced demands at this location will be due when the UAV visit it again at the earliest in future.
+That is to say, removing these UAV departure times from set $Q$ will not change the calculation in Line~\ref{alg-line-move-i}.
+%
+%for set $Q$ we only record the latest UAV departure times on  $\alpha-1$ locations instead of all locations. 
+%
+As a result, after step (i), we only need to label at most $\alpha-1$ departure times in set $Q$.
+%there are at most $\alpha-1$ elements in set $Q$ by definition of $\alpha$.
+%
+In step (ii), we adjust the departure time labels in set $Q$ to be the nearest demand release times (i.e., each new time label can be represented in $O(n)$ space), which will also not change the calculation in Line~\ref{alg-line-move-i}. 
+%
+As a result, after applying the above trimming process, the complexity for encoding set $Q$ is $O( n^{\alpha-1} |S|^{\alpha-1})$, which yields overall computational complexity $O(n^{\alpha} |S|^{\alpha+1})$.
+
+\fi
+
+
+%proof in appendix
+%\iffalse
+\begin{proof}
+As Algorithm~\ref{alg:one-general} has three loops (Line~\ref{alg-line-roundi}, \ref{alg-line-loop2}, \ref{alg-line-loop3}), the overall computational complexity is $O(Q) \cdot O(n |S|^2)$, where $O(Q)$ is the space complexity for set $Q$ and $O(n |S|^2)$ is the computational complexity for computing each variable $g(Q,i,S)$. In the following, we show that $O(Q) = O(n ^{\alpha-1} |S| ^{\alpha-1})$.
+
+%
+Although there are arbitrarily many choices for set $Q$, we only focus on those which are necessary for computing the optimal path planning.
+This is achieved by applying a trimming process on set $Q$ (Line~\ref{alg-line-trim}).
+Specifically, given a partial path planning $\pe{Q,i,s,t}$, we apply a trimming process on set $Q$ as follows (Line~\ref{alg-line-trimcond}).
+
+\begin{enumerate}[label = (\roman*)]
+\item%(i)
+We remove any tuple $\pe{s^{*},t^{*}}$ from $Q$ if $s^{*} = s$ {\bf or} there exists $\pe{s'',t''} \in Q$ such that $s^{*} = s'', t^{*} < t''$ {\bf or} $t^{*} - q + \max_{j \in J_{s^{*}}} (d_j-r_j) \le t + a(s,s^{*})$.
+\item %(ii)
+We replace each $\pe{s^{*},t^{*}} \in Q$ by $\pe{s^{*},t'}$, where $t' - q$ is the largest demand release time such that $t' \le t^{*}$, i.e. $t' - q = \max \se{r_j ~|~ r_j \le t^{*} - q, j \in J_{s^{*}}}$.
+\end{enumerate}
+
+Note that set $Q$ is only used to count the number of serviced demands, which happens only at Line \ref{alg-line-move-i}.
+The above trimming process is designed to make sure that they will not affect the result in Line \ref{alg-line-move-i}.
+As we mentioned earlier, if the UAV repeatedly visits a location $s^{*}$, we only label the latest departure time $t^{*}$.
+This can be achieved by trimming condition $s^{*} = s$ and condition $s^{*} = s'', t^{*} < t''$ in step (i).
+For condition $s^{*} = s$, there is no need to record the latest departure time at location $s^{*}$ since currently the UAV is already at location $s^{*}$.
+For condition $s^{*} = s'', t^{*} < t''$, the latest departure time at location $s^{*}$ is $t''$ instead of $t^{*}$.
+%
+%Assume the UAV has visited some location $s^{*}$ at an earlier time $t^{*}$ (i.e., $\pe{s^{*},t^{*}} \in Q$) and now it is at location $s$ at time $t$, aiming to finish the future demands after time $t$.
+%for feasible solution $\pe{Q, i,s,t}$,
+%If the UAV visits the same location $s^{*}$ twice, we only take the one with the latest visit, this corresponds to condition $s^{*} = s$ and condition $s^{*} = s', t^{*} < t'$ in step (i).
+
+Moreover, when the UAV arrives location $s^{*}$ in the near future, it has to differentiate whether the demand there has been previously serviced or not since we do not explicitly record the serviced demands in the algorithm.
+If $t^{*} - q + \max_{j \in J_{s^*}} (d_j-r_j) \le t + a(s,s^{*})$, we can find that any (already serviced) demand $j$ released before time $t^{*} - q$ at location $s^*$ will be due before the UAV visits location $s^{*}$ at the earliest possible time $t + a(s,s^{*})$.
+%, i.e., demand $j$ will not be hit by the UAV twice.
+That is to say, there is no need for the UAV to differentiate the serviced demands there since they will be due before the UAV arrival.
+%when the UAV arrives location $s^{*}$ in the near future, any previously serviced demand will be already due.
+%any demand that can be serviced is not considered by the UAV before.
+Therefore, we do not need to record the last departure time $t^{*}$ at
+location $s^{*}$, i.e.,  $\pe{s^{*},t^{*}}$ can be removed from $Q$.
+%
+%
+
+On the other hand, in step (ii), if $t^{*} - q$ is not a demand release time, no demand is released during $(t'-q,t^{*}-q]$ at location $s^{*}$, where $t' - q = \max \se{r_j ~|~ r_j \le t^{*} - q, j \in J_{s^{*}}}$. Hence, without affecting counting the number of serviced demands at  Line~\ref{alg-line-move-i} in Algorithm~\ref{alg:one-general}, we could replace $\pe{s^{*},t^{*}}$ by $\pe{s^{*},t'}$ and note that $t'-q$ is a demand release time.
+%the number of possible value for time $t'$ here is bounded by $O(n)$.
+After step (i), there are at most $\alpha-1$ elements in set $Q$ by definition of $\alpha$, and after step (ii) the time labels in set $Q$ are demand release times where each can be represented in $O(n)$ space.
+As a result, after applying the trimming process, the space complexity for set $Q$ is $O( n^{\alpha-1} |S|^{\alpha-1})$, which yields overall computational complexity $O(n^{\alpha} |S|^{\alpha+1})$.
+This completes the proof.
+\end{proof}
+%\fi
+
+%In term of computational complexity, our  Algorithm~\ref{alg:one-general} do not depend on the length of the time horizon but the number of demands and locations.
+
+%\begin{proposition}
+%Algorithm~\ref{alg:one-general} returns the optimal routing for each UAV and it has computational complexity $O(n^{\alpha} |S|^{\alpha+1})$, which is polynomial to the demand number $n$ and location number $|S|$.
+%\end{proposition}
+%\begin{proof}
+%We show that there are at most $O(n^{\alpha} |S|^{\alpha})$ necessary feasible solutions.
+%\end{proof}
+%As Section~\ref{sec-short-demand} is a special case of $\alpha=1$, the complexity $O(n^{\alpha} |S|^{\alpha+1})$ reduces $O(n |S|^2)$ at $\alpha = 1$.
+
+
+\section{Different user service times}\label{sec:diff_user}
+In this section, we generalize our proposed Algorithm~\ref{alg:one-general} to consider flexible user service time. Specifically, for each user demand $j \in J$, its service time is now $q_j$, instead of fixed time $q$.
+We show that Algorithm~\ref{alg:one-general} can be generalized to compute the optimal path planning with the following assumption on UAV service.
+\begin{assumption}[Irrevocable UAV decision]
+When the UAV decides to leave location $s$ at time point $t^{*} = t - q_{j'}$ for some demand $j' \in J_s$ (i.e., leaves at time point $t$), for any demand $j \in J_s$ that is released before time $t^{*}$ but neither serviced nor missed yet, either 
+i.) the UAV services this demand before leaving, or
+ii.) demand $j$ is no longer  serviced by the UAV at any future visit of location $s$, i.e., demand $j$ is missed.
+\end{assumption}
+
+The above assumption deals with the situation that the UAV rejects to service an already-released demand $j$.
+Previously, in the case of fixed service time $q_j = q$, condition i.) will always hold because anyway demand $j$ can be finished by the time $t$ when the UAV leaves.
+However, for the case of flexible service time, demand $j$ may have very long service time. In that situation, the UAV could possibly service it in future visit, while the above assumption prohibits this to happen. 
+This assumption is consistent with many dynamic planning situations where decisions are irrevocable, i.e., when the UAV rejects to service a demand for the first time, it cannot service it in future \cite{lee2018online}.
+
+With the above assumption, we present the generalization of Algorithm~\ref{alg:one-general}.
+%
+Firstly, the important resultant observation by the above assumption is that, any demand that is released before time point $t^{*}$ at location $s$ is either serviced or missed by time point $t$ when the UAV leaves, which is consistent with the previous case in Algorithm~\ref{alg:one-general}.
+%
+Previously, Algorithm~\ref{alg:one-general} records the latest departure time $t$ at each location $s$, indicating that all demands that are released before time $t-q$ at location $s$ is handled (i.e., either serviced or missed), and hence the UAV only checks demands released after time $t-q$ for future visit at location $s$ (see Line~\ref{alg-line-move-i} of Algorithm~\ref{alg:one-general}). %
+In the generalized algorithm, we alter Algorithm~\ref{alg:one-general} to record $\langle t, q_{j'}\rangle$ instead of $t$ in the problem state, i.e., 
+the problem state is updated as $\pe{Q,i,s,\pe{t, q_{j'}}}$, instead of $\pe{Q,i,s,t}$.
+%, and correspondingly we use new variable $g(Q,i,q_{j'}, s)$.
+%, where the latest departure time point $t$ and the corresponding service time $q_{j'}$ for the latest serviced demand $j' \in J_s$.
+
+
+%As a result, the complexity of encoding set $Q$ will increase by a factor of $O(n^2)$.
+%In particular, for each $\pe{s,\langle t, q_{j'}\rangle} \in Q$, on one hand including $q_{j'}$ takes additional $O(n)$ space, on the other hand, time point $t$ now has complexity $O(n^2)$ due to $t-q_{j'} = r_j$ for some demand release time $r_j$, instead of $t - q = r_j$ previously.
+%%the time point $t$ maps to a demand release time, i.e., $t - q = r_j$, but now it is $t-q_{j'} = r_j$, implying that the space complexity of time point $t$ is $O(n^2)$, instead of $O(n)$.
+%%
+%%Moreover, the problem state is updated as $\pe{Q,i,s,\pe{t, q_{j'}}}$, instead of $\pe{Q,i,s,t}$, which incurs another additional $O(n)$ complexity.
+%%For each computed $g(Q,i,s)  = t$, by definition, some user demand is serviced exactly at time point $t$, hence, in the new algorithm, to record such demand $j'$ we use new variable $g(Q,i,q_{j'}, s)$.
+%In summary, the complexity of the generalized algorithm will increase by a factor of $O(n^3)$ due to including $q_{j'}$.
+
+We update $q$ properly in  Algorithm~\ref{alg:one-general}, and show that the resulting algorithm still returns the optimal path planning.
+%
+At the current decision time point $t-q_{j'}$ with problem state $\pe{Q,i,s,\pe{t, q_{j'}}}$, the UAV is planned to service demand $j'$ during time period $[t-q_{j'},t]$ at location $s$, 
+we compute for two possible future UAV decisions after time point $t$, either staying at location $s$ or flying to other location $s'$.
+In particular, all future released demands that can be finished by time point $t$, i.e., $\se{j~|~ t - q_{j'} \le  r_j \le t - q_j, j \in J_s}$, will all be serviced by the UAV, and hence will be exempt from consideration. 
+
+If the UAV decides to stay at the current location, 
+it waits until a future demand $j \in J_s$ release such that $r_j + q_j > t$.
+Note that demand $j$ is not necessary the earliest released demand after time point $t - q_{j'}$, since the UAV now may skip some demand of long service time to achieve optimality.
+Therefore, similarly as previous we enumerate such future demand $j$ in the new algorithm and update $t \gets r_j + q_j$ and $q_{j'} \gets q_j$ for new problem state.
+%
+Otherwise, the UAV leaves at time point $t$ and travels to some other location $s'$. Similarly, we add the departure information  $\pe{s,\pe{t,q_{j'}}}$ at location $s$ to set $Q$.
+%
+When the UAV arrives at location $s'$ at time point $t_1 = t + a(s,s')$, we compute the next demand $j$ can be serviced at location $s'$.
+Especially, among the demands, say $J_1$, that are available at time point $t_1$, the algorithm enumerates demand $j$ from $J_1$ and transits to next decision time point by  $t \gets t_1+q_j, q_{j'} \gets q_j$.
+As such, the UAV will stay at location $s'$ during time period $[t_1,t_1+q_j]$ to service demand $j$, as well as any demand from $J_1$ that can be serviced by time $t_1+q_j$.
+%
+To compute $J_1$, if $\exists \pe{s',\pe{t',q_{j''}}} \in Q$, i.e., the latest historical UAV departure information at location $s'$ is recorded in set $Q$, $J_1 = \se{j~|~t'-q_{j''} \le r_j \le t_1 < d_j, j \in J_{s'}}$ and the algorithm only deals with demands released after time point $t'-q_{j''}$.
+Otherwise, $J_1 = \se{j~|~ r_j \le t_1 < d_j, j \in J_{s'}}$.
+In case set $J_1$ is empty, similarly, the UAV waits until a new demand released at location $s'$.
+%
+%
+%(more details)
+%In Algorithm~\ref{alg:one-general}, the current decision time point $t-q$ at Line~\ref{alg-line-stay} corresponds $q = q_{j''}$; the historical decision time point  $t^{*}-q$ at Line~\ref{alg-line-move-i} corresponds $q = q_{j'}$ for $\exists \pe{s', \langle t, q_{j'}\rangle } \in Q$; the future decision time point $t+q$ at Lines \ref{alg-line-move-iii} and \ref{alg-line-move-ret}  corresponds $q = q_{j'''}$ where the UAV starts to service demand $j'''$ at time point $t^{*}$ and demand $j'''$ has the longest service time.
+%By such generalization, expanding $\pe{Q,i,s,\pe{t,q_{j''}}}$ to $\pe{Q',i',s',\pe{t',q_{j'''}}}$ still maintains the properties that both time points $t-q_{j''}$ and $t' - q_{j'''}$ are decision-making time points for the UAV, which is consistent with Algorithm~\ref{alg:one-general}.
+%Finally, the complexity of Algorithm~\ref{alg:one-general} will only increase by a factor of $O(n^2)$ due to including $q_j$ in $Q$.
+
+
+
+
+
+The complexity of encoding the new set $Q$ is $O(n^{2(\alpha-1)} |S|^{\alpha-1})$.
+For each departure  $\pe{s,\pe{t,q_{j'}}}$ recorded in $Q$, it takes $O(n^2|S|)$ complexity where 
+time point $t$ still has complexity $O(n)$ due to $t-q_{j'} = r_j$ for some demand release time $r_j$ ( where it is $t - q = r_j$ previously).
+Each computation of variable $g(\cdot)$ increases by a factor of $O(n)$ for computing the next demand $j$ to service since now the algorithm may skip some demand of long service time.
+%$O(n^2|S|^2)$
+As a result, the new algorithm has complexity $O(n^{2\alpha} |S|^{\alpha+1})$.
+
+\begin{proposition}\label{prop:time-one-drone-flexible}
+For different user service time case,
+Algorithm~\ref{alg:one-general} can be generalized to compute the optimal path planning within computational complexity $O(n^{2\alpha} |S|^{\alpha+1})$.
+\end{proposition}

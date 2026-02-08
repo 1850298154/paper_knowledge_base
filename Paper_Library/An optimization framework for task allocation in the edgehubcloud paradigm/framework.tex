@@ -1,0 +1,246 @@
+\section{Proposed optimization framework}\label{framework}
+\subsection{Framework overview}\label{frameworkOverview}
+An outline of the proposed framework is illustrated in \cref{flow}. 
+Given a task flow graph (TFG) of an application, we transform it into an extended task flow graph (ETFG). The ETFG represents the possible allocations of each task on the computational devices, encapsulating both the application and system models, as well as the adopted energy model (\cref{extended,subsec:energyModel}). Subsequently, the resulting ETFG is used to formulate the BILP model, by selecting the desired optimization objective, which can be either (a) the minimization of overall latency, or (b) the minimization of overall energy consumption, subject to specific constraints (\cref{subsec:optimization}). Finally, the formulated BILP problem is solved, yielding the optimal task allocation.
+In the proposed  framework, we utilize BILP, as it is a suitable approach for solving problems of this nature and size at design-time (i.e., offline), guaranteeing a globally optimal solution, in contrast to heuristic methods that typically provide suboptimal results.
+
+
+\subsection{Extended task flow graph (ETFG)}\label{extended}
+Given an application that comprises a set of tasks $\mathcal{T} = \{1, 2, ..., |\mathcal{T}|\}$, its TFG is typically represented by a directed acyclic graph $G=( \mathcal{N}, \mathcal{A})$, where $\mathcal{N}=\{ N_{1}, N_{2}, ..., N_{|\mathcal{T}|} \}$ is the set of nodes and $\mathcal{A} = \{ A_{i \rightarrow j} \, | \, N_{i}, N_{j} \in \mathcal{N}, \, i \neq j, \, \exists \text{ a data dependency } N_{i} \rightarrow N_{j} \}$ is the set of arcs in the graph. A node $N_{i} \in \mathcal{N}$ corresponds to a task $i \in \mathcal{T}$ of the application. An arc $A_{i \rightarrow j} \in \mathcal{A}$ represents the data flow between nodes $N_{i}$ and $N_{j}$, indicating the precedence relationship and communication between parent task $i$ and child task $j$. 
+
+The initial TFG $G$ is transformed into the ETFG $G^{\prime}=(\mathcal{N}^{\prime}, \mathcal{A}^{\prime})$ as follows. 
+First, each node $N_{i} \in \mathcal{N}$ in $G$  is transformed into a composite node (i.e., a set of nodes) $N_{i}^{\prime} \in \mathcal{N}^{\prime}$ in $G^{\prime}$, such that:
+\begin{equation}
+\label{eq:nodeTransformation}
+ f_{\mathrm{node}}(N_{i}) = N_{i}^{\prime} = \{ N_{ik} \, | \, k \in \mathcal{F}_{i} \subseteq \mathcal{U} \},
+\end{equation}
+where $f_{\mathrm{node}}$ is the function that transforms node $N_{i}$ into the set $N_{i}^{\prime}$ as shown above, whereas $k$ is a device in  $\mathcal{F}_{i} \subseteq \mathcal{U}$. 
+$\mathcal{U} = \{ \mathrm{e}, \mathrm{h}, \mathrm{c} \}$ is the set of computational devices in the target edge/hub/cloud environment, where $\mathrm{e}$ is an edge device, $\mathrm{h}$ is a hub device, and $\mathrm{c}$ is a cloud server. $\mathcal{F}_{i}$ is the subset of devices where task $i$ can be allocated.
+If task $i$ requires fixed allocation on specific devices in $\mathcal{U}$, then $\mathcal{F}_{i} \subset \mathcal{U}$, otherwise $\mathcal{F}_{i} = \mathcal{U}$.
+Consequently, an individual node $N_{ik} \in G^{\prime}$ indicates the possible allocation of task $i$ on device $k$. 
+
+
+
+Subsequently, each arc $A_{i \rightarrow j} \in \mathcal{A}$ in $G$ is transformed into a composite arc (i.e., a set of arcs) $A^{\prime}_{i \rightarrow j} \in \mathcal{A}^{\prime}$ in $G^{\prime}$, such that:
+\begin{equation}
+ \label{eq:arcTransformation}
+ \begin{split}
+     f_{\mathrm{arc}}(A_{i \rightarrow j}) = A^{\prime}_{i \rightarrow j}  =  \{ A_{ik \rightarrow jl}= N_{ik} \rightarrow N_{jl} \, | & \, k \in \mathcal{F}_{i} \subseteq \mathcal{U} , \\
+     & \, l \in \mathcal{F}_{j} \subseteq \mathcal{U}  \},
+\end{split}
+\end{equation}
+where $f_{\mathrm{arc}}$ is the function that transforms arc $A_{i \rightarrow j}$ into the set $A^{\prime}_{i \rightarrow j}$ as shown above. $k$ and $l$ denote devices where tasks $i$ and $j$ can be allocated, respectively.
+Hence, an individual arc $A_{ik \rightarrow jl} \in G^{\prime}$ indicates the data flow between nodes $N_{ik}$ and $N_{jl}$. If both tasks $i$ and $j$ are allocated on the same device (i.e., $k=l$), the cost for their communication (in terms of latency and energy) is considered negligible, compared to the case where $k \neq l$. If $k \neq l$ and there is no direct communication channel between devices $k$ and $l$ (i.e., between the edge device $\mathrm{e}$ and the cloud server $\mathrm{c}$), an additional communication cost is considered, as the communication must be conducted through an intermediate device $m$ (i.e., the hub device $\mathrm{h}$).
+
+
+A node $N_{ik} \in G^{\prime}$ is also referred to as a \emph{candidate node}. Only one candidate node $N_{ik}$ in a composite node $N_{i}^{\prime}$ will eventually be selected in the solution of the problem to allocate task $i$ on a specific device $k$. Based on the selected candidate nodes, the corresponding arcs in $G^{\prime}$ will be selected as well. The selection of the candidate nodes and their corresponding arcs will be performed by the BILP solver, based on the desired objective and the constraints defined in \cref{subsec:optimization}. 
+
+
+
+
+\subsubsection{Parameters of ETFG candidate nodes}\label{subsec:paramsNodes}
+A candidate node $N_{ik} \in G^{\prime}$ has the following parameters, which reflect the resource requirements and characteristics of task $i$ when allocated on device $k$: 
+\begin{enumerate}
+    \item \emph{Computational latency} $L_{ik}$: execution time of task $i$ on device $k$.
+   
+    \item \emph{Computational power consumption} $P_{ik}$: power required to execute task $i$ on device $k$. 
+    
+    \item \emph{Computational energy consumption} $E_{ik}$: energy required to execute task $i$ on device $k$.
+     
+    \item \emph{Memory} $M_{i}$: main memory required by task $i$.
+    
+    \item \emph{Storage} $S_{i}$: storage required by task $i$.
+    
+    \item \emph{Output data} $D_{i}$: size of output data generated by task $i$.
+    
+    \item \emph{Number of child tasks} $NC_{i}$: number of child tasks of  task $i$ (i.e., number of immediate successors of node $N_{i} \in G$).  
+\end{enumerate}
+
+The parameters $L_{ik}$, $P_{ik}$, and $E_{ik}$ are device-dependent, whereas $M_{i}$, $S_{i}$, $D_{i}$, and $NC_{i}$ are  device-independent. 
+$E_{ik}$ is calculated using $P_{ik}$ and $L_{ik}$, based on the energy model presented in \cref{subsec:energyModel}.
+The parameters $L_{ik}$, $P_{ik}$, $M_{i}$, $S_{i}$, and $D_{i}$ can be determined via performance and power profiling tools and instruments, as described in \cref{evaluation}. On the other hand, $NC_{i}$ is derived from the structure of TFG $G$.
+
+
+\subsubsection{Parameters of ETFG arcs}\label{subsec:paramsArcs}
+An arc $A_{ik \rightarrow jl} \in G^{\prime}$ has the following parameters:
+\begin{enumerate}
+    \item \emph{Communication latency} $CL_{ik \rightarrow jl}$: time required to transfer the output data $D_{i}$ of parent task $i$, allocated on device $k$, to child task $j$,  allocated on device $l$. 
+   
+    \item \emph{Communication energy consumption} $CE_{ik \rightarrow jl}$: energy required to transfer $D_{i}$ from task $i$ to task $j$, allocated on devices $k$ and $l$, respectively.
+    
+    \item \emph{Indirect communication indicator} $\delta_{ik \rightarrow jl}^{m}$: binary parameter denoting whether arc $A_{ik \rightarrow jl}$ involves indirect communication between devices $k$ and $l$ via  intermediate device $m$. It is defined as:
+    \begin{equation}\label{eq:indicator}
+        \delta_{ik \rightarrow jl}^{m} = 
+        \begin{cases}
+            1, & \text{if $(k,l) \in \left\{ (\mathrm{e}, \mathrm{c}), (\mathrm{c}, \mathrm{e}) \right\}, \, m=\mathrm{h}$ },\\
+            0, & \text{otherwise}.
+        \end{cases}
+    \end{equation}  
+\end{enumerate}
+
+The communication latency $CL_{ik \rightarrow jl}$ depends on the output data size $D_{i}$ and the bandwidth of the utilized communication channel. It is given by:
+\begin{equation}\label{eq:commLatency}
+     CL_{ik \rightarrow jl} = 
+     \begin{cases}
+        D_{i} / W_{kl}, & \text{if $\delta_{ik \rightarrow jl}^{m}=0, \, k \neq l$},\\
+        D_{i}  \left( 1 / W_{km} + 1 / W_{ml} \right), & \text{if $\delta_{ik \rightarrow jl}^{m}=1$},\\
+        0, & \text{if $k = l$},
+     \end{cases}
+\end{equation}
+where $W_{kl}$, $W_{km}$, and $W_{ml}$ denote the bandwidth of the communication channels between the corresponding devices.
+Similarly, the communication energy consumption $CE_{ik \rightarrow jl}$ depends on $D_{i}$ and the energy required to transmit and receive a unit of data over the utilized communication channel, as explained in \cref{subsec:energyModel}.
+
+
+
+\subsubsection{TFG to ETFG transformation example}\label{example}
+The transformation of a TFG $G$ into ETFG $G^{\prime}$ is illustrated in \cref{etfg_diagram}, under two different scenarios of task allocation requirements.
+\cref{etfg_diagram}a depicts $G$, which consists of nodes $N_1$ and $N_2$ (corresponding to tasks 1 and 2, respectively). 
+\cref{etfg_diagram}b shows the transformation of $G$ into $G^{\prime}$ in the case where both tasks can be allocated on any device, i.e., $\mathcal{F}_1 \allowbreak = \allowbreak \mathcal{F}_2 \allowbreak = \allowbreak \mathcal{U} \allowbreak = \allowbreak \{\mathrm{e}, \allowbreak \mathrm{h}, \allowbreak \mathrm{c} \}$. 
+First, the nodes $N_1, N_2 \in G$ are transformed into the composite nodes (i.e., sets of candidate nodes) $N_1^{\prime}, N_2^{\prime} \in G^{\prime}$, respectively. As both tasks can be allocated on any device, a candidate node is generated for each task-device combination, i.e., $N_1^{\prime} \allowbreak = \{ N_{1\mathrm{e}}, \allowbreak N_{1\mathrm{h}}, \allowbreak N_{1\mathrm{c}} \}$ and $N_2^{\prime} = \allowbreak \{ N_{2\mathrm{e}}, \allowbreak N_{2\mathrm{h}}, \allowbreak N_{2\mathrm{c}} \}$. Subsequently, the arc $A_{1 \rightarrow 2} \in G$ is transformed into the composite arc (i.e., set of arcs) $A_{1 \rightarrow 2}^{\prime} \in G^{\prime}$. In $A_{1 \rightarrow 2}^{\prime}$, an individual arc  is generated between each pair of candidate nodes of the two tasks. Thus, $A_{1 \rightarrow 2}^{\prime} \allowbreak = \{ A_{1\mathrm{e} \rightarrow 2\mathrm{e}}, \allowbreak A_{1\mathrm{e} \rightarrow 2\mathrm{h}}, \allowbreak A_{1\mathrm{e} \rightarrow 2\mathrm{c}}, \allowbreak A_{1\mathrm{h} \rightarrow 2\mathrm{e}}, \allowbreak A_{1\mathrm{h} \rightarrow 2\mathrm{h}}, \allowbreak A_{1\mathrm{h} \rightarrow 2\mathrm{c}}, \allowbreak A_{1\mathrm{c} \rightarrow 2\mathrm{e}}, \allowbreak A_{1\mathrm{c} \rightarrow 2\mathrm{h}}, \allowbreak A_{1\mathrm{c} \rightarrow 2\mathrm{c}} \}$. The arcs $A_{1\mathrm{e} \rightarrow 2\mathrm{c}}$ and $A_{1\mathrm{c} \rightarrow 2\mathrm{e}}$ involve indirect communication between devices $\mathrm{e}$ and $\mathrm{c}$, through device $\mathrm{h}$. To denote this, they are depicted in orange. 
+
+
+
+
+\cref{etfg_diagram}c illustrates the transformation of $G$ into $G^{\prime}$ in the case where task 1 requires fixed allocation on device $\mathrm{e}$ (i.e., $\mathcal{F}_1 = \{ \mathrm{e} \}$), whereas task 2 can be allocated on any device (i.e., $\mathcal{F}_2 \allowbreak = \allowbreak \{\mathrm{e}, \allowbreak \mathrm{h}, \allowbreak \mathrm{c} \}$). The nodes $N_1, N_2 \in G$ are transformed into the composite nodes $N_1^{\prime}, N_2^{\prime} \in G^{\prime}$, respectively. In this scenario, as task 1 can be allocated only on device $\mathrm{e}$, $N_1^{\prime} \allowbreak = \{ N_{1\mathrm{e}}\}$. On the other hand, $N_2^{\prime} = \allowbreak \{ N_{2\mathrm{e}}, \allowbreak N_{2\mathrm{h}}, \allowbreak N_{2\mathrm{c}} \}$, as in the previous scenario (\cref{etfg_diagram}b).
+The arc $A_{1 \rightarrow 2} \in G$ is transformed into the composite arc $A_{1 \rightarrow 2}^{\prime} \in G^{\prime}$, such that $A_{1 \rightarrow 2}^{\prime} \allowbreak = \{ A_{1\mathrm{e} \rightarrow 2\mathrm{e}}, \allowbreak A_{1\mathrm{e} \rightarrow 2\mathrm{h}}, \allowbreak A_{1\mathrm{e} \rightarrow 2\mathrm{c}} \}$. Similar to \cref{etfg_diagram}b, $A_{1\mathrm{e} \rightarrow 2\mathrm{c}}$ is shown in orange, as it involves indirect communication between devices $\mathrm{e}$ and $\mathrm{c}$.
+
+ 
+
+ \begin{figure}[!t]
+    \centering
+    \includegraphics[width=\columnwidth]{etfg_diagram_v7_NoVirtualNodes.pdf}
+    \caption{Example of transforming a TFG $G$ into ETFG $G^{\prime}$, considering two different cases of task allocation requirements.}
+    %\vspace{-5mm}
+    \label{etfg_diagram}
+\end{figure}
+
+
+% Complexity:
+The proposed transformation of TFG $G$ into ETFG $G^{\prime}$ increases the size of the graph. In the worst case, where no task requires fixed allocation, for $\nu$ different devices, the number of nodes in $G^{\prime}$ increases by $\nu$ times, whereas the number of arcs increases by $\nu^2$ times, with respect to those in $G$. As the targeted applications require only three devices, the benefits of the proposed framework outweigh the added complexity due to the increase in the size of $G^{\prime}$. We showcase this experimentally in \cref{evaluation}.
+
+
+
+
+\subsection{Energy model}\label{subsec:energyModel}
+The energy model is encapsulated in the ETFG $G^{\prime}$ through the parameters $E_{ik}$ and $CE_{ik \rightarrow jl}$, considering both the computational and communication energy requirements of the application \cite{Wang2017}.
+Specifically, the computational energy consumption $E_{ik}$ required to execute task $i$ on device $k$ is defined as:
+\begin{equation}\label{eq:compEnergy}
+    E_{ik} = P_{ik} \,  L_{ik}.
+\end{equation}
+On the other hand, the communication energy consumption $CE_{ik \rightarrow jl}$ required to transfer the output data $D_{i}$ of parent task $i$, allocated on device $k$, to child task $j$, allocated on device $l$, is given by:
+\begin{equation}\label{eq:commEnergy}
+    CE_{ik \rightarrow jl} = 
+    \begin{cases}
+        D_{i}  \left(\tau_{kl} + \rho_{kl} \right), & \text{if $\delta_{ik \rightarrow jl}^{m}=0, \, k \neq l$},\\
+        D_{i}  \left(\tau_{km} + \rho_{km} + \tau_{ml} + \rho_{ml}  \right), & \text{if $\delta_{ik \rightarrow jl}^{m}=1$},\\
+        0, & \text{if $k = l$}.
+    \end{cases}
+\end{equation}
+The parameters $\tau_{kl}$, $\tau_{km}$, and $\tau_{ml}$ indicate the energy required to transmit a unit of data, whereas $\rho_{kl}$, $\rho_{km}$, and $\rho_{ml}$ denote the energy required to receive a unit of data, over the respective communication channels.
+
+
+
+
+\subsection{Optimization problem formulation}\label{subsec:optimization}
+The ETFG $G^{\prime}$ is utilized to formulate the considered task allocation problem as a BILP model.
+Depending on the use-case, our framework minimizes the desired objective, either the overall latency or overall energy consumption, by selecting the appropriate candidate nodes and arcs in $G^{\prime}$, based on the following formulation.
+ 
+
+\subsubsection{Decision variables}
+We employ the following binary decision variables:
+\begin{enumerate}
+    \item $x_{ik}$: corresponds to a candidate node $N_{ik} \in G^{\prime}$, such that $x_{ik} = 1$ if $N_{ik}$ is selected (i.e., task $i$ is allocated on device $k$), and $x_{ik} = 0$ otherwise.
+   
+    \item $x_{ik \rightarrow jl}$: corresponds to an arc $A_{ik \rightarrow jl} \in G^{\prime}$, such that $x_{ik \rightarrow jl} = 1$ if $A_{ik \rightarrow jl}$ is selected, and $x_{ik \rightarrow jl} = 0$ otherwise.
+\end{enumerate}
+
+
+\subsubsection{Objective function 1}
+The first objective concerns the minimization of overall latency:
+\begin{equation}
+\label{equ:objective}
+\min \left( \sum_{i \in \mathcal{T}} \sum_{k \in \mathcal{F}_{i}} L_{ik} \, x_{ik} +  \sum_{i \in \mathcal{T}} \sum_{k \in \mathcal{F}_{i}} \sum_{j \in \mathcal{T}} \sum_{l \in \mathcal{F}_{j}} CL_{ik \rightarrow jl} \, x_{ik \rightarrow jl} \right).
+\end{equation}
+The first term in \eqref{equ:objective} represents the total computational latency, whereas the second term denotes the total communication latency.
+
+\subsubsection{Objective function 2}
+The second objective pertains to the minimization of overall energy consumption:
+\begin{equation}
+\label{equ:objective2}
+\min \left( \sum_{i \in \mathcal{T}} \sum_{k \in \mathcal{F}_{i}} E_{ik} \, x_{ik} +  \sum_{i \in \mathcal{T}} \sum_{k \in \mathcal{F}_{i}} \sum_{j \in \mathcal{T}} \sum_{l \in \mathcal{F}_{j}} CE_{ik \rightarrow jl} \, x_{ik \rightarrow jl} \right).
+\end{equation}
+Similar to the latency objective, the first term in \eqref{equ:objective2} indicates the total computational energy consumption, whereas the second term represents the total communication energy consumption.
+
+
+\subsubsection{Constraints}\label{subsubsec:constraints}
+The desired objective function, \eqref{equ:objective} or \eqref{equ:objective2}, is solved subject to the following constraints:
+\begin{equation}
+    \label{eq:one}
+     x_{ik} \in \{ 0, 1 \}, \, \forall \, i \in \mathcal{T}, \, \forall \, k \in \mathcal{F}_{i},  
+\end{equation}
+\begin{equation}
+    \label{eq:two}
+     x_{ik \rightarrow jl} \in \{ 0, 1 \}, \, \forall \, i, j \in \mathcal{T}, \, \forall \, k \in \mathcal{F}_{i}, \, \forall \, l \in \mathcal{F}_{j}, \, i \neq j,   
+\end{equation}
+\begin{equation}
+    \label{eq:three}
+    \sum_{k \in \mathcal{F}_{i}} x_{ik} = 1, \, \forall \, i \in \mathcal{T},  
+\end{equation}
+\begin{equation}
+    \label{eq:four}
+    \sum_{k \in \mathcal{F}_{i}} \sum_{j \in \mathcal{T}} \sum_{l \in \mathcal{F}_{j}} x_{ik \rightarrow jl} = NC_{i}, \, \forall \, i \in \mathcal{T}, \, i \neq j,
+\end{equation}
+%\begin{equation}
+%    \label{eq:five}
+%    x_{ik \rightarrow jl} = x_{ik} \, x_{jl}, \, \forall \, i, j \in \mathcal{T}, \, k \in \mathcal{F}_{i}, \, l \in \mathcal{F}_{j}, \, i \neq j,
+%\end{equation}
+\begin{equation}
+    \label{eq:five1}
+    x_{ik \rightarrow jl} \leq x_{ik}, \, \forall \, i, j \in \mathcal{T}, \, \forall \, k \in \mathcal{F}_{i}, \, \forall \, l \in \mathcal{F}_{j}, \, i \neq j,
+\end{equation}
+\begin{equation}
+    \label{eq:five2}
+    x_{ik \rightarrow jl} \leq x_{jl}, \, \forall \, i, j \in \mathcal{T}, \, \forall \, k \in \mathcal{F}_{i}, \, \forall \, l \in \mathcal{F}_{j}, \, i \neq j,
+\end{equation}
+\begin{equation}
+    \label{eq:five3}
+    x_{ik \rightarrow jl} \geq x_{ik} + x_{jl} - 1, \, \forall \, i, j \in \mathcal{T}, \, \forall \, k \in \mathcal{F}_{i}, \, \forall \, l \in \mathcal{F}_{j}, \, i \neq j,
+\end{equation}
+\begin{equation}
+    \label{eq:six}
+    \sum_{i \in \mathcal{T}} M_{i} \, x_{ik} \leq M_{k}^{\mathrm{bgt}}, \, \forall \, k \in \mathcal{U},
+\end{equation}
+\begin{equation}
+    \label{eq:seven}
+    \sum_{i \in \mathcal{T}} S_{i} \, x_{ik} \leq S_{k}^{\mathrm{bgt}}, \, \forall \, k \in \mathcal{U},
+\end{equation}
+\begin{equation}
+    \label{eq:eight}
+    \begin{split}
+    & \sum_{i \in \mathcal{T}} E_{ik} \, x_{ik} \\
+    & + \sum_{i \in \mathcal{T}} \sum_{j \in \mathcal{T}} \sum_{l \in \mathcal{F}_{j}} \sum_{m \in \mathcal{U}} \bigg( 
+    D_{i} \, x_{ik \rightarrow jl} \left( \tau_{kl} \left( 1 - \delta_{ik \rightarrow jl}^{m} \right) + \tau_{km} \, \delta_{ik \rightarrow jl}^{m} \right)\\
+    & + D_{j} \, x_{jl \rightarrow ik} \left( \rho_{lk} \left( 1 - \delta_{jl \rightarrow ik}^{m} \right) + \rho_{mk} \, \delta_{jl \rightarrow ik}^{m} \right) \bigg)\\
+    & + \sum_{i \in \mathcal{T}} \sum_{l \in \mathcal{F}_{i}} \sum_{j \in \mathcal{T}} \sum_{m \in \mathcal{F}_{j}} D_{i} \, x_{il \rightarrow jm} \left( \rho_{lk} + \tau_{km} \right)  \delta_{il \rightarrow jm}^{k}\\
+    & \leq  E_{k}^{\mathrm{bgt}}, \, \forall \, k \in \mathcal{U}, \, i \neq j, \, k \neq l \neq m.
+    \end{split}
+\end{equation}
+
+In the case of objective function \eqref{equ:objective2} (energy objective), the following additional constraint is considered:
+\begin{equation}
+    \label{eq:nine}
+    \sum_{i \in \mathcal{T}} \sum_{k \in \mathcal{F}_{i}} L_{ik} \, x_{ik} +  \sum_{i \in \mathcal{T}} \sum_{k \in \mathcal{F}_{i}} \sum_{j \in \mathcal{T}} \sum_{l \in \mathcal{F}_{j}} CL_{ik \rightarrow jl} \, x_{ik \rightarrow jl} \leq  L_{\mathrm{thr}}, \, i \neq j.
+\end{equation}
+
+
+Constraints \eqref{eq:one} and \eqref{eq:two} ensure the binary nature of the decision variables $x_{ik}$ and $x_{ik \rightarrow jl}$. 
+Constraint \eqref{eq:three} guarantees that only one candidate node $N_{ik}$ will be selected for each task $i \in \mathcal{T}$ (i.e., it ensures that each task $i \in \mathcal{T}$ will be allocated on only one device $k \in \mathcal{F}_{i}$). 
+On the other hand, \eqref{eq:four} guarantees that for each candidate node $N_{ik}$ the number of outgoing arcs that will be selected will be equal to the number of child tasks $NC_{i}$ of task $i$. In the same context, \eqref{eq:five1}--\eqref{eq:five3} ensure that if candidate nodes $N_{ik}$ and $N_{jl}$ are selected, the corresponding arc $A_{ik \rightarrow jl}$ will be selected as well.
+Thus, \eqref{eq:four}--\eqref{eq:five3} guarantee that the connectivity and precedence relationships between the tasks will be preserved. 
+Constraints \eqref{eq:six}--\eqref{eq:eight} ensure that the memory $M_{k}^{\mathrm{bgt}}$, storage $S_{k}^{\mathrm{bgt}}$, and energy $E_{k}^{\mathrm{bgt}}$ budgets, respectively, for each device $k \in \mathcal{U}$ will not be exceeded for the execution of the application. These budgets are defined based on the resource limitations of each device.
+Finally, if the desired objective is the minimization of energy, \eqref{eq:nine} guarantees that a predefined latency threshold $L_{\mathrm{thr}}$ that bounds the acceptable overall latency is not exceeded.
+
+
+It is noted that \eqref{eq:eight} is considered not only when minimizing latency, but also when minimizing energy, as even in the latter case, the energy budget of one or more devices may be exceeded.
+Moreover, it is noted that both the computational and communication energy consumption of a device $k$ are taken into account in \eqref{eq:eight}. With respect to the communication energy, we consider all the data transmitted from and received at device $k$ (either directly or indirectly to/from another device), including the case where $k$ is used for the communication between other devices.
+The notations used in the proposed framework are included in Table A.1 in Appendix A.

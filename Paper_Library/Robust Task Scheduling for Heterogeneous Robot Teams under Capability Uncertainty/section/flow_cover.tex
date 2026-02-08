@@ -1,0 +1,102 @@
+\section{Decompose Agent Flows into Paths}\label{sec:flow_decompose}
+Solving the teaming problem in Sec. \ref{sec:problem_model} using the algorithm in Sec. \ref{sec:lshaped_algorithm} provides the optimal solution to \(x_{k i j}, \forall k \in V, \forall i, j \in \node\), i.e., the flows of different agent species.
+This section discusses an optimal algorithm to extract a routing plan for each individual agent from the agent flows.
+
+The flow decomposition problem contains two steps: rounding and splitting. First, we round the agent network flow obtained from the MIP risk minimization model in the previous section. Secondly, we split the network flow into a set of agent routes to obtain a plan for each individual agent.
+
+
+An example is shown in Fig. \ref{fig:decompose_flow}. The flow network of species \(1\) is extracted and rounded off in Fig. \ref{fig:graphical_model_continuous_v1}. Then, in Fig. \ref{fig:graphical_model_continuous_v1_cover}, three individual agent paths with flows of 1 on the path edges are selected such that the sum of the flows for the three paths equals the rounded integer network flow in Fig. \ref{fig:graphical_model_continuous_v1}. Note that in order to maintain the task requirements, we have to round up a fractional flow rather than round it to the nearest integer.
+
+In short, requirements for the rounding problem include:
+\begin{itemize}
+    \item Round up the agent flow to integers.
+    \item Maintain the flow constraint. (E.g., if two agents enter a task, they should also leave the task.)
+    \item The rounding should result in minimum additional energy cost. (There can be multiple solutions with only the first two constraints.)
+\end{itemize}
+
+
+Requirements for the splitting problem include:
+\begin{itemize}
+    \item The integer agent flow should be split into multiple individual routes.
+    \item The most costly routes due to the current split should be minimized. (There can be multiple solutions with only the first constraint.)
+\end{itemize}
+
+
+There is no trivial solution to the rounding and splitting problems. Additional information and examples are given in Appendix \ref{sec:appendix_flow}. In the following two sections, we formalize two optimization problems to determine the optimal flow decomposition.
+
+\begin{figure}[t]
+    \centering
+	\subfloat[\label{fig:graphical_model_continuous_flow}]{
+    	\includegraphics[width=0.88\linewidth, trim=0 0 0 0, clip]{figure/flow/graphical_model_continuous_flow.pdf}}
+    % 	\caption{Resulted agent flows.}
+    \hfill
+	\subfloat[\label{fig:graphical_model_continuous_v1}]{
+    	\includegraphics[width=0.88\linewidth, trim=0 0 0 0, clip]{figure/flow/graphical_model_continuous_v1.pdf}}
+    % 	\caption{The flow of agent species \(1\).}
+    \hfill
+	\subfloat[\label{fig:graphical_model_continuous_v1_cover}]{
+    	\includegraphics[width=0.88\linewidth, trim=0 0 0 0, clip]{figure/flow/graphical_model_continuous_v1_cover.pdf}}
+    \hfill
+    % 	\caption{The path cover of agents species \(1\) using three individuals.}
+	\caption{Decompose a flow into paths. The \(x\)'s are the flow on an edge, with the red and blue numbers an example of the actual value. The colors distinguish the agent species. The \(b\)'s are the energy cost of the edge. (a) Resulted agent flows. (b) The flow of agent species \(1\). (c) The split of agent species \(1\) using three individuals.}
+	\label{fig:decompose_flow}
+\end{figure}
+
+\subsection{Minimum Energy Cost Rounding}\label{sec:flow_round_up}
+
+Formally, a flow network is a graph \(G(N = S \cup M \cup U, E)\) with a function \(f(\cdot): E \rightarrow \mathbb{R}\), where \(S\), \(M\), \(U\), and \(E\) denote the set of start nodes, intermediate nodes, terminal nodes, and directed edges, respectively. For a node \(m \in M\), suppose the incoming and outgoing edge sets are \(E_{m}^{\text{in}}\) and \(E_{m}^{\text{out}}\), respectively. Then, the function \(f(\cdot)\) should satisfy the flow constraint
+\begin{align}
+    \sum_{e \in E_{m}^{\text{in}}} f(e) = \sum_{e \in E_{m}^{\text{out}}} f(e), \quad \forall m \in M. \nonumber % \label{eqn:flow_def}
+\end{align}
+
+In this section, the flow function \(f_k(i,j) = x_{kij}\) indicates the number of agent species \(k \in V\) on edge \((i, j) \in E\).
+
+See Fig. \ref{fig:graphical_model_continuous_v1} as an example. Suppose the flow output from the MIP model in Sec. \ref{sec:problem_model} for agent species \(k \in V\) is \(x_{k i j}\) on edge \((i, j)\). Let the integer flow after the rounding process be \(x_{k i j}'\). Then, the linear program in below will return an integer flow network with minimum energy cost.
+\begin{align}
+    \min & \sum_{i, j \in \node} b_{k i j} \cdot x_{k i j}' & \label{eqn:round_obj}\\
+    \text{s.t. } & x_{k i j}' \geq {\lceil x_{k i j} \rceil}, & \forall x_{kij} > 0, \nonumber \\
+    & x_{k i j}' = 0,  & \forall x_{kij} = 0. \label{eqn:round_bound} \\% \label{eqn:round_bound1}\\
+    & \sum_{i \in S \cup M} x_{k i m} = \sum_{j \in U \cup M} x_{k m j}, & \forall m \in M. \label{eqn:round_flow_constraint}
+\end{align}
+
+The objective function \eqref{eqn:round_obj} penalizes the energy cost. \eqref{eqn:round_bound} ensures the rounding is happening upward, where \(\lceil x_{k i j} \rceil\) denotes the smallest integer larger than \(x_{k i j}\). The network flow constraint \eqref{eqn:round_flow_constraint} should be maintained during the optimization. \(S\), \(U\), and \(M\) are the set of start, terminal, and task nodes, respectively.
+
+Note that there is no explicit integer constraint to ensure that \(x_{kij}'\) is an integer. However, if this linear program is solved using Simplex-based algorithms, the solutions to \(x_{kij}'\) are guaranteed to be integers. The proof is given in Appendix \ref{sec:appendix_integer}.
+Because of this, the minimum energy rounding problem could be solved in polynomial time through a linear program (instead of an integer linear program).
+
+\subsection{Minimum Max-Energy Flow Split}\label{sec:flow_minmax_cover}
+
+After rounding, we obtain the integer flows \(x_{k i j}'\) in Fig. \ref{fig:graphical_model_continuous_v1}, the next step is to split this integer flow into individual agent paths in Fig. \ref{fig:graphical_model_continuous_v1_cover}. By summing the out-going flow at the start node, we are able to get the needed number of agents from species \(k \in V\), denoted as \(n'_k\). Then we compose \(n'_k\) graphs as in Fig. \ref{fig:flow_cover_problem} for the \(n'_k\) agents.
+
+We can formalize an integer linear program (ILP) as follows; find the routes for all agents, such that the maximum individual energy cost is minimized and the unit agent flow on the paths sums to the original network flow.
+\begin{align}
+    & \quad \min_{x_{k i j}^{l}} \ \max_{l} \sum_{i, j \in \node} b_{k i j} \cdot x_{k i j}^{l} \label{eqn:path_convert_obj}\\
+    & \text{s.t. } \sum_{l=1}^{n'_k} x_{k i j}^{l} = x_{k i j}', \quad \forall i,j \in \node, \label{eqn:path_convert_sum_flow}\\
+    & \sum_{i \in \node} x_{k i m}^l = \sum_{j \in \node} x_{k m j}^l, \quad \forall m \in M, \ \ \forall l = 1,\cdots,n'_k, \label{eqn:path_convert_flow_constraint} \\
+    & \quad \ \ \sum_{i \in M} x_{k s i}^l = 1, \quad \forall l = 1,\cdots,n'_k, \label{eqn:path_convert_flow_constraint2} \\
+    & \quad \quad x_{k i j}^l  \in \{0, 1\}, \quad \forall i,j \in \node, \quad \forall l = 1,\cdots,n'_k. \nonumber
+\end{align}
+
+In the ILP above, the objective \eqref{eqn:path_convert_obj} penalizes the maximum energy cost of an individual agent. Equation \eqref{eqn:path_convert_sum_flow} ensures that the resulting agent flows in sum up to the rounded flow. Equation \eqref{eqn:path_convert_flow_constraint} is the network constraint. Equation \eqref{eqn:path_convert_flow_constraint2} requires that in each subgraph, there is only one agent.
+
+\begin{figure}[h!]
+	\centering
+	\subfloat[]{
+    	\includegraphics[width=0.9\linewidth, trim=0 0 0 0, clip]{figure/flow/graphical_model_continuous_v1_1.pdf}}
+    % 	\caption{The flow of the first agent of species \(1\).}
+    \hfill
+	\subfloat[]{
+    	\includegraphics[width=0.9\linewidth, trim=0 0 0 0, clip]{figure/flow/graphical_model_continuous_v1_2.pdf}}
+    % 	\caption{The flow of the second agent of species \(1\).}
+    \hfill
+	\subfloat[]{
+    	\includegraphics[width=0.9\linewidth, trim=0 0 0 0, clip]{figure/flow/graphical_model_continuous_v1_3.pdf}}
+    % 	\caption{The flow of the third agent of species \(1\).}
+    \hfill
+	\caption{Graphical model for the minimum max-energy flow split problem for agent species \(1\). The \(x\)'s are the flow on an edge. (a)(b)(c) are the flow networks for the three agents of species \(1\).}
+	\label{fig:flow_cover_problem}
+\end{figure}
+
+
+
+

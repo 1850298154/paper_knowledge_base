@@ -1,0 +1,281 @@
+
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.7\linewidth]{Main-Text/Figures/new_query_examplev5.pdf}
+    \caption{An example of new query. Among these, "origin" indicates the departure city, "destination" indicates the destination, "days" indicates the total number of travel days, "visiting\_city\_number" indicates the total number of cities visited during the trip, "date" indicates the specific travel date range, "people\_number" indicates the number of travelers, "local\_constraint" indicates the user's other hard requirements for this trip (i.e., hard constraints), "budget" indicates the travel budget, "reference\_information" indicates the essential reference information required for conducting travel planning, and "query" indicates the user's travel query.}
+    \label{new_query_example}
+\end{figure}
+\section{Methods}
+
+In this section, we use TravelPlan~\cite{xie2024travelplanner} (a complex reasoning and planning task) as an example to introduce our general and scalable method, IMAGINE. IMAGINE consists of three key stages: New Query Generation, Multi-Agent System based Inference Data Generation, and Agentic Reasoning Training. New Query Generation expands the diversity of query data in the training set by generating novel queries; Multi-Agent System based Inference Data Generation using MAS to generate inference data for queries produced in the previous stage; Agentic Reasoning comprises two components: Agentic SFT, which fine-tunes a single model using the MAS-based inference data to inject the reasoning abilities and behaviors of a MAS into a single model; Agentic RL, which further enhances the model’s agentic reasoning abilities through end-to-end reinforcement learning, ultimately enabling the single model to surpass the performance of the original MAS. Additionally, it should be noted that our research focuses on the sole-planning mode of the TravelPlanner dataset, which is used to evaluate the ability of LLMs to perform complex reasoning and planning under the condition of having all the detailed and necessary information in advance (e.g., attractions, restaurants, accommodations and transportation).
+
+\subsection{New Query Generation}
+% 由于原始TravelPlanner数据集规模有限，仅包含1225条query（训练集45条、验证集180条、测试集1000条），若移除测试集中的1000条query，则仅剩余225条query。如此少量的query不仅多样性不足，而且不足以支撑模型的训练需求，因此我们需要生成新的query，以便用于后续的模型训练。我们采用了TravelPlanner~\cite{xie2024travelplanner}中构建query的方法，且完全基于TravelPlanner所提供的沙盒环境中的信息。首先从 出发城市、目的地、旅行日期范围 这几个基本要素入手，通过随机组合形成每个 query 的框架。然后调整旅行时长和难度，以创建不同复杂度的query。具体来说，从旅行时长层面，我们创建的新query包含了3 day、5 day、7 day三种时长的query，3 day计划访问1个城市， 5 day计划访问 2 个城市，7 day计划访问 3 个城市；从难度层面，我们创建的新query包括了easy、medium、hard三种不同的难度等级，难度等级主要由the number of hard constraints决定，硬约束的数量越多，query的难度越大。此外，数据去重是非常关键的。也就是说，我们必须要确保新生产出的query data不与原数据集中的query data重复。为此，我们在代码中加入了严格的去重逻辑。具体来说，我们通过检查origin和destination等关键信息的方式，对新生产出的query data进行了去重。我们能够确保我们新生产出的query data与原数据集不产生重复，且我们新生产出的query data内部不会产生重复。最后，基于上述元素，我们用 GPT-4o 生成自然语言 query。我们用上述方法共创建了4105条新query，具体例子如图3所示。通过上述方法创建的新query能够确保多样性，因为元素的细微变化会导致 travel plan 显著不同。
+% 此外，值得指出的是，由于我们focus on TravelPlanner数据集的sole-planning mode（该模式主要评估模型利用预先给定的reference information进行推理与规划的能力），因此我们还需要为每个新生产出的query构造reference information。这些reference information包含景点、餐厅、住宿和交通的详细信息。为此，我们开发了代码，为每个query生成相应的reference information，且能确保这些reference information完全来源于TravelPlanner的沙盒环境。
+% 需要说明的是，与TravelPlanner原始数据集不同，我们并不保证新生成的所有query都存在满足全部约束条件的可行travel plan，部分query会存在无可行travel plan的情况。例如在reference information中，某些城市之间可能缺乏可达的交通方式，导致无法规划可行旅程。但是这并不会影响后续的模型训练，因为我们的核心目标是让模型学习推理过程。即使面对无解查询，模型对此类问题的推理仍可为训练过程提供有价值的学习素材。
+% （这里举个例子！）
+
+
+% 例如，查询"本地约束": {"房屋规则": "允许宠物", "餐饮偏好": null, "房间类型": "整租", "交通方式": "不乘坐航班"} 体现了用户对旅行的特定要求：房间需允许携带宠物、应为整租形式，且用户倾向不乘坐航班，同时无额外饮食偏好。
+
+% origin为旅行的出发地，destination为旅行的目的地，date为旅行日期、local_constraint为用户对旅行的特殊要求，local_constraint中包含house rule、cuisine、room type、transportation
+
+% 例如 "local_constraint": {"house rule": "pets", "cuisine": null, "room type": "entire room", "transportation": "no flight"}, 代表用户对此次旅行的额外要求包括：旅程中居住的房间需要允许携带宠物，且房间需要是一整套房间，对于交通的要求是不乘坐飞机。但是对饮食没有额外要求。
+
+Due to the limited size of the original TravelPlanner dataset, which contains only 1,225 queries (45 for training, 180 for validation, and 1,000 for testing), if we remove the 1,000 queries from the test set, only 225 queries remain. This small number of queries not only lacks diversity but also cannot support the training requirements of the model. Therefore, we need to generate new queries for subsequent model training. We adopted the query generation method from TravelPlanner~\cite{xie2024travelplanner} and based it entirely on the information in the sandbox environment provided by TravelPlanner. We start by focusing on basic elements such as the departure city, destination, and travel date range, and randomly combine these elements to form the framework of each query. Then, we adjust the travel duration and difficulty to create queries with different complexities.
+
+Specifically, from the perspective of travel duration, we created new queries with three durations: 3 days, 5 days, and 7 days. A 3-day query visits one city, a 5-day query visits two cities, and a 7-day query visits three cities. From the perspective of difficulty, we created new queries with three difficulty levels: easy, medium, and hard. The difficulty level is primarily determined by the number of hard constraints—the more hard constraints there are, the higher the difficulty of the query.
+%
+Furthermore, data deduplication is crucial. That is, we must ensure that the newly generated query data does not overlap with the existing query data in the original dataset. To achieve this, we have incorporated strict deduplication logic in the code. Specifically, we check key information, such as the origin and destination, to ensure that the newly generated queries do not overlap with those in the original dataset and that there are no internal duplicates in the newly generated query data.
+
+Finally, based on the above elements, we use GPT-4o to generate natural language queries. Using this approach, we generated 4,105 new queries in total. Example queries are shown in Figure \ref{new_query_example}. The newly generated queries ensure diversity because even small variations in the elements lead to significantly different travel plans.
+%
+It is also worth noting that, as we focus on the TravelPlanner dataset's sole-planning mode (which primarily evaluates the model's ability to reason and plan using pre-existing reference information), we also need to construct reference information for each newly generated query. These reference information include details on attractions, restaurants, accommodations, and transportation. For this, we developed code to generate corresponding reference information for each query, ensuring that this information is entirely sourced from the TravelPlanner sandbox environment.
+
+It is important to note that, unlike the original TravelPlanner dataset, we do not guarantee that all newly generated queries will have a feasible travel plan that satisfies all constraints. Some queries may have no feasible travel plan. For example, certain cities in the reference information may lack available transportation options, making it impossible to plan a feasible trip. However, this does not affect subsequent model training, as our primary goal is for the model to learn the reasoning process. Even in the case of unsolvable queries, the model's reasoning on such problems still provides valuable training material.
+%
+% where  "origin" represents the starting location of the trip, "destination" is the destination, "date" refers to the travel date, and "local constraint" includes specific user requirements for the trip, such as house rules, cuisine preferences, room type, and transportation. From a travel duration perspective, these queries include three types of duration: 3 days, 5 days, and 7 days. In terms of difficulty, the queries are categorized into three difficulty levels: easy, medium, and hard. 
+%{\color{blue}A summary is provided in the table below (a 3x3 grid, with an example query for reference).}
+
+% {\color{blue}(For example, consider a scenario where...) ZXK, example}
+
+
+
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=1\linewidth]{Main-Text/Figures/MASv3.pdf}
+    \caption{Inference Data Generation Process by Our Designed Multi-Agent System}
+    \label{Inference Data Generation Process by Our Designed Multi-Agent System}
+\end{figure*}
+
+
+
+
+\subsection{Multi-Agent System based Inference Data Generation}
+% In order to integrate the capabilities of a Multi-Agent System into a single, smaller model—so that this single, compact model can achieve, or even surpass, the performance of a much larger Multi-Agent System and generate high-quality responses in an end-to-end and efficient manner—we design an extremely simplified Multi-Agent System that generates both intermediate reasoning data and final answers for a given query. The architecture of the Multi-Agent System is shown in the figure below. Initially, we let DeepSeek-R1 generate inference data based on the query and reference information. Then, we have GPT-4o check whether there are any errors in DeepSeek-R1's inference. If there are errors, we point them out and correct them. If there are no errors, GPT-4o outputs "No errors." Finally, another GPT-4o model synthesizes the inference process of the two previous agents and provides the final travel plan in JSON format. This can be understood as a very simplified version of a reflection Agent System (referencing the "reflection Agent" article). In addition, we included more detailed and specific instructions in the prompt so that our Multi-Agent System could produce higher-quality inference data.
+
+
+% %%%%%%%%%%%%%%%下面是新写的中文版（还没翻译成英文）%%%%%%%%%%%%%%%
+
+% 单独的LLM Agent在TravelPlanner这种需复杂推理与规划的问题上表现不佳，shinn等人【shinn2023reflexion】的研究表明，在复杂推理问题上进行反思有助于改善推理及最终回答质量。因此，我们设计了一个简易的具有反思能力的Multi-Agent System，用于生产高质量的推理数据，以便用于后续的模型训练。经实验证实，我们设计的具有反思能力的Multi-Agent System所产生的推理数据的质量优于单独的LLM Agent所产生的推理数据。
+
+% 我们在我们的Multi-Agent System中设定了3种不同的角色，分别是Reasoner、Judge和Reflector。我们基于Multi-Agent System生产数据的具体流程如下：
+% 首先，将query和reference information放入Reasoner Prompt Template中，输入给Reasoner(DeepSeek-R1-671B)，让Reasoner基于query和reference information, 生成reasoning content和answer(json格式的travel plan)。然后，我们分别让两个Judge模型独立地审视Reasoner生成的reasoning content中是否有错误。Judge仅判断是否存在错误。若Judge判定存在错误，则仅输出Errors exist；若判定不存在错误，则仅输出No errors。
+% 只要有任意一名Judge判定存在错误，Reflector（Gemini-2.5-Flash）就会开始对Reasoner生成的reasoning content进行反思。Reflector会首先指出Reasoner在推理过程中存在的具体错误，然后进行相应的纠正（我们把这部分内容叫做Reflection content），最后，Reflector会输出经过修正的Final answer（即json格式的travel plan）；
+% 若两名Judge均判定不存在错误，则不调用Reflector，直接以Reasoner输出的answer作为Final answer。
+
+% 我们利用上述过程中Multi-Agent System所生成的内容，构造出用于后续进行Agentic Supervised Fine-Tuning的训练数据。训练数据的具体构造方法如下：
+
+% 若有任意一名Judge判定存在错误，则我们构造形如下面格式的数据：
+% Reasoner_Prompt_Template(reference_information, query) + <think>Reasoner's reasoning content + REFLECTION(Now, I need to reflect on whether there are any errors in my reasoning above): + Reflector's Reflection content + The reflection is over, now IMMEDIATELY output the final answer!</think> + Final answer
+% 若两名Judge均判定不存在错误，则我们构造形如下面格式的数据：
+% Reasoner_Prompt_Template(reference_information, query) + <think>Reasoner's reasoning content + REFLECTION(Now, I need to reflect on whether there are any errors in my reasoning above): + No errors. + The reflection is over, now IMMEDIATELY output the final answer!</think> + Final answer
+
+% 具体架构及流程如下图所示。
+
+% 我们利用这种Multi-Agent System的推理方法，在我们新生产的4105条query data以及TravelPlanner原始数据集中的训练集(45条query data)共计4150条query data上，生成了中间推理数据以及最终答案。这部分数据将用来进行后续的模型训练。
+
+
+% %%%%%%%%%%%%%%%%%%%%% 这几句加还是不加呢？%%%%%%%%%%%%%%%%%%%%%
+% 为了将Multi-Agent System的能力整合到一个单一的较小模型中，使单一的较小模型即可获得甚至超越比自身大得多的Multi-Agent System的能力，从而端到端地快速给出高质量响应，我们设计了一个简易的Multi-Agent System，用于对query产生中间推理数据以及最终答案
+% 我们所设计的上述Multi-Agent System可以被理解为是一个reflection Agent System（引reflection Agent那篇文章）。
+% 此外，我们还在Prompt中添加了更多详细具体的指令，以便我们的Multi-Agent System能够产生出更高质量的推理数据。
+% %%%%%%%%%%%%%%%%%%%%% 这两句加还是不加呢？%%%%%%%%%%%%%%%%%%%%%
+
+
+
+
+A standalone LLM Agent performs poorly in problems that require complex reasoning and planning, such as TravelPlanner. Research  \cite{shinn2023reflexion,guo2025mirror} has shown that reflection on complex reasoning tasks helps improve both the reasoning and the quality of the final answer. Therefore, we designed a simplified Multi-Agent System with reflection capabilities to generate high-quality reasoning data for subsequent model training, as shown in Figure \ref{Inference Data Generation Process by Our Designed Multi-Agent System}. Empirical results confirm that the reasoning data produced by our designed Multi-Agent System with reflection capabilities is of higher quality than that produced by a standalone LLM Agent (See the "Comparison of the final travel plan" section in the Experiments).
+
+In our Multi-Agent System, we defined three different roles: Reasoner, Judge, and Reflector. The specific data generation process within the Multi-Agent System is as follows:
+First, the query and reference information are placed into the Reasoner Prompt Template and input to the Reasoner (DeepSeek-R1-671B). Based on the query and reference information, the Reasoner generates the reasoning content and answer (note that this is only the answer provided by the Reasoner, and it may not be the Final answer). Then, two Judge models independently review the reasoning content generated by the Reasoner to identify any errors. The Judges only check for errors. If a Judge detects an error, they output “Errors exist.”; if no errors are found, they output “No errors.”
+Whenever any Judge detects an error, the Reflector (Gemini-2.5-Flash) begins to reflect on the reasoning content generated by the Reasoner. The Reflector will first point out the errors made by the Reasoner in the reasoning content, and then provide corresponding corrections (We refer to this part of the Reflector’s output as the Reflection content). Finally, the Reflector outputs the corrected final answer (i.e., the JSON-formatted travel plan).
+If both Judges detect no errors, the Reflector is not invoked, and the answer generated by the Reasoner is directly used as the Final answer.
+
+We use the content generated by the Multi-Agent System in the above process to construct training data for subsequent Agentic Supervised Fine-Tuning. The specific construction method for the training data is as follows:
+\begin{itemize} [leftmargin=0.5cm]
+\item If any Judge detects an error, we construct the data in the following format:
+
+Reasoner Prompt Template(reference information, query) +  <think>Reasoner’s reasoning content + "REFLECTION(Now, I need to reflect on whether there are any errors in my reasoning above):" + Reflector’s Reflection content + "The reflection is over, now IMMEDIATELY output the final answer!"</think> + Final answer
+
+\item If both Judges detect no errors, we construct the data in the following format:
+
+Reasoner Prompt Template(reference information, query) +  <think>Reasoner’s reasoning content + "REFLECTION(Now, I need to reflect on whether there are any errors in my reasoning above):" + "No errors." + "The reflection is over, now IMMEDIATELY output the final answer!"</think> + Final answer
+\end{itemize}
+
+% \begin{itemize} [leftmargin=0.5cm]
+%     \item If any Judge detects an error, we construct the data in the following format:
+% \texttt{Reasoner Prompt Template} (reference information, query) +  \texttt{Reasoner’s reasoning content} + \texttt{REFLECTION }(Now, I need to reflect on whether there are any errors in my reasoning above): + \texttt{Reflector’s Reflection content} + The reflection is over, now IMMEDIATELY output the final answer! + Final answer.
+% \item If both Judges detect no errors, we construct the data in the following format:
+% \texttt{Reasoner Prompt Template} (reference information, query) +  \texttt{Reasoner’s reasoning content} + \texttt{REFLECTION }(Now, I need to reflect on whether there are any errors in my reasoning above): + No errors. + The reflection is over, now IMMEDIATELY output the final answer! + Final answer.
+% \end{itemize}
+The architecture and process are shown in Figure \ref{Inference Data Generation Process by Our Designed Multi-Agent System}.
+Using this Multi-Agent System’s reasoning method, we generated intermediate reasoning data and final answers for a total of 4150 query data, including 4105 newly generated queries and the training set of 45 queries from the original TravelPlanner dataset. This data will be used for subsequent model training.
+
+% To integrate the capabilities of the Multi-Agent System into a smaller single model, enabling the smaller model to achieve or even surpass the performance of the much larger Multi-Agent System, and provide fast, high-quality responses end-to-end, we designed a simplified Multi-Agent System to generate intermediate reasoning data and final answers for queries.
+% The Multi-Agent System we designed can be understood as a reflection Agent System.
+
+
+
+
+\subsection{Agentic Reasoning Training}
+In this section, we provide a detailed introduction to our Agentic Reasoning Training method. Agentic Reasoning Training consists of two sequential components: Agentic Supervised Fine-Tuning (SFT) and Agentic Group Relative Policy Optimization (GRPO). Agentic SFT integrates the capabilities of a Multi-Agent System into a single model, while Agentic GRPO builds upon this foundation to conduct end-to-end training, thereby enhancing and further stimulating the model’s agentic reasoning abilities.
+
+\subsubsection{Agentic SFT} 
+Given a dataset
+$\mathcal{D} = \{ (x_i, y_i) \}_{i=1}^N$,
+where $x_i$ is the input (e.g., a prompt or query) and $y_i$ is the desired response, SFT optimizes the conditional likelihood of generating $y_i$ given $x_i$:
+\begin{align*}
+    \mathcal{L}_{\text{SFT}}(\theta)
+= - \mathbb{E}_{(x,y)\sim \mathcal{D}}
+\left[ \sum_{t=1}^{|y|} \log \pi_\theta (y_t \mid x, y_{<t}) \right],
+\end{align*}
+where $\pi_\theta$ is the model with parameters $\theta$, $y_{<t}$ denotes all tokens before time step $t$. The loss is the cross-entropy between the model’s predicted distribution and the true tokens.
+
+We use the training data constructed in the previous stage (i.e., the Multi-Agent System based Inference Data Generation stage) to perform full SFT training on the Qwen-3-8B-Instruct model.
+
+% With the inference data and the final answer generated by the Multi-Agent System above, we now concatenate the original query, the inference data and the final answer from the Multi-Agent System, into a complete data entry, which is used to perform full SFT on the Qwen-3-8B-Instruct model.
+
+\subsubsection{Agentic GRPO}  
+Original Group Relative Policy Optimization (GRPO)~\cite{shao2024deepseekmath} eliminates the need for a value model by evaluating the relative advantage of each response within a set of responses to the same query.
+Specifically, GRPO optimizes the following objective:
+% \begin{align*}
+% &\mathcal{J}_{\text{GRPO}}(\theta) 
+% = \mathbb{E}_{x \sim \mathcal{D}, \{y_i\}_{i=1}^G \sim \pi_{\theta_{\text{old}}}(\cdot|x)} 
+% \\
+% &\left[ \frac{1}{G} \sum_{i=1}^G \frac{1}{|y_i|} \sum_{t=1}^{|y_i|} 
+% \min \Big( w_{i,t}(\theta) \hat{A}_{i,t}, 
+% \operatorname{clip}\big(w_{i,t}(\theta), 1-\epsilon, 1+\epsilon\big) \hat{A}_{i,t} \Big) \right],
+% \end{align*}
+\begin{align*}
+\mathcal{J}_{\text{GRPO}}(\theta) 
+=\mathbb{E}
+\left[ \frac{1}{G} \sum_{i=1}^G \frac{1}{|y_i|} \sum_{t=1}^{|y_i|} 
+\min \Big( w_{i,t}(\theta) \hat{A}_{i,t}, 
+\operatorname{clip}\big(w_{i,t}(\theta), 1-\epsilon, 1+\epsilon\big) \hat{A}_{i,t} \Big) \right],
+\end{align*}
+where $G$ is the number of generated responses to each query $x$ (i.e., the group size), and the importance ratio $w_{i,t}(\theta)$ and advantage $\hat{A}_{i,t}$ of token $y_{i,t}$ are:
+\begin{align}
+w_{i,t}(\theta) 
+= \frac{\pi_\theta(y_{i,t} \mid x, y_{i,<t})}{\pi_{\theta_{\text{old}}}(y_{i,t} \mid x, y_{i,<t})},
+\qquad
+\hat{A}_{i,t} = \frac{r(x,y_i) - \operatorname{mean}\left(\{r(x,y_j)\}_{j=1}^G\right)}
+{\operatorname{std}\left(\{r(x,y_j)\}_{j=1}^G\right)},
+\end{align}
+
+% $
+% w_{i,t}(\theta) 
+% = \frac{\pi_\theta(y_{i,t} \mid x, y_{i,<t})}{\pi_{\theta_{\text{old}}}(y_{i,t} \mid x, y_{i,<t})},
+% \hat{A}_{i,t} = \frac{r(x,y_i) - \operatorname{mean}(\{r(x,y_j)\}_{j=1}^G)}
+% {\operatorname{std}(\{r(x,y_j)\}_{j=1}^G)},
+% $
+
+\noindent respectively, where all the tokens in $y_i$ share the same advantage as $\hat{A}_i$.
+
+To better suit our task, we designed a custom rule-base reward function for GRPO. Specifically, We designed the reward function to include three components: format check, constraint satisfaction check, and reflection check, as shown in Figure \ref{rule-based reward}:
+
+\singlespacing
+
+\noindent\textbf{Format check}:
+In this part, we first strictly verify whether the model’s output follows the format "<think> ... </think> ...", i.e., it must start with "<think>", followed by some content, then "</think>", and subsequently some additional content.
+If this format is not satisfied, a reward of -1 is immediately assigned and the process terminates directly. 
+If it is satisfied, we further check whether the final answer output after the "</think>" tag conforms to the expected JSON format. If the format does not comply with the specified JSON format, a reward of -1 is also directly assigned and the process terminates directly. If both conditions are met, it indicates the format check has passed, and we proceed to subsequent checks.
+
+\singlespacing
+
+\noindent\textbf{Constraint satisfaction check}:
+In this part, we perform two checks: \textit{commonsense constraints check} and \textit{hard constraints check}. Specifically, the \textit{commonsense constraints check} include: "is reasonable visiting city", "is valid restaurant", 
+"is valid attraction", "is valid accommodation", "is valid transportation", "is valid information in the current city", "is valid information in the sandbox", and "is not absent".
+%
+The \textit{hard constraints check} include: "is valid cuisine", "is valid room rule", "is valid transportation", "is valid room type", and "is valid cost".
+%
+Using the rule-based evaluation code provided by TravelPlanner, we can determine whether each of the above items is satisfied. For both commonsense and hard constraints, we assign rewards based on the proportion of satisfied items to the total number of items. Specifically:
+\begin{itemize}
+    \item \texttt{commonsense constraint reward }= number of satisfied commonsense constraints items / total commonsense constraints items.
+    \item \texttt{hard constraint reward }= number of satisfied hard constraints items / total hard constraints items.
+\end{itemize}
+Finally, we sum the \texttt{commonsense constraint reward} and \texttt{hard constraint reward} to obtain the total \texttt{constraint satisfaction reward}.
+
+
+\singlespacing
+
+\noindent\textbf{Reflection check}:
+In this part, we check whether the model has included a reflection at the end of the "<think>" section. Specifically, we use a regular expression to verify this. If the model has included a reflection at the end of the "<think>" section, the \texttt{reflection reward} will be set to +0.5. If not, the \texttt{reflection reward} will be set to -0.5.
+
+
+
+\noindent In summary, the reward function we have designed to suit our task is as follows:
+\begin{align}
+R=\left\{\begin{matrix}
+ -1 ,&\text{if the format check does not pass} 
+ \\
+ \hat{R},&\text{if the format check passes} 
+\end{matrix}\right.
+\end{align}
+where $\hat{R}$ is the sum of 
+
+\texttt{commonsense constraint reward}, \texttt{hard constraint reward}, 
+and \texttt{reflection reward}.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.6\linewidth]{Main-Text/Figures/rewardv2.pdf}
+    \caption{ Designed rule-based reward}
+    \label{rule-based reward}
+\end{figure}
+
+% %%%%%%%%%%%%%%%
+
+% 我们在reward function中设计了三个部分的检查，分别是format check、constraint satisfaction check，以及reflection check。
+
+% format check：
+% 在这一部分，我们首先严格检查模型的输出是否形如“<think> ... </think> ... ”的格式，即必须以<think>开头，后面接一些内容，然后是</think>，其后再接一些内容。
+% 若不满足，则直接给予-1分的reward；若满足，那么我们继续检查模型在</think>之后输出的final answer是否为预期的json格式，若格式与规定格式不符，则直接给予-1分的reward；若以上都满足，则代表格式部分的检查已经通过，继续进行后续步骤的检查。
+
+% constraint satisfaction check：
+% 在这一部分，我们进行两方面的检查，分别是commonsense constraint和hard constraint的检查。
+% 具体来说，commonsense constraint包含：is_reasonable_visiting_city、is_valid_restaurants、is_valid_attractions、is_valid_accommodation、is_valid_transportation、
+% is_valid_information_in_current_city、is_valid_information_in_sandbox、is_not_absent这8项；
+
+
+
+% hard constraint则包含：is_valid_cuisine、is_valid_room_rule、is_valid_transportation、is_valid_room_type、is_valid_cost这5项。
+% 我们通过Travelplanner 给出的rule-base的评估代码，可以判断上面的每一项是否满足。对于commonsense constraint和hard constraint这两方面的约束满足性reward，我们分别按照其中满足的项数占总项数的比例来赋值。即：
+% commonsense_reward = 满足的commonsense constraint项目数 / commonsense constraint的总项目数
+% hard_reward = 满足的hard constraint项目数 / hard constraint的总项目数
+% 最终，我们把commonsense_reward和hard_reward加起来，作为constraint satisfaction reward score。
+
+% reflection check
+% 在这一部分，我们检查模型是否在其think的末尾处进行了反思。具体来说，我们通过正则表达式，检查模型在think的末尾处是否对自己之前的推理过程进行了反思
+% 如果模型在think的末尾处进行了反思，则我们给予+0.5的reflection reward；反之，我们给予-0.5的reflection reward
+
+% 我们设计的rule-base的reward具体流程如图
+
+
+
+% \begin{align}
+%     \begin{cases}
+% -1,\text{if the format check does not pass} \\
+% $\hat{R}$, \text{if the format check passes} & 
+% \end{cases}
+% \end{align}
+
+
+% {\color{blue}\subsubsection{Planning Reasoning through two-stage training}
+% After the cold-start phase of SFT, we enter the Reinforcement Learning stage to further enhance the model's capabilities. {Specifically, we have designed a reward function.}
+
+
+% After observing performance improvements from the full SFT training on the Qwen3-8B-Instruct model, we further refined the model by applying GRPO training. We designed a reward function tailored for the TravelPlan task. In this case, we only assess the model's final travel plan output, not the reasoning process. Specifically, we perform the following two-stage checks on the model's output:
+% (1)Format Check:
+% We first parse the content in the model’s response after the </think> tag and load it as JSON format (this is the final output travel plan in JSON). Then, we check whether this JSON travel plan contains, and only contains, the required fields as specified. If any step fails, the reward score will be set to -1.
+% (2)Constraint Check:
+% If the output passes the format check, it proceeds to the constraint check stage. At this stage, we use the rule-based evaluation code from TravelPlanner to first check the model’s adherence to commonsense constraints and then evaluate its compliance with hard constraints. Based on how well the commonsense and hard constraints are met, we calculate the final reward score using a specific formula.
+
+% \textbf{Format Check}
+% First, we parse the content located after the "\textless/think\textgreater" tag in the model's response and load it as a JSON format (this is the model’s final output in the JSON format representing the travel plan). Then, we check whether this parsed JSON travel plan contains and only contains the fields required by the specifications. If any step fails, the reward score will be set to -1.
+
+% \textbf{Constraint Check}
+% If the model passes the first stage of format checking, it immediately moves to this stage of constraint checking. In this phase, we use the rule-based evaluation code provided by TravelPlanner to first check whether the commonsense constraints of the model’s travel plan are satisfied, followed by the hard constraints. Based on the satisfaction of commonsense and hard constraints, we provide a final reward score using the following formula:\\
+
+% Where both the \textit{commonsense constraint reward} and \textit{hard constraintreward} are values between 0 and 1, representing how well the model’s final plan satisfies the commonsense constraints and the hard constraints, respectively.}

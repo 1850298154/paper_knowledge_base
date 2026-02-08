@@ -1,0 +1,116 @@
+%!TEX root = main.tex
+
+\small
+\begin{algorithm*}[H]
+% \BlankLine
+\begin{multicols}{2}
+\myfun{\init{}}{
+	\ForEach{$t \in \threads{}$ $\cdot$}{
+		$\Cc_t$ := $\bot$
+	}
+	\ForEach{$x \in \vars{}$ $\cdot$}{
+		$\LW_x$ := $\bot$
+	}
+	\ForEach{$\lk \in \locks{}$ $\cdot$}{
+		$\gId_\lk$ := $0$
+	}
+	\ForEach{$t_1 {\neq}t_2 \in \threads{}, \lk_1 {\neq} \lk_2 \in \locks{}$}{
+		$\view{\Ii}{}{\tuple{t_1, \lk_1, t_2, \lk_2}}$ := $\bot$ \;
+		\ForEach{$t \in \threads{}, \lk \in \locks{}$}{
+			$\view{\AcqLst}{t, \lk}{\tuple{t_1, \lk_1, t_2, \lk_2}}$ := $\epsilon$
+		}
+	}
+	\ForEach{$u \in \threads{}$}{
+		\ForEach{$t\in \threads{}, \lk_1, \lk_2 \in \locks{}$}{
+			$\view{\DPLst}{t, \lk_1, \lk_2}{\tuple{u}}$ := $\epsilon$
+		}
+	}
+}
+\BlankLine
+% {\tiny \tcp{$Lst$ is a list of triplets $(g, C, C')$ in increasing order of $C$}}
+% {\tiny \tcp{Returns the last element $(g_{\max}, C_{\max}, C'_{\max})$ s.t. $C_{\max} \cle U$}}
+% {\tiny \tcp{Removes all other elements $(g,C, C')$ from $Lst$ with $C \cle U$}}
+\myfun{\maxLB{$U$, $Lst$}}{
+	$(g_{\max}, C_{\max}, C'_{\max})$ := $(0, \bot, \bot)$ \; 
+	\While{$\NOT\, \isEmpty{Lst}$}{
+		$(g, C, C')$ := $\first{Lst}$ \;
+		\If{$C \cle U$}{
+			$(g_{\max}, C_{\max}, C'_{\max})$ := $(g, C, C')$
+		}
+		\Else{
+			\Break
+		}
+		$\removeFirst{Lst}$
+	}
+	\Return $(g_{\max}, C_{\max}, C'_{\max})$
+}
+
+\BlankLine
+
+\myfun{\fixpoint{$I$, $\tuple{t_1, \lk_1, t_2, \lk_2}$}}{
+	\Repeat{$I$ does not change}{
+		\ForEach{$\lk \in \locks{}$}{
+			\ForEach{$t \in \threads{}$}{
+				($g_{\lk, t}, C_{\lk, t}, C'_{\lk, t}$) := 
+				\maxLB{$I$, $\view{\AcqLst}{t, \lk}{\tuple{t_1, \lk_1, t_2, \lk_2}}$} \;
+			}
+			$t_{\max}$ := argmax$_{t \in \threads{}}\set{g_{\lk, t}}$ \;
+			$I$ := $I \mx \bigsqcup_{t \neq t_{\max} \in \threads{}} C'_{\lk, t}$	
+		}
+	}
+	\Return $I$
+}
+
+\myfun{\checkDeadlock{$Lst$, $I$, $\tuple{t_1, \lk_1, t_2, \lk_2}$}}{
+	\While{$\NOT\, \isEmpty{Lst}$}{
+		($C_{\prev{}}, C$) := $\first{Lst}$ \;
+		$I$ := \fixpoint{$I \mx C_{\prev{}}$, $\tuple{t_1, \lk_1, t_2, \lk_2}$} \;
+		\If{$C \not\cle I$}{ \linelabel{check-containment}
+			\declare `Deadlock' \;
+			\Break
+		}
+		$\removeFirst{Lst}$
+	}
+	\Return $I$
+}
+
+\myhandler{\rdhandler{$t$, $x$}}{
+	$\Cc_t$ := $\Cc_t \mx \LW_x$ \linelabel{clkrd}
+}
+
+\myhandler{\wthandler{$t$, $x$}}{
+	$\LW_x$ := $\Cc_t$ \linelabel{clkwt};\\
+	$\Cc_t$ := $\Cc_t[t \mapsto \Cc_t(t)+1]$
+}
+
+\myhandler{\acqhandler{$t$, $\lk$}}{
+	$C_{\prev{}}$ := $\Cc_t$ \;
+	$\Cc_t$ := $\Cc_t[t \mapsto \Cc_t(t)+1]$\\ $\gId_\lk$ := $\gId_\lk + 1$ \linelabel{clkacq}\;
+	\ForEach{$t_1, t_2 \in \threads{}, \lk_1, \lk_2 \in \locks{}$}{
+		$\addLst{\view{\AcqLst}{t, \lk}{\tuple{t_1, \lk_1, t_2, \lk_2}}}{$(\gId_\lk, \Cc_t, \bot)$}$
+	}
+	\ForEach{$u\in \threads{}$, $\lk' \in \lheld{}$}{
+		$\addLst{\view{\DPLst}{t, \lk, \lk'}{\tuple{u}}}{($C_{\prev{}}$, $\Cc_t$)}$
+	}
+	\ForEach{$u \neq t \in \threads{}$, $\lk' \in \lheld{}$}{
+		$I$ := $\view{\Ii}{}{\tuple{u, \lk' t, \lk}} \mx C_{\prev{}}$ \;
+		$\view{\Ii}{}{\tuple{u, \lk' t, \lk}}$ := \checkDeadlock{$\view{\DPLst}{u, \lk', \lk\,}{\tuple{t}}$, $I$, $\tuple{u, \lk' t, \lk}$}
+	}
+
+}
+
+\myhandler{\relhandler{$t$, $\lk$}}{
+	$\Cc_t$ := $\Cc_t[t \mapsto \Cc_t(t)+1]$ \linelabel{clkrel} \;
+	\ForEach{$t_1, t_2 \in \threads{}, \lk_1, \lk_2 \in  \locks{}$}{
+		$\updateRel{\lst{\view{\AcqLst}{t, \lk}{\tuple{t_1, \lk_1, t_2, \lk_2}}}}{$\Cc_t$}$
+	}
+}
+
+
+\end{multicols}
+% \vspace*{0.25cm}
+\normalsize
+\caption{$\SyncPDOnline$.}
+\algolabel{online}
+\end{algorithm*}
+\normalsize

@@ -1,0 +1,97 @@
+\subsection{The L-shaped Algorithm}\label{sec:lshaped_algorithm}
+
+In the previous section, we formulate the stochastic heterogeneous teaming problem as an MINLP optimization and approximate it as an MILP using sample average approximation. However, the number of variables and constraints in the linear program is a function of the sample number \(n_\xi\). When the sample number dominates, the size of the linear program is roughly \(\bigO{n_\xi}\), and the computation complexity is \(\bigO{n_\xi^2}\).
+
+We explore the sparsity of the problem and decouple it into a two-stage linear program using the L-shaped algorithm \cite{birge2011introduction}. The algorithm returns the same optimal solution but reduces the computation cost from \(\bigO{n_\xi^2}\) approximately to \(\bigO{n_\xi}\) with a larger constant coefficient empirically.
+
+The general structure of the algorithm is summarized in Algorithm \ref{alg:premission_lshaped}.
+At the first stage, the algorithm solves a fixed-sized mixed-integer linear program (the size is not a function of the sample number \(n_\xi\)). At the second stage, the algorithm solves \(n_\xi\) small linear programs and then adds cuts to the first stage program according to the second-stage solutions. The two-stage process is iterated until convergence.
+
+\begin{algorithm}[t]
+% \SetAlgoLined
+% \SetAlgoNoLine
+\small
+
+\textbf{Input:} Parameters of the optimization problem \eqref{eqn:bound_constraint}-\eqref{eqn:cvar_objective_h_sum_linear2}
+
+\For{\(i \in M\)\textnormal{ and} \(a \in A\)}{
+    \(L_{i a} = 0\)
+}
+
+\While{\textnormal{True}}{
+
+    Solve the first stage problem % \eqref{eqn:premission_first_stage_obj}-\eqref{eqn:premission_first_stage4}
+    and let \((y_{1 i}^{[p]}, \ \cdots, \ y_{{n_v} i}^{[p]}, \ \lambda_{i a}^{[p]}, \ \theta_{i a}^{[p]}, x_{k i j}^{[p]})\) be the solution.
+
+    \text{flag = True}
+
+    \For{\(i \in M\)\textnormal{ and} \(a \in A\)}{
+        {\color{ForestGreen}\textnormal{// \(L_{i a}\) is abbreviated to \(L\) in the following lines.}}
+        
+        \For{\(\xi = \)\textnormal{1 : }\(n_\xi\)}{
+            Solve the second stage problem \eqref{eqn:premission_second_stage} and let \(\pi_{i a}^{(\xi) [p]}\) be the Lagrangian multiplier associated with the solution \(w_{i a}^{(\xi) [p]}\). 
+        }
+        
+        Calculate \(D^{[L]}_{i a}\) and \(d^{[L]}_{i a}\) according to \eqref{eqn:premission_second_stage_constraint}.
+    
+        \If{\(D^{[L]}_{i a} [y_{1 i}^{[p]}, \ \cdots, \ y_{{n_v} i}^{[p]}, \ \lambda_{i a}^{[p]}]^\transpose + \theta_{i a}^{[p]} < d^{[L]}_{i a}\)}
+        {
+            \text{flag = False}
+    
+            \(L = L + 1\)
+            
+            Add the cut \(D^{[L]}_{i a} [y_{1 i}, \ \cdots, \ y_{{n_v} i}, \ \lambda_{i a}]^\transpose + \theta_{i a} \geq d^{[L]}_{i a}\)
+        }
+    }
+    \If{\textnormal{flag}}
+    {
+        \Return the solution \(x_{kij}^{[p]}\) {\color{ForestGreen}\textnormal{// Optimality obtained.}}
+    }
+    \(p = p + 1\) {\color{ForestGreen}\textnormal{// The problem will contain more cuts \eqref{eqn:premission_first_stage4}.}}
+}
+
+\caption{L-shaped algorithm for the model.}
+\label{alg:premission_lshaped}
+\end{algorithm}
+
+
+The first stage problem in the algorithm is
+\begin{align}
+    \min &\ C_e \underset{k \in V}{\sum} \ \underset{i,j \in \node}{\sum} b_{k i j} \cdot x_{k i j} + C_{q} \underset{i \in U}{\sum} q_i 
+    + C_h \underset{i \in M}{\sum} h_i \tag{\ref{eqn:nonlin_penalty_objective}} \\ % \label{eqn:premission_first_stage_obj} \\
+    \text{s.t.} & \text{ \eqref{eqn:bound_constraint}-\eqref{eqn:task_complete_constraint1} and} \nonumber \\ 
+    h_{i} &= \sum_{a \in A \text{ s.t. } \gamma_{i a} \neq 0 } h_{i a}, \quad \quad \quad \quad \quad \quad \quad \quad \ \ \ \forall i \in M, \tag{\ref{eqn:nonlin_cvar_objective_h}} \\
+    h_{i a} &\geq \eta_\beta \left({-c_{k a} + \gamma_{i a}} \right) \cdot r_{k i}, \ \ \forall k \in V, a \in A, \forall i \in M, \tag{\ref{eqn:lin_cvar_objective_h_min}} \\
+    h_{i a} &= \lambda_{i a} + \frac{1}{n_\xi (1 - \beta)} \theta_{i a}, \quad \quad \quad \quad \ a \in A, \forall i \in M, \label{eqn:premission_first_stage3}\\
+    D^{[\ell]}_{i a} & [y_{1 i}, \ \cdots, \ y_{{n_v} i}, \ \lambda_{i a}]^\transpose + \theta_{i a} \geq d^{[\ell]}_{i a}, \nonumber \\  \quad
+    & \quad \quad \quad \quad \quad \quad \quad \forall \ell = 1,\cdots,L, \quad a \in A, \forall i \in M. \label{eqn:premission_first_stage4}
+\end{align}
+
+
+If capability \(a \in A\) is noncumulative, \(h_{i a}\) is calculated according to \eqref{eqn:lin_cvar_objective_h_min}. If capability \(a \in A\) is cumulative, the large linear program described in \eqref{eqn:cvar_objective_h_sum_linear2} is replaced with \eqref{eqn:premission_first_stage3}-\eqref{eqn:premission_first_stage4}. \(\theta_{i a}\) is a lower bound helper variable for \(\sum_{\xi = 1}^{n_\xi} w_{i a}^{(\xi)}\) in \eqref{eqn:cvar_objective_h_sum_linear2}, and is tightened iteratively with the cuts in \eqref{eqn:premission_first_stage4} obtained from the second stage.
+
+In one iteration, as \(y_{k i}\) and \(\lambda_{i a}\) are determined in the first stage and fixed temporarily, the large linear program in \eqref{eqn:cvar_objective_h_sum_linear2} can be decoupled into \(n_\xi\) small linear programs with analytic solutions. We call it the second stage problem:
+\begin{align}
+    \min \ & w_{i a}^{(\xi)} \nonumber \\
+    \text{s.t. } & w_{i a}^{(\xi)} \geq -\underset{k \in V}{\sum} c_{k a}^{(\xi)} \cdot y_{k i}^{[p]} + \gamma_{i a}^{(\xi)} - \lambda_{i a}^{[p]}, \label{eqn:premission_second_stage} \\
+    & w_{i a}^{(\xi)} \geq 0. \nonumber
+\end{align}
+
+Once the second stage problem is solved during each iteration, an additional optimality cut can be added in \eqref{eqn:premission_first_stage4} according to the Lagrangian multipliers (simplex multipliers) \(\pi^{(\xi) [p]}_{i a}\) associated with the second stage solutions. The parameters of the new optimality cut \(D^{[L]}_{i a}\) and \(d^{[L]}_{i a}\), are calculated as follows. Note that \(L\) is an integer label for the new cut.
+\begin{align}
+\begin{split}
+    D^{[L]}_{i a} &= \sum_{\xi = 1}^{n_\xi} \pi^{(\xi) [p]}_{i a} \left[ c_{1 a}, \ \cdots, \ c_{{n_v} a}, \ 1 \right]. \\
+    d^{[L]}_{i a} &= \sum_{\xi = 1}^{n_\xi} \pi^{(\xi) [p]}_{i a} \cdot \gamma_{i a}^{(\xi)}.
+\end{split}\label{eqn:premission_second_stage_constraint}
+\end{align}
+
+The Lagrangian multipliers \(\pi^{(\xi) [p]}_{i a}\) are obtained by solving the second stage dual problem \eqref{eqn:premission_second_stage_dual1}, and the solutions are shown in \eqref{eqn:pi_solution}.
+\begin{align}
+    \max \ & \left( -\underset{k \in V}{\sum} c_{k a}^{(\xi)} \cdot y_{k i}^{[p]} + \gamma_{i a}^{(\xi)} - \lambda_{i a}^{[p]} \right) \cdot \pi^{(\xi)}_{i a} \label{eqn:premission_second_stage_dual1} \\
+    \text{s.t. } & \ 0 \leq \pi^{(\xi)}_{i a} \leq 1. \nonumber \\
+     \pi^{(\xi) [p]}_{i a} = &
+    \begin{cases}
+    0, \ -\underset{k \in V}{\sum} c_{k a}^{(\xi)} \cdot y_{k i}^{[p]} + \gamma_{i a}^{(\xi)} - \lambda_{i a}^{[p]} < 0 \\
+    1, \ \text{otherwise}
+    \end{cases}. \label{eqn:pi_solution}
+\end{align}

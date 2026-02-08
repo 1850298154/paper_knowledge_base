@@ -1,0 +1,725 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%2345678901234567890123456789012345678901234567890123456789012345678901234567890
+%        1         2         3         4         5         6         7         8
+
+\documentclass[letterpaper, 10 pt, conference]{ieeeconf}  % Comment this line out if you need a4paper
+
+%\documentclass[a4paper, 10pt, conference]{ieeeconf}      % Use this line for a4 paper
+
+\IEEEoverridecommandlockouts                              % This command is only needed if 
+                                                          % you want to use the \thanks command
+
+\overrideIEEEmargins                                      % Needed to meet printer requirements.
+
+%In case you encounter the following error:
+%Error 1010 The PDF file may be corrupt (unable to open PDF file) OR
+%Error 1000 An error occurred while parsing a contents stream. Unable to analyze the PDF file.
+%This is a known problem with pdfLaTeX conversion filter. The file cannot be opened with acrobat reader
+%Please use one of the alternatives below to circumvent this error by uncommenting one or the other
+% \pdfobjcompresslevel=0
+% \pdfminorversion=4
+
+% See the \addtolength command later in the file to balance the column lengths
+% on the last page of the document
+
+% The following packages can be found on http:\\www.ctan.org
+\usepackage{graphics} % for pdf, bitmapped graphics files
+\usepackage{epsfig} % for postscript graphics files
+\usepackage{mathptmx} % assumes new font selection scheme installed
+\usepackage{times}
+\let\proof\relax
+\let\endproof\relax
+\usepackage{amsthm}% assumes new font selection scheme installed
+\usepackage{amsmath} % assumes amsmath package installed
+\usepackage{amssymb}  % assumes amsmath package installed
+
+\title{\LARGE \bf
+A safety governor for learning explicit MPC controllers from data}
+
+
+\author{Anjie Mao$^{1}$, Zheming Wang$^{1}$, Hao Gu$^{2}$, Bo Chen$^{1}$, and Li Yu$^{1}$% <-this % stops a space
+\thanks{This work is supported in part by the National Natural Science Foundation of China under Grant 62303416 and W2421028.}% <-this % stops a space
+\thanks{$^{1}$Anjie Mao, Zheming Wang, Bo Chen and Li Yu are with the Department of Automation, Zhejiang
+ University of Technology, Hangzhou 310023, China (e-mail: maoanjie@aliyun.com;
+wangzheming@zjut.edu.cn; bchen@
+ aliyun.com; lyu@zjut.edu.cn). }%
+ \thanks{$^{2}$ Hao Gu is
+with Zhejiang Guoli Security Technology Co., Ltd (e-mail: guhao@glsec.com.cn). }%
+}
+
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage{algorithm,algorithmic}
+\usepackage{xcolor}
+\newtheorem{theorem}{Theorem}
+\newtheorem*{theorem*}{Theorem}
+\newtheorem{corollary}{Corollary}
+\newtheorem{lemma}{Lemma}
+\newtheorem{proposition}{Proposition}
+\newtheorem*{proposition*}{Proposition}
+\newtheorem{conjecture}{Conjecture}
+\newtheorem{claim}{Claim}
+\newtheorem{example}{Example}
+\newtheorem{definition}{Definition}
+\newtheorem*{definition*}{Definition}
+\newtheorem{assumption}{Assumption}
+\newtheorem*{assumption*}{Assumption}
+\newtheorem{problem}{Problem}
+\newtheorem{remark}{Remark}
+\newtheorem*{remark*}{Remark}
+\newcommand{\myproofname}{Proof}
+\begin{document}
+
+
+
+\maketitle
+\thispagestyle{empty}
+\pagestyle{empty}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{abstract}
+
+We tackle neural networks (NNs) to approximate model predictive control (MPC) laws. We propose a novel learning-based explicit MPC structure, which is reformulated into a dual-mode scheme over maximal constrained feasible set. The scheme ensuring the learning-based explicit MPC reduces to linear feedback control while entering the neighborhood of origin. We construct a safety governor to ensure that learning-based explicit MPC satisfies all the state and input constraints. Compare to the existing approach, our approach is computationally easier to implement even in high-dimensional system. The proof of recursive feasibility for the safety governor is given. Our approach is demonstrated on numerical examples.
+
+\end{abstract}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{INTRODUCTION}
+
+Model predictive control (MPC) is an advanced control strategy that has been extensively utilized in industrial processes \cite{qin2003survey}. More recently, MPC have become popular to solve robot control problems owing to its capability in dealing with system constraints and optimizing control performance. MPC operates by repeatedly solving an optimization problem, leveraging updated state information in real-time. Despite the advantages of MPC, the shift from process industry applications to robotics introduces formidable challenges, primarily due to the drastic reduction in available computation time, transitioning from hours to mere milliseconds \cite{chen2022large}. 
+
+
+
+ In recent decades, substantial efforts have been directed towards alleviating the computational burden of MPC. Existing approaches can be broadly categorized into two main groups. The first involves developing bespoke, numerically efficient optimization solvers that capitalize on the inherent structure of the MPC problem, e.g., \cite{jerez2014embedded,patrinos2013accelerated}. Another major and promising approach is explicit model predictive control (EMPC), involves computing the optimal control policy offline as a piecewise-affine function of the state variables across different regions through parametric optimization, e.g., \cite{bemporad2002explicit,bemporad2002model}. EMPC offers several key advantages, including significantly faster online computations, precise bounds on worst-case execution time, and the generation of simple, verifiable control policies. These benefits make EMPC particularly well-suited for embedded applications where real-time performance and reliability are critical.  Nevertheless, in linear systems, the memory allocation and computational complexity associated with storing and evaluating the state
+look-up table exhibit exponential growth. This escalation becomes particularly prohibitive when extending the prediction horizon or increasing the number of system constraints \cite{kvasnica2011clipping}. Moreover, extending this approach to nonlinear systems is not straightforward.
+
+
+ One approach to mitigate the computational challenges associated with EMPC is to develop an approximate controller. In \cite{kvasnica2011clipping}, MPC laws are approximated via linear combination of basis functions. Meanwhile, \cite{jones2010polytopic} employs a double-description method to construct piecewise-affine approximations of the value function. In recent years, the widespread adoption of neural networks (NNs) has been propelled by their exceptional function approximation capabilities. Theoretical studies have established that NNs, when equipped with adequate network depth and width, possess the universal approximation property, enabling them to approximate any continuous nonlinear function with arbitrary precision \cite{hornik1990universal}. Since the concept of approximating MPC laws using NNs with a single hidden layer was introduced by Parisini et al. \cite{parisini1995receding}, numerous efforts have been made to explore learning-based approximations of MPC.  Notable contributions by 
+ Chen et al. \cite{chen2018approximating},
+ Karg et al. \cite{karg2020efficient}, 
+ Montufar et al. \cite{montufar2014number},
+Hertneck et al. \cite{hertneck2018learning}, 
+ and Lucia et al. \cite{lucia2018deep}.
+
+
+
+In most approximation scenarios, the MPC problems are initially solved offline. Subsequently, the resulting data pairs, which comprise initial states and their corresponding optimal control inputs, are utilized to approximate the MPC laws. However, a significant limitation of this approach lies in the approximated controller's propensity to violate constraints and accumulate approximation errors.
+% A common approach employs probabilistic validation methods. For example, utilizes Hoeffding's inequality to derive a feasible confidence level for the approximated controller. However, the probability guarantee is not enough for practical implementation. 
+A widely adopted strategy to ensure the safety of the approximated controller involves projecting its control inputs onto a secure region, such as the maximal control invariant (MCI) set and feasibility origin of MPC \cite{chen2018approximating}. However, the determination of such sets is an NP-hard complete problem in high dimension \cite{2008On}. Current approximation methods for such sets, such as constructing the convex hull of feasible MPC solutions as control-invariant sets \cite{karg2020efficient}, may introduce approximation errors that compromise the theoretical feasibility guarantees of the original approach \cite{chen2018approximating}.
+
+\begin{figure*}[!htb]
+  \centering
+  \includegraphics[width=0.98\linewidth]{Diagram_of_the_proposed_framework.pdf}
+  \caption{Diagram of the proposed framework}
+  \label{fig: Diagram of the proposed framework}
+\end{figure*} 
+
+    In this paper, we discuss how to learn MPC law from data while guaranteeing safety. A sketch of the main ideas is given in Figure \ref{fig: Diagram of the proposed framework}. First, we design a standard MPC for a constrained discrete-time linear time-invariant system. The resulting MPC law is sampled offline for suitable states and learned (approximated) via a designed learning-based explicit MPC, in which a novel network structure with dual-mode scheme is proposed. A safety governor is constructed to ensure that learning-based explicit MPC satisfies all the state and input constraints. Compare to the approach in \cite{chen2018approximating}, our feasible origin is much easier to compute even in high-dimensional system.
+    Numerical examples of low-order and high-dimensional systems demonstrate the control performance of our approach.
+
+
+
+ \emph{Contributions}: (1) A novel learning-based explicit MPC structure is constructed, which has a novel dual-mode scheme can erase the approximation errors nearby the system origin. (2) An approach named safety governor is proposed, which guarantee the safety of the trained learning-based explicit MPC even with great approximation errors.
+
+
+ 
+
+ \emph{Notation}: $\mathbb{R}$ and $\mathbb{Z}^+$ denote the real and non-negative integer numbers, respectively. $\mathbb{R}^n$ denotes the set of $n$-dimensional real vectors.
+ % Relational operators $<$, $>$, $\leq$, $\geq$ are intended component-wise for vectors, while for matrices indicate (semi) definiteness.
+ The superscript $\top$ denotes matrix transpose.  The boldface means a sequence of elements, e.g., \pmb{$u$} stands for the control sequence.  For a vector $x$, $|x|$ is its absolute value and $||x||$ is its $\mathcal{L}_2$ norm by default. The Euclidean norm of a vector $x \in \mathbb{R}^n$ is denoted by $||x|| = \sqrt{x_1^2 + \cdots + x_n^2}$ whereas $||x||^2_{\Psi}$ , with $\psi$ = $\Psi^{\top} > 0$,  denotes the quadratic form $x^{\top}\Psi x$. $I_m$ is $m$-dimensional unit matrix.
+
+\section{Preliminaries and problem statement}\label{sec:pre}
+ We consider the following constrained discrete-time linear time-invariant (LTI) system
+\begin{equation}
+  \label{eqn:LTI system}
+  x(t+1)=Ax(t)+Bu(t), \forall t\in \mathbb{Z}^+
+\end{equation}
+where $t$ is sampling time, $x \in R^{m}$ is the system states, $u \in R^{n}$ is the control inputs, $A \in R^{{m}\times{m}}$ is the system matrix, and $B \in R^{{n}\times{n}}$ is the input matrix. The pair $(A, B)$ is assumed stabilizable.
+
+The state and control are subject to state and control constraints
+\begin{equation}
+  \label{eqn:constraints}
+  x(t) \in \mathbb{X}, u(t)\in \mathbb{U}, \forall t\in \mathbb{Z}^+.
+\end{equation}
+
+Our goal is to compute a sequence of control inputs to steer the system state to origin subject to the constraints. We are interested in formulating a standard model predictive controller (MPC). At sampling time $t$, we solve a constrained finite-time optimal control problem, 
+\begin{subequations}\label{eqn:standard MPC}
+\begin{align}
+\min_{\pmb{u_{0:N-1}}} \quad &\sum_{k=0}^{N-1}{x_k}^{\top}Q{x_k}+ {u_k}^{\top}R{u_k}+{x_N}^{\top}P{x_N}  \\
+    \textrm{s.t.} \quad &x_{k+1}=Ax_k+Bu_k,\\
+    &x_k\in \mathbb{X}, u_k\in \mathbb{U}, \forall k=0,1,\dots, N-1 \\
+    &x_N\in \mathbb{X}_f,\\
+    &x_0=x(t)\label{eqn:initial state}
+\end{align}
+\end{subequations}
+where $x(t)$ is the sampled system state at time $t$. Sequence $\pmb{u_{0:N-1}}=\left[\ u_0,u_1,\dots, u_{N-1}\right]^{\top}$ 
+is a vector that contains the sequence of control inputs. The symmetric matrices $Q \in R^{{m}\times {m}}$, $R \in R^{{n}\times {n}}$, and $P \in R^{{m}\times {m}}$  define the desired system behavior. The state, terminal, and input constraints are bounded polytopic C-sets $\mathbb{X}$ , $\mathbb{X}_f$ , and $\mathbb{U}$. Without loss of generality, the sets $\mathbb{X}$, $\mathbb{X}_f$, and $\mathbb{U}$ contain their origins as interior points. The set of initial states $x_0$ has a feasible solution depending on the prediction horizon $N$ is called the feasibility region of MPC, denoted by $\mathbb{X}_N$. 
+
+
+
+
+
+
+
+% defined by matrices $C_x\in \mathbb{R}^{n_{cx}\times n_x}$, $C_f\in \mathbb{R}^{n_{cf}\times n_x}$ and $C_u\in \mathbb{R}^{n_{cu}\times n_u}$ and the vectors $c_x\in \mathbb{R}^{n_{cx}}$, $c_f\in \mathbb{R}^{n_{cf}}$, and $c_u\in \mathbb{R}^{n_{cu}}$. 
+
+% The terminal cost defined by $P$ as well as the terminal set $\mathbb{X}_f$ are usually chosen in such a way that stability of the closed-loop system and recursive feasibility of the optimization problem are guaranteed \cite{mayne2000constrained}. 
+
+
+Let $\kappa_{MPC}:\mathbb{X}_N\to \mathbb{U}$ denotes the MPC law that is implicitly defined as the solution of the problem (\ref{eqn:standard MPC}). However, the multiparametric solution for MPC is either difficult to obtain or too computationally expensive to deploy on resource-limited hardware. Consequently, we propose to employ a more efficient representation of the control law by leveraging function approximation approaches. In this paper, the deep neural network (DNN) is employed as a parameteric function approximator $\kappa_{NN}(x)$, which can be utilized to approximate the optimal control law $\kappa_{NN}(x)\approx\kappa_{MPC}(x)$. A DNN with $L\in \mathbb{Z}^+(L\geq 2)$ layers represents $\kappa_{NN}(x)$ as a composition of $L$ affine functions $\lambda_i(x):=W_jx+b_i$, each except the last one followed by a nonlinear activation function $h$:
+\begin{equation}
+  \label{eqn:g function}
+  \kappa_{NN}(x) = \lambda_L \circ h \circ \lambda_{L-1} \circ \cdots \circ h \circ \lambda_1(x),
+\end{equation}
+where $\{W_{1:L},b_{1:L}\}$ are the affine function parameters to be optimized, and $h$ is a nonlinear activation function. In this paper, rectified linear units (ReLUs) are utilized as the activation function, $h(x):=max\{0,x\}$. A DNN with ReLUs is a composition of piecewise affine (PWA) function  on polytopes, and the optimal control law $\kappa_{MPC}$ of the problem (\ref{eqn:standard MPC}) is also a PWA function on polytopes \cite{pascanu2013number}.
+
+Inspired by the command governor\cite{bemporad1997nonlinear}, we propose an approach named safety governor to guarantee the safety of the approximated controller, denoted by $SG$: \begin{equation}
+  \label{eqn:nonlinear control}
+  \kappa_{SG}(x)=SG(\kappa_{NN}(x))
+\end{equation} 
+
+In summary, the objective is to design, via DNN and safety governor, a nonlinear state feedback $u(t)=\kappa_{SG}(x(t)), t\in \mathbb{Z}^+$ steers the states of system (\ref{eqn:LTI system}) to the origin such to the constraints (\ref{eqn:constraints}). A further objective is that the nonlinear feedback (\ref{eqn:nonlinear control}) reduce to a linear well-tuned feedback whenever this is compatible with the constraints.
+
+
+\section{Main result}
+In this section, we propose a learning-based explicit MPC,  safety governor, and validation of the proposed controller. 
+% our data-driven quadratic Lyapunov
+% technique for stabilizing unknown switched linear systems
+% under arbitrary switching. We first formulate a data-based
+% stabilization problem, which consists of a set of biconvex
+% constraints. Then, to solve this problem, we present an alternating minimization algorithm that generates feasible iterates.With the concepts of covering/packing numbers, probabilistic guarantees on the obtained solution are then provided using geometric analysis. Finally, we also show that the algorithm can be parallelized to speed up the computation.
+\subsection{Learning-based explicit MPC}
+In MPC problem (\ref{eqn:standard MPC}),  terminal cost ${x_N}^{\top}Px_N$ and terminal constraints $\mathbb{X}_f$ are introduced to simplify constrained infinite horizon LQR problem by restricting the optimization to a finite horizon $N$. For computation reasons, an achievable goal is to steer the initial state $x_0$ to a neighborhood of the origin $\Sigma$. 
+Consider a  stabilizing LTI  state feedback to meet the desire for linear control when $x(t)\in\Sigma$:
+\begin{align}\label{eqn:LTI  state feedback}
+u(t)=Kx(t), \forall t\in \mathbb{Z}^+
+\end{align}
+designed so as to provide a satisfactory, or optimal in some sense (e.g. LQ), control performance to  system (\ref{eqn:LTI system}) in the absence of constraints. The corresponding asymptotically stable nominal closed-loop system is denoted as
+\begin{align}\label{eqn:nominal closed-loop}
+x(t+1)=(A+BK) x(t), \forall t\in \mathbb{Z}^+.
+\end{align}
+Without loss of generality, $A + BK$ is assumed 
+has all eigenvalues strictly inside the unit circle.
+
+
+To characterize the target set $\Sigma$, it have to introduce the notion of maximal constraint admissible set \cite{gilbert1991linear}. 
+% \begin{definition}\label{def:control positively invariant}
+% A set $\Omega\subseteq \mathbb{X}$ is control positively invariant for system $x(k+1) = f (x(k), u(k))$ and constraint set ($\mathbb{X}$, $\mathbb{U}$) if and only if $\forall x\in \Omega$, there exists a $u \in \mathbb{U} $ such that $f (x, u)\in \Omega$.
+% \end{definition}
+\begin{definition}\label{def:positively invariant}
+A set $\Sigma \in \mathbb{R}^{m} \subset \mathbb{X} $ is called  constraint admissible set for system (\ref{eqn:nominal closed-loop}), if and only if  $\forall x\in \Sigma$, $Kx\in \mathbb{U}$ and $(A+BK) x\in \Sigma$.
+\end{definition}
+Then, the following proposition holds.
+\begin{proposition}\label{prop:max positively invariant}
+The maximal constraint admissible set $\Sigma_\infty$ is constraint admissible, and contains all constraint admissible sets. In other words, the maximal constraint admissible set is the union of all constraint admissible sets.
+\end{proposition}
+
+The maximal constraint admissible set can be determined as the limit of a recursive process \cite{gilbert1991linear}:
+\begin{align}\label{eqn:recursive process}
+\Sigma_{i+1}=Pre(\Sigma_i)\cap \Sigma_i, \Sigma_0=\mathbb{X}
+\end{align}
+where $Pre(\Sigma)=\{x | \exists u=Kx\in \mathbb{U},s.t.\ Ax+Bu\in\Sigma  \}$ denotes the predecessor set. If and only if 
+ $\Sigma_{i^*+1}=\Sigma_i^*$ for some $i^*\in \mathbb{Z}^+$, then the maximal constraint admissible set $\Sigma_{\infty}=\Sigma_{i^*}$. 
+
+The LQ state feedback law is adopted in this paper: 
+\begin{align}\label{eqn:compute K}
+K = -(R + B^{\top} PB)^{-1}(B^{\top}PA)  
+\end{align}
+where the matrix $P$ is the solution to the discrete Algebraic Riccati Equation \cite{1995Dynamic}:
+\begin{align}\label{eqn:compute P}
+P = A^{\top} P A + Q - A^{\top} P B (B^{\top} P B + R)^{-1} B^{\top}PA  
+\end{align}
+which corresponds to the optimal cost-to-go after $N$ steps for the unconstrained infinite-horizon LQR problem. 
+
+Clearly, the definition of  the maximal constraint admissible set means that when the system states are steered to the neighborhood of the origin, the nonlinear feedback will  reduce to the linear
+feedback naturally, without any constraints violation. In other words, 
+\begin{align}\label{eqn:mpc xf}
+\kappa_{MPC}(x)=Kx, \forall x\in \Sigma_\infty.
+\end{align}
+
+On the basis of this consideration, a novel learning-based explicit MPC structure is proposed, where the learning-based explicit MPC is  reformulated as a dual-mode scheme: 
+\begin{align}\label{eqn:nn structure}
+\hspace{0.2cm} \kappa_{NN}(x) & \\ 
+& =\begin{cases}
+Kx,&x\in \Sigma_\infty; \\
+\lambda_L \circ h \circ \lambda_{L-1} \circ \cdots \circ h \circ \lambda_1(x),&x\notin \Sigma_\infty. 
+\end{cases}\nonumber
+\end{align}
+Figure \ref{fig: NN structure proposed} shows the proposed learning-based explicit MPC structure.
+\begin{figure}[!htb]
+  \centering
+  \includegraphics[width=0.95\linewidth]{NN_structure.pdf}
+  \caption{Diagram of the learning-based explicit MPC structure}
+  \label{fig: NN structure proposed}
+\end{figure}
+
+The proposed learning-based explicit MPC structure (\ref{eqn:nn structure}) has ability to erase the approximation errors while the system states had been steered into the neighborhood of the origin. The numerical experiment in next section will prove this more directly. Then, we adopt a supervised learning  method to train the learning-based explicit MPC. First, we generate an arbitrary number $n\in \mathbb{Z}^+$ of samples  $(x^{(i)},\kappa_{MPC}(x^{(i)})) \in (\mathbb{X}_N\times \mathbb{U})$, where $i=1,\dots,n$. We then use the mean square error (MSE) between the control inputs of  MPC and learning-based explicit MPC as the loss function:
+ \begin{align}\label{eqn:loss function}
+Loss=\frac{1}{n}\sum_{i=1}^n(\kappa_{MPC}(x^{(i)})-\kappa_{NN}(x^{(i)}))^2. 
+\end{align}
+% For a given error tolerance threshold $\epsilon$ (a small positive number), we consider that the trained controller should satisfy:
+%  \begin{align}\label{eqn:Validation \epsilon}
+%  ||\kappa_{SG}(x^i)-\kappa_{MPC}(x^i)||<\epsilon, i=1,\dots,m
+% \end{align}
+% where $m$ denotes a suitable number of the test set. 
+% Since the existence of the approximating errors, the primal constraints (\ref{eqn:constraints}) will properly be violated, even over the training set. A common approach is adopted in this paper, additional penalty terms are incorporated into the loss function:
+%   \begin{align}\label{eqn:loss cons}
+% Loss_{cons}=\sum_{i=1}^n \sum_{k=1}^{N-1} 
+% &max(C_xx_k^{(i)}-c_x,0)\nonumber\\
+% +&max(C_uN(x_k^{(i)})-c_u,0)\nonumber\\
+% +&max(C_fx_N^{(i)}-c_f,0)
+% \end{align}
+% where $x^{(i)}_{k+1}=Ax^{(i)}_k+B\kappa_{NN}(x^{(i)}_k)$ and $x^{(i)}_0=x^{(i)}_{init}$. in conclusion, the whole loss function to train the DNN is denoted as follows
+%   \begin{align}\label{eqn:loss}
+% Loss= \alpha Loss_{mse}+\beta Loss_{cons} 
+% \end{align}
+% where $\alpha$ and $\beta$ are chosen scalars.
+% The presence of training errors means that the neural network controller cannot guarantee constraint satisfaction, even with the introduction of a penalty term in the loss function. To address this issue, several methods for improving constraint satisfaction are proposed. One approach is to select a large value for $\beta$, thereby increasing the penalty for constraint violations.  Another method is to increase the proportion of the training set sampled outside the terminal set. This is because the DNN structure proposed in this paper renders training data within the terminal set less critical.
+
+\subsection{Safety governor}
+
+A trained learning-based explicit MPC is difficult to guarantee its safety due to the existence of approximation errors. In this paper, inspired by the command governor (CG) \cite{bemporad1997nonlinear}, a safety governor is constructed to ensure that learning-based explicit MPC satisfies all the state and input constraints.
+
+Consider the equilibrium state $x_s$ and its corresponding control input $u_s$ of system (\ref{eqn:LTI system}):
+ \begin{align}\label{eqn:equilibrium states}
+x_s=Ax_s+Bu_s.
+\end{align}
+The equation can be reformulated to
+ \begin{align}\label{eqn:zero space}
+\begin{pmatrix} A - I & B \end{pmatrix} \begin{pmatrix} x_s \\ u_s \end{pmatrix} = 0.
+\end{align}
+Then the equilibrium state and its control input can be parameterized as
+ \begin{align}\label{eqn:zero space parameterization}
+\begin{pmatrix} x_s \\ u_s \end{pmatrix}=\begin{pmatrix} M_x \\ M_s \end{pmatrix} \gamma
+\end{align}
+where $x_s=M_x\gamma$ and $u_s=M_u\gamma$. Then,
+ \begin{align}\label{eqn:gamma set}
+\Gamma\triangleq\{\gamma:M_x\gamma\in X\ \text{and}\ M_u\gamma\in U\}
+\end{align}
+is the set of statically admissible commands, i.e. the set of $\gamma$ which satisfy the constraints on $x$ and $u$ in steady state. For each $\gamma \in \Gamma$,
+ \begin{align}\label{eqn:cons feasible set aug}
+\Sigma_{\infty}(\gamma)\triangleq\{\nonumber&x_0:x_{k+1}=Ax_k+B(Kx_k+M_\gamma\gamma)\in \mathbb{X},   \\ 
+& Kx_k+M_\gamma\gamma\in \mathbb{U}, \forall k\in \mathbb{Z}^+\}
+\end{align}
+is the maximal constraint admissible set under the control law $u=K(x-x_s)+u_s=Kx_k+(M_u-KM_x)\gamma=Kx_k+M_\gamma\gamma$, where $M_\gamma=M_u-KM_x$. Similar to the recursive procedure in (\ref{eqn:recursive process}), $\Sigma_{\infty}(\gamma)$ can be finitely determined \cite{gilbert1991linear}. Clearly, 
+\begin{align}\label{eqn:Sigma equation}
+\Sigma_\infty=\Sigma_{\infty}(0).
+\end{align}
+Let 
+\begin{align}\label{eqn:Sigma union}
+\Sigma_\infty(\Gamma)\triangleq \bigcup_{\gamma \in \Gamma}\Sigma_{\infty}(\gamma),
+\end{align}
+which is an augmented maximal constraint
+feasible set, and also a positive invariant set \cite{gilbert1991linear}.
+
+For any given $x(t) \in \Sigma_\infty(\Gamma)$ and control input $\kappa_{NN}(x(t))$ of learning-based explicit MPC. Then, the safety governor $SG$ determine the control inputs $u(t)$ by solving the following problem:
+\begin{subequations}\label{eqn:safety governor}
+\begin{align}
+\min_{u(t)} \quad &||u(t)-\kappa_{NN}(x(t))||_s  \\
+    \textrm{s.t.} \quad &u(t)=Kx(t)+M_\gamma\gamma(t),\label{eqn:final control}\\
+    &x(t)\in \Sigma_{\infty}(\gamma(t)),\gamma(t)\in\Gamma
+\end{align}
+\end{subequations}
+where $s > 0$. Then, we can formalize the following theorem via the above safety governor. \begin{theorem}\label{theorem}
+ Consider the system (\ref{eqn:LTI system}) with constraints (\ref{eqn:constraints}), control input is defined by law (\ref{eqn:nonlinear control}) and $x(0) \in \Sigma_{\infty}(\Gamma) \subset{\mathbb{X}}$. Then $x(t) \in \mathbb{X}$ and $u(t)\in\mathbb{U} $ are defined for all $t\in \mathbb{Z}^+$. 
+ % (ii) There exists a time $t_f\in \mathbb{Z}^+$ such that system states are steered to origin. 
+\end{theorem}
+
+\noindent\textit{Proof}:
+When $t=0$, the problem (\ref{eqn:safety governor}) is naturally feasible for $x(0)\in \Sigma_{\infty}(\Gamma)\subset\mathbb{X}$ from (\ref{eqn:cons feasible set aug}) and (\ref{eqn:Sigma union}). In other words, there exists $u(0)=Kx(0)+M_\gamma\gamma(0)\in\mathbb{U}$ with $\gamma(0)\in\Gamma$. When $t=k$, the problem (\ref{eqn:safety governor}) is assumed feasible for $x(t)\in\Sigma_{\infty}(\gamma(t))\subset\Sigma_{\infty}(\Gamma)\subset\mathbb{X}$. There exists $u(t)=Kx(t)+M_\gamma\gamma(t)\in\mathbb{U}$ with $\gamma(t)\in\Gamma$. When $t=k+1$, $x(t+1)=Ax(t)+B(Kx(t)+M_{\gamma}\gamma(t))$. Since $x(t)\in\Sigma_{\infty}(\gamma(t))\subset\Sigma_{\infty}(\Gamma)\subset\mathbb{X}$,
+$x(t+1)\in\Sigma_{\infty}(\gamma(t))$. The problem (\ref{eqn:safety governor}) is feasible for $x(t+1)\in\Sigma_{\infty}(\gamma(t))\subset\mathbb{X}$. There exists $u(t+1)=Kx(t+1)+M_\gamma\gamma(t+1)\in\mathbb{U}$ with $\gamma(t+1)=\gamma(t)\in\Gamma$. In conclusion, Theorem \ref{theorem} is proved.  $\hfill\blacksquare$
+
+% Then, we prove (ii).
+
+% If Algorithm \ref{algo:whole procedure} terminates with validation procedure passed, then (12) must hold. In other words, reaching $\Sigma_\infty$ while satisfying state and input constraints is guaranteed at minimum for $bound$ portion of samples with $1$ confidence. Then the system states are steered to origin with linear well-turned feedback (\ref{eqn:LTI  state feedback}) owing to the dual-mode scheme. 
+
+
+
+
+
+
+
+
+
+Given the proposed learning-based explicit MPC and safety governor, the overall procedure for learning MPC law is summarized in Algorithm \ref{algo:whole procedure}.
+\begin{algorithm}[h]
+		\caption{Learn MPC law}
+		\begin{algorithmic}[1]
+			\renewcommand{\algorithmicrequire}{\textbf{Input:}}
+			\renewcommand{\algorithmicensure}{\textbf{Output:}}
+			\REQUIRE System (\ref{eqn:LTI system}), matrices $Q,R$, and horizon $N$
+			\ENSURE  Nonlinear state
+                feedback $u=SG(\kappa_{NN}(x))$ (\ref{eqn:nonlinear control})\\
+			\textit{Initialization}: 
+            Construct network (\ref{eqn:nn structure}) with $K$ obtained from (\ref{eqn:compute K}), where $P$ is computed by solving (\ref{eqn:compute P});
+            % Let $k\leftarrow 0$, $K_k \leftarrow 0$, $P_k \leftarrow I$, and $\gamma_k \leftarrow \max_{(x,\sigma)\in \omega_N} \frac{ \|A_\sigma x\|}{\|x\|}$; 
+			\STATE  Sample the MPC problem (\ref{eqn:standard MPC}) to generate an arbitrary number $n \in\mathbb{Z}^+$  as train set: $(x^{(i)},\kappa_{MPC}(x^{(i)})) \in (\mathbb{X}_N\times \mathbb{U})$, where $i=1,\dots,n$;
+            
+            % Obtain $P_{k+1}$ from (\ref{eqn:Pgamma}) with $K=K_k$ via bisection on $\gamma$ starting from $\max_{(x,\sigma)\in \omega_N} \frac{ \|(A_{\sigma} x+BK_kx)\|_{P_k}}{\|x\|_{P_k}}$;
+			\STATE Learn $\kappa_{NN}(x)\approx\kappa_{MPC}(x)$, with network (\ref{eqn:nn structure}) and loss function (\ref{eqn:loss function});
+
+            \STATE Obtain the safety governor $SG$ from (\ref{eqn:cons feasible set aug}) and (\ref{eqn:Sigma union});
+
+            \STATE Validate the closed-loop control performance of law $u=\kappa_{SG}(x)$. 
+            % \STATE If the validation fails, repeat the learning from step 1.
+            
+            
+            % Obtain $K_{k+1}$ and $\gamma_{k+1}$ from (\ref{eqn:Kgamma}) with $P = P_{k+1}$;
+			%\STATE Obtain $P_{k+1}$ and $\gamma_{k+1}$ from (\ref{eqn:Pgamma}) with $K = K_{k+1}$ via bisection on $\gamma$ starting from $\max_{i} \frac{ \|(A_{\sigma_i} x_i+BK_{k+1}x_i)\|_{P_k}}{\|x_i\|_{P_k}}$;
+		% 	\IF {$u=SG(\kappa_{NN}(x))$ is satisfying}
+		% 	\STATE Terminate;
+		% 	\ELSE
+		% 	\STATE Go to Step 2.
+		% 	\ENDIF
+		\end{algorithmic}
+		\label{algo:whole procedure}
+	\end{algorithm}
+
+
+
+\begin{remark}
+    The feasible region of Problem (\ref{eqn:standard MPC}) is not the same as that of Problem  (\ref{eqn:safety governor}) \cite{gilbert2011constrained}, i.e., $\mathbb{X}_N\neq \Sigma_{\infty}(\Gamma)$. For the proposed Theorem \ref{theorem}, $x_0 \in \Sigma_{\infty}(\Gamma) \subset{\mathbb{X}}$.
+\end{remark}
+
+
+
+% \begin{align}
+% \min_{\pmb{u_{0:Ns-1}},\gamma\in\Gamma} \quad &||\pmb{u_{0:Ns-1}}-\kappa_{NN}(x)_{0:Ns-1}||_Q+||\pmb{d_{0:Ns-1}}||_P  \\
+%     \textrm{s.t.} \quad &u_k=Kx_k+M_\gamma\gamma+d_k \in \mathbb{U}\label{eqn:final control}\\
+%     &x_{k+1}=Ax_k+Bu_k \in \mathbb{X} \\
+%     &x_{Ns}\in \Sigma_{\infty}(\gamma)\\
+%     &x_0=x_{init}\\
+%     &\forall k =0,1,\dots,Ns-1
+% \end{align}
+% where $s > 0$. 
+
+% \begin{align}
+% \min_{u} \quad &||u-\kappa_{NN}(x)||_s  \\
+%     \textrm{s.t.} \quad &u\in \mathbb{U}\\
+%     &x^+=Ax+Bu\in \mathbb{X}
+% \end{align}
+
+% \begin{align}
+% \min_{\gamma\in\Gamma} \quad &||\gamma||_s  \\
+%     \textrm{s.t.} \quad &x\in \Sigma_{\infty}(\gamma).
+% \end{align}
+
+% \begin{align}
+% \min_{u,\gamma\in\Gamma} \quad &||u-\kappa_{NN}(x)||_q+||\gamma||_p  \\
+%     \textrm{s.t.} \quad &u=Kx+(M_u-KM_x)\gamma,\label{eqn:final control}\\
+%     &x\in \Sigma_{\infty}(\gamma).
+% \end{align}
+
+
+
+
+
+
+
+
+
+
+
+
+% \iffalse
+
+% \subsection{Probabilistic validation approach}
+% Consistent with the approach in \cite{hertneck2018learning}, we validate the closed-loop constraint satisfaction of the well-trained deep neural network (NN) controller using probabilistic validation methods. The standard procedures are detailed as follows: Initially, a set of $m\in \mathbb{Z}^+$ initial states $x_0\in \mathbb{X}_N$ are sampled from a distribution $\mathbb{P}$ to form the test set. Subsequently, the DNN controller is simulated on the system,  starting from $x_0$ over a time horizon $M\in\mathbb{Z}^+$. Here, $M$ is typically chosen such that the system states enter the terminal set. Assume that $\beta$ trajectories are feasible out of a  total of $\alpha$ trajectories. Hoeffding’s inequality implies that, with a confidence level of at least $1 - exp(-2\alpha\rho^2)$, the DNN controller is feasible for at least for  $\frac{\beta}{\alpha}-\rho$ fraction of initial states sampled from the distribution $\mathbb{P}$.
+
+% Utilizing the aforementioned validation approach, we present the following algorithm for learning a DNN controller based on MPC.
+% \begin{algorithm}
+% \caption{Learn a DNN controller based on MPC }
+% \begin{algorithmic}[1]\label{alg:Learn a DNN controller based on MPC}
+% \REQUIRE The DNN structure Eq.(\ref{eqn:nn structure}).
+% \REQUIRE Generate training set and test set.
+% \STATE Learn a DNN controller with the loss function over the training set.
+% \STATE Validate the closed-loop performance of DNN controller over the test set.
+% \IF{validation successes}
+%     \STATE Finish.
+% \ELSE
+%     \STATE Implement the methods of improving constraints satisfaction, and repeat Step 1.
+% \ENDIF
+% \end{algorithmic}
+
+% \end{algorithm}
+% If the total number of iterations of Algorithm \ref{alg:Learn a DNN controller based on MPC} exceeds a predefined threshold, we conclude that the learning and validation process has failed. In such cases, it is recommended to modify either the loss function \ref{eqn:loss} or the architecture of the learning-based explicit MPC. Specific modifications may include selecting new scalars $\alpha$ and $\beta$, increasing the number of neurons or layers in the neural network, or augmenting the number of training set. These adjustments are aimed at enhancing the control performance to a satisfactory level.
+% \fi
+
+\section{Numerical experiment}
+\noindent \textbf{Example 1.} Consider a double integrator system:
+\begin{align}
+    x(t+1)= \begin{bmatrix} 1 & 0.5 \\ -0.1 & 0.9 \end{bmatrix} x(t) + \begin{bmatrix} 1 \\ 0 \end{bmatrix} u(t), t\in \mathbb{Z}^+
+\end{align}
+% \begin{align}
+%     &\begin{bmatrix} -5 \\ -0.8442 \end{bmatrix}= \begin{bmatrix} 1 & 0.5 \\ -0.1 & 0.9 \end{bmatrix} \begin{bmatrix} -5 \\ -1.4936 \end{bmatrix} + \begin{bmatrix} 1 \\ 0 \end{bmatrix} 0.7468, \\
+%     &(1*-5)+(0.5*-1.4936)+0.7468=-5
+% \end{align}
+where $ \mathbb{U} = \{u \in \mathbb{R} :  u\in [-1,1] \}$, $\mathbb{X} = \{x \in \mathbb{R}^2: x \in [-5, 5] \times [-5, 5]\}$, and  $\mathbb{X}_f:=\Sigma_\infty$.
+We consider the MPC law $\kappa_{MPC}$ to be the solution to the problem (\ref{eqn:standard MPC}) with  $Q = I_2$, $R = I_1$, $P = \begin{bmatrix} 1.71 & -0.26 \\ -0.26 & 5.53 \end{bmatrix}$, $K=\begin{bmatrix} -0.64 & -0.23  \end{bmatrix}$, and predictive horizon $N = 10$. 
+
+\textit{Step 1 (Data sampling):} $1\times10^2$ feasible samples of data pairs $(x, \kappa_{MPC}(x))$ are generated as training set, where $x\in \mathbb{X}_N$ and $\kappa_{MPC}(x)$ is obtained by solving the MPC problem (\ref{eqn:standard MPC}), using CVXPY 1.5.2 with Python 2.8.0.
+
+\textit{Step 2 (Learning-based explicit MPC):} 
+A fully connected feedforward NN with 2 neurons in input layer and three further hidden layers with 20 neurons each is utilized to approximate the MPC law. In the output layer, linear activations are used with one neuron. The learning-based explicit MPC was trained under loss function (\ref{eqn:loss function}) by using the deep learning toolbox PyTorch on an NVIDIA 3090 GPU. The Adam optimizer  is used to optimize our model. The initial learning rate is set to 0.001 and remains unchanged throughout the training phase that goes through 1000 epochs.
+
+\textit{Step 3 (Safety governor):} 
+We obtain the safety governor $SG$ from (\ref{eqn:cons feasible set aug}) and (\ref{eqn:Sigma union}). For different control approaches, it is interesting to compare their feasible regions. Figure  \ref{fig: feasibility region comparison} shows the feasible regions of our approach, MPC with $N=1$, $N=3$ and $ N=10$: $\Sigma_{\infty}(\Gamma)$, $\mathbb{X}_{N=1}$, $\mathbb{X}_{N=3}$, and $\mathbb{X}_{N=10}$. Notice that our approach has a size of the feasible region close to that of the MPC with $N=3$, but with a completely different shape. The MPC with $N=10$ has a significantly larger feasible region, but this corresponds to an increase in its online computation time, which will be discussed in more detail later.
+
+\begin{figure}[!htb]
+  \centering
+  \includegraphics[width=0.95\linewidth]{feasibility_region_comparison.pdf}
+  \caption{ Comparison of feasibility regions for different approaches}
+  \label{fig: feasibility region comparison}
+\end{figure}
+
+
+
+\textit{Step 4 (Validation):} 
+This paper contrasts \cite{chen2018approximating} projecting control input of the DNN onto the feasible region of MPC: $u=\text{arg} \min_{u} \||u-\kappa_{NN}(x)||_s$, such that $u\in\mathbb{U},x^+=Ax+Bu\in \mathbb{X}_N,\forall x\in \mathbb{X}_N$. Figure \ref{fig: trajectories comparison} shows the system state trajectories derived by applying different control approaches with several feasible region vertices as initial states. The red trajectories represent our approach, the yellow trajectories represent the approach in \cite{chen2018approximating}, the blue trajectories represent the approach in \cite{chen2018approximating} with dual-mode scheme, and the green trajectories represent the MPC with $N = 10$. Our approach ensures that the system states remain within the safe region while converging closer to the origin,  owing to the safety governor proposed. In addition, the existence of the approximation error does not affect the system state to be steered to the origin owing to the dual-mode scheme proposed. 
+\begin{figure}[!htb]
+  \centering
+  \includegraphics[width=0.95\linewidth]{trajectories_comparison_00.png}
+  \caption{Comparison of system state trajectories for different approaches}
+  \label{fig: trajectories comparison}
+\end{figure}
+
+Table \ref{table: Computation time for different approaches} compares the computational time required for different approaches across 50 steps. This comparison verifies the superiority of our approach in terms of computational time. The computational time of standard MPC with $N=10$ is also much longer than the other approaches.
+% As demonstrated by the aforementioned simulation, our approach is capable of achieving rewarding control performance and satisfying the constraints while requiring less computation time.
+\begin{table}[h]
+\caption{Comparison of computational time for different approaches}
+\label{table: Computation time for different approaches}
+\begin{center}
+\setlength{\tabcolsep}{15pt} % 调整列间距（默认6pt，此处设为10pt）
+\renewcommand{\arraystretch}{1.4} % 调整行高（默认1，此处设为1.5倍）
+\begin{tabular}{|c||c|}
+\hline
+ & Computational time \\
+\hline 
+Standard MPC with N=1 & 1.21 [s] \\
+\hline
+Standard MPC with N=3 & 3.25 [s] \\
+\hline
+Standard MPC with N=10 & 8.53 [s] \\
+\hline
+The approach in \cite{chen2018approximating} & 1.21 [s] \\
+\hline
+Our approach & 1.20 [s] \\
+\hline
+\end{tabular}
+\end{center}
+\end{table}
+
+
+\noindent \textbf{Example 2.} Consider the following 4-dimensional system:
+\begin{align}
+    A= \begin{bmatrix} 0.7 & -0.1 &0&0 \\ 0.2 & -0.5&0.1&0\\0 &0.1&0.1&0\\0.5&0&0.5&0.5 \end{bmatrix}, B=\begin{bmatrix} 0.1 \\ 0.1\\0.1\\0.1 \end{bmatrix}
+\end{align}
+with constraints: $ \mathbb{U} = \{u \in \mathbb{R} :  u\in [-2,2] \}$, $\mathbb{X} = \{x \in \mathbb{R}^4: x \in [-5, 5] \times [-5, 5]\times [-1, 1]\times [-1, 1]\}$. Parameters $Q=I_4$, $R=I_1$ and $N=10$. 
+
+The simulation follows the same procedure as the double integrator system, with only minor modifications in the following implementation details: (1) A larger dataset containing $5\times10^2$  feasible sample pairs $(x, \kappa_{MPC}(x))$ is generated; (2) The input layer dimension is increased to four neurons; (3) The neural network architecture is enhanced with six hidden layers.
+
+\textit{Simulation results:} In high-dimensional system, the determination of the feasible region $\mathbb{X}_N$ for MPC is an NP-complete problem \cite{2008On}. Although there exists approach to approximate, which may loss the feasibility of the approach in \cite{chen2018approximating}. The determination of feasible region $\Sigma_\infty(\Gamma)$ is much easier. Figure \ref{fig: System states and control inputs comparison} shows the control inputs and the corresponding system state components under our approach and standard MPC with $N=10$ while $x_0=\begin{bmatrix}-1.12& -4.62&0.03&-0.85\end{bmatrix}^{\top}$.  Our approach shows rewarding control performance in this high-dimensional system, constraints are not violated, and is able to steer the system states to the origin even with approximation errors.
+\begin{figure}[!htb]
+  \centering
+  \includegraphics[width=0.95\linewidth]{4D_System_states_and_control_comparison_00.png}
+  \caption{Comparison of state components and control inputs for different approaches}
+  \label{fig: System states and control inputs comparison}
+\end{figure}
+
+\section{Conclusion}
+We have proposed a learning explicit MPC  via deep neural network for linear time-invariant systems. Our approach can reduce online computation while guarantee the rewarding control performance and safety. Leveraging the maximal constrained feasible set, we propose a learning-based explicit MPC structure to erase the approximation errors nearby the origin of system. Following the parameterization of system states and control inputs using equilibrium states, a safety governor is constructed to ensure that learning-based explicit MPC satisfies all the state and input constraints. A numerical experiment is proposed to verify the rewarding control performance of our approach.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+% \begin{table}[!htb]
+%   \centering
+%   \caption{Experiment parameters}
+%   \label{tab1}
+%   \begin{tabular}{l|l}
+%     \hhline
+%     Paper Size          & A4 (21cm$\times$29.7cm) \\ \hline
+%     Top Margin (1st page)   & 3.0cm \\ \hline
+%     Top Margin (rest)   & 2cm \\ \hline
+%     Text Height         & 25.5cm \\
+%     \hhline
+%   \end{tabular}
+% \end{table}
+
+
+% \section{PROCEDURE FOR PAPER SUBMISSION}
+
+% \subsection{Selecting a Template (Heading 2)}
+
+% First, confirm that you have the correct template for your paper size. This template has been tailored for output on the US-letter paper size. 
+% It may be used for A4 paper size if the paper size setting is suitably modified.
+
+% \subsection{Maintaining the Integrity of the Specifications}
+
+% The template is used to format your paper and style the text. All margins, column widths, line spaces, and text fonts are prescribed; please do not alter them. You may note peculiarities. For example, the head margin in this template measures proportionately more than is customary. This measurement and others are deliberate, using specifications that anticipate your paper as one part of the entire proceedings, and not as an independent document. Please do not revise any of the current designations
+
+% \section{MATH}
+
+% Before you begin to format your paper, first write and save the content as a separate text file. Keep your text and graphic files separate until after the text has been formatted and styled. Do not use hard tabs, and limit use of hard returns to only one return at the end of a paragraph. Do not add any kind of pagination anywhere in the paper. Do not number text heads-the template will do that for you.
+
+% Finally, complete content and organizational editing before formatting. Please take note of the following items when proofreading spelling and grammar:
+
+% \subsection{Abbreviations and Acronyms} Define abbreviations and acronyms the first time they are used in the text, even after they have been defined in the abstract. Abbreviations such as IEEE, SI, MKS, CGS, sc, dc, and rms do not have to be defined. Do not use abbreviations in the title or heads unless they are unavoidable.
+
+% \subsection{Units}
+
+% \begin{itemize}
+
+% \item Use either SI (MKS) or CGS as primary units. (SI units are encouraged.) English units may be used as secondary units (in parentheses). An exception would be the use of English units as identifiers in trade, such as Ò3.5-inch disk driveÓ.
+% \item Avoid combining SI and CGS units, such as current in amperes and magnetic field in oersteds. This often leads to confusion because equations do not balance dimensionally. If you must use mixed units, clearly state the units for each quantity that you use in an equation.
+% \item Do not mix complete spellings and abbreviations of units: ÒWb/m2Ó or Òwebers per square meterÓ, not Òwebers/m2Ó.  Spell out units when they appear in text: Ò. . . a few henriesÓ, not Ò. . . a few HÓ.
+% \item Use a zero before decimal points: Ò0.25Ó, not Ò.25Ó. Use Òcm3Ó, not ÒccÓ. (bullet list)
+
+% \end{itemize}
+
+
+% \subsection{Equations}
+
+% The equations are an exception to the prescribed specifications of this template. You will need to determine whether or not your equation should be typed using either the Times New Roman or the Symbol font (please no other font). To create multileveled equations, it may be necessary to treat the equation as a graphic and insert it into the text after your paper is styled. Number equations consecutively. Equation numbers, within parentheses, are to position flush right, as in (1), using a right tab stop. To make your equations more compact, you may use the solidus ( / ), the exp function, or appropriate exponents. Italicize Roman symbols for quantities and variables, but not Greek symbols. Use a long dash rather than a hyphen for a minus sign. Punctuate equations with commas or periods when they are part of a sentence, as in
+
+% $$
+% \alpha + \beta = \chi \eqno{(1)}
+% $$
+
+% Note that the equation is centered using a center tab stop. Be sure that the symbols in your equation have been defined before or immediately following the equation. Use Ò(1)Ó, not ÒEq. (1)Ó or Òequation (1)Ó, except at the beginning of a sentence: ÒEquation (1) is . . .Ó
+
+% \subsection{Some Common Mistakes}
+% \begin{itemize}
+
+
+% \item The word ÒdataÓ is plural, not singular.
+% \item The subscript for the permeability of vacuum ?0, and other common scientific constants, is zero with subscript formatting, not a lowercase letter ÒoÓ.
+% \item In American English, commas, semi-/colons, periods, question and exclamation marks are located within quotation marks only when a complete thought or name is cited, such as a title or full quotation. When quotation marks are used, instead of a bold or italic typeface, to highlight a word or phrase, punctuation should appear outside of the quotation marks. A parenthetical phrase or statement at the end of a sentence is punctuated outside of the closing parenthesis (like this). (A parenthetical sentence is punctuated within the parentheses.)
+% \item A graph within a graph is an ÒinsetÓ, not an ÒinsertÓ. The word alternatively is preferred to the word ÒalternatelyÓ (unless you really mean something that alternates).
+% \item Do not use the word ÒessentiallyÓ to mean ÒapproximatelyÓ or ÒeffectivelyÓ.
+% \item In your paper title, if the words Òthat usesÓ can accurately replace the word ÒusingÓ, capitalize the ÒuÓ; if not, keep using lower-cased.
+% \item Be aware of the different meanings of the homophones ÒaffectÓ and ÒeffectÓ, ÒcomplementÓ and ÒcomplimentÓ, ÒdiscreetÓ and ÒdiscreteÓ, ÒprincipalÓ and ÒprincipleÓ.
+% \item Do not confuse ÒimplyÓ and ÒinferÓ.
+% \item The prefix ÒnonÓ is not a word; it should be joined to the word it modifies, usually without a hyphen.
+% \item There is no period after the ÒetÓ in the Latin abbreviation Òet al.Ó.
+% \item The abbreviation Òi.e.Ó means Òthat isÓ, and the abbreviation Òe.g.Ó means Òfor exampleÓ.
+
+% \end{itemize}
+
+
+% \section{USING THE TEMPLATE}
+
+% Use this sample document as your LaTeX source file to create your document. Save this file as {\bf root.tex}. You have to make sure to use the cls file that came with this distribution. If you use a different style file, you cannot expect to get required margins. Note also that when you are creating your out PDF file, the source file is only part of the equation. {\it Your \TeX\ $\rightarrow$ PDF filter determines the output file size. Even if you make all the specifications to output a letter file in the source - if your filter is set to produce A4, you will only get A4 output. }
+
+% It is impossible to account for all possible situation, one would encounter using \TeX. If you are using multiple \TeX\ files you must make sure that the ``MAIN`` source file is called root.tex - this is particularly important if your conference is using PaperPlaza's built in \TeX\ to PDF conversion tool.
+
+% \subsection{Headings, etc}
+
+% Text heads organize the topics on a relational, hierarchical basis. For example, the paper title is the primary text head because all subsequent material relates and elaborates on this one topic. If there are two or more sub-topics, the next level head (uppercase Roman numerals) should be used and, conversely, if there are not at least two sub-topics, then no subheads should be introduced. Styles named ÒHeading 1Ó, ÒHeading 2Ó, ÒHeading 3Ó, and ÒHeading 4Ó are prescribed.
+
+% \subsection{Figures and Tables}
+
+% Positioning Figures and Tables: Place figures and tables at the top and bottom of columns. Avoid placing them in the middle of columns. Large figures and tables may span across both columns. Figure captions should be below the figures; table heads should appear above the tables. Insert figures and tables after they are cited in the text. Use the abbreviation ÒFig. 1Ó, even at the beginning of a sentence.
+
+
+
+
+%    \begin{figure}[thpb]
+%       \centering
+%       \framebox{\parbox{3in}{We suggest that you use a text box to insert a graphic (which is ideally a 300 dpi TIFF or EPS file, with all fonts embedded) because, in an document, this method is somewhat more stable than directly inserting a picture.
+% }}
+%       %\includegraphics[scale=1.0]{figurefile}
+%       \caption{Inductance of oscillation winding on amorphous
+%        magnetic core versus DC bias magnetic field}
+%       \label{figurelabel}
+%    \end{figure}
+   
+
+% Figure Labels: Use 8 point Times New Roman for Figure labels. Use words rather than symbols or abbreviations when writing Figure axis labels to avoid confusing the reader. As an example, write the quantity ÒMagnetizationÓ, or ÒMagnetization, MÓ, not just ÒMÓ. If including units in the label, present them within parentheses. Do not label axes only with units. In the example, write ÒMagnetization (A/m)Ó or ÒMagnetization {A[m(1)]}Ó, not just ÒA/mÓ. Do not label axes with a ratio of quantities and units. For example, write ÒTemperature (K)Ó, not ÒTemperature/K.Ó
+
+% \section{CONCLUSIONS}
+
+% A conclusion section is not required. Although a conclusion may review the main points of the paper, do not replicate the abstract as the conclusion. A conclusion might elaborate on the importance of the work or suggest applications and extensions. 
+
+% \addtolength{\textheight}{-12cm}   % This command serves to balance the column lengths
+                                  % on the last page of the document manually. It shortens
+                                  % the textheight of the last page by a suitable amount.
+                                  % This command does not take effect until the next page
+                                  % so it should come on the page before the last. Make
+                                  % sure that you do not shorten the textheight too much.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% \section*{APPENDIX}
+
+% Appendixes should appear before the acknowledgment.
+
+% \section*{ACKNOWLEDGMENT}
+
+% The preferred spelling of the word ÒacknowledgmentÓ in America is without an ÒeÓ after the ÒgÓ. Avoid the stilted expression, ÒOne of us (R. B. G.) thanks . . .Ó  Instead, try ÒR. B. G. thanksÓ. Put sponsor acknowledgments in the unnumbered footnote on the first page.
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% \section*{Appendix}
+% In this paper, we discuss how to design an MPC-based deep neural network controller for linear time-invariant systems that can guarantee feasibility and stability. Specifically, we first propose a new deep neural network structure and corresponding training method based on the principle that nonlinear feedback control can reduce to linear feedback control in the maximal constrained feasible set. We propose a  safety governor to ensure the feasibility and stability of the learning-based explicit MPC controller. In details, we project the trained neural network controller onto an augmented maximal constrained feasible set.
+
+
+\bibliographystyle{unsrt}
+\bibliography{arxiv}
+
+% \begin{thebibliography}{99}
+
+% \bibitem{c1} G. O. Young, ÒSynthetic structure of industrial plastics (Book style with paper title and editor),Ó 	in Plastics, 2nd ed. vol. 3, J. Peters, Ed.  New York: McGraw-Hill, 1964, pp. 15Ð64.
+% \bibitem{c2} W.-K. Chen, Linear Networks and Systems (Book style).	Belmont, CA: Wadsworth, 1993, pp. 123Ð135.
+% \bibitem{c3} H. Poor, An Introduction to Signal Detection and Estimation.   New York: Springer-Verlag, 1985, ch. 4.
+% \bibitem{c4} B. Smith, ÒAn approach to graphs of linear forms (Unpublished work style),Ó unpublished.
+% \bibitem{c5} E. H. Miller, ÒA note on reflector arrays (Periodical styleÑAccepted for publication),Ó IEEE Trans. Antennas Propagat., to be publised.
+% \bibitem{c6} J. Wang, ÒFundamentals of erbium-doped fiber amplifiers arrays (Periodical styleÑSubmitted for publication),Ó IEEE J. Quantum Electron., submitted for publication.
+% \bibitem{c7} C. J. Kaufman, Rocky Mountain Research Lab., Boulder, CO, private communication, May 1995.
+% \bibitem{c8} Y. Yorozu, M. Hirano, K. Oka, and Y. Tagawa, ÒElectron spectroscopy studies on magneto-optical media and plastic substrate interfaces(Translation Journals style),Ó IEEE Transl. J. Magn.Jpn., vol. 2, Aug. 1987, pp. 740Ð741 [Dig. 9th Annu. Conf. Magnetics Japan, 1982, p. 301].
+% \bibitem{c9} M. Young, The Techincal Writers Handbook.  Mill Valley, CA: University Science, 1989.
+% \bibitem{c10} J. U. Duncombe, ÒInfrared navigationÑPart I: An assessment of feasibility (Periodical style),Ó IEEE Trans. Electron Devices, vol. ED-11, pp. 34Ð39, Jan. 1959.
+% \bibitem{c11} S. Chen, B. Mulgrew, and P. M. Grant, ÒA clustering technique for digital communications channel equalization using radial basis function networks,Ó IEEE Trans. Neural Networks, vol. 4, pp. 570Ð578, July 1993.
+% \bibitem{c12} R. W. Lucky, ÒAutomatic equalization for digital communication,Ó Bell Syst. Tech. J., vol. 44, no. 4, pp. 547Ð588, Apr. 1965.
+% \bibitem{c13} S. P. Bingulac, ÒOn the compatibility of adaptive controllers (Published Conference Proceedings style),Ó in Proc. 4th Annu. Allerton Conf. Circuits and Systems Theory, New York, 1994, pp. 8Ð16.
+% \bibitem{c14} G. R. Faulhaber, ÒDesign of service systems with priority reservation,Ó in Conf. Rec. 1995 IEEE Int. Conf. Communications, pp. 3Ð8.
+% \bibitem{c15} W. D. Doyle, ÒMagnetization reversal in films with biaxial anisotropy,Ó in 1987 Proc. INTERMAG Conf., pp. 2.2-1Ð2.2-6.
+% \bibitem{c16} G. W. Juette and L. E. Zeffanella, ÒRadio noise currents n short sections on bundle conductors (Presented Conference Paper style),Ó presented at the IEEE Summer power Meeting, Dallas, TX, June 22Ð27, 1990, Paper 90 SM 690-0 PWRS.
+% \bibitem{c17} J. G. Kreifeldt, ÒAn analysis of surface-detected EMG as an amplitude-modulated noise,Ó presented at the 1989 Int. Conf. Medicine and Biological Engineering, Chicago, IL.
+% \bibitem{c18} J. Williams, ÒNarrow-band analyzer (Thesis or Dissertation style),Ó Ph.D. dissertation, Dept. Elect. Eng., Harvard Univ., Cambridge, MA, 1993. 
+% \bibitem{c19} N. Kawasaki, ÒParametric study of thermal and chemical nonequilibrium nozzle flow,Ó M.S. thesis, Dept. Electron. Eng., Osaka Univ., Osaka, Japan, 1993.
+% \bibitem{c20} J. P. Wilkinson, ÒNonlinear resonant circuit devices (Patent style),Ó U.S. Patent 3 624 12, July 16, 1990. 
+
+
+
+
+
+
+% \end{thebibliography}
+
+
+
+
+\end{document}

@@ -1,0 +1,295 @@
+\comment{\subsection{Sampling Based Motion Planning}
+\label{sec:sbmp}
+
+In general, computing the obstacle free region $\mathcal{C}_{free}$ explicitly
+is prohibitively expensive. The main idea of sampling based motion planning
+(SBMP) algorithms is to probe $\mathcal{C}$ with a sampling scheme and test the
+sampled configurations with a collision checker. This
+enables the development of planning algorithms which are independent of
+geometric models specific to a robot or obstacles, that is, independent of
+$\mathcal{W}$. An outline of such algorithm is shown in Figure \ref{fig:sbmp}
+(cite LaValle).\\
+
+Compared to SBMP, the goal of our approach is to integrate the workspace in the
+motion planning process. This way can leverage the use of previously solved
+problems to solve more efficiently new motion planning problems coming from the same family of
+workspaces.
+
+\input{figures/sbmp}}
+
+\subsection{A Markov Decision Process Formulation of Motion Planning}
+
+Let $\texttt{stopping-configuration}(q_0, q_1)$ be the
+nearest configuration possible to the boundary of $\mathcal{C}_{free}$ along the
+path $[q_0, q_1]$.  Given a configuration $q \in \mathcal{C}$ and a velocity
+vector $v \in T_q(\mathcal{C})$ in the tangent space of $\mathcal{C}$ at point
+$q$, we define $q_I= \texttt{integrate}(q, v)$ as the
+configuration reached after following the geodesic starting at $q$ with speed
+$v$ during one second. Then the dynamics $p$ is defined as 
+$p(q, v) = \texttt{stopping-configuration}(q, \texttt{integrate}(q, v))$ which is the last
+collision free configuration from $q$ in the direction defined by $v$.
+
+\subsection{Reinforcement Learning Algorithm: Actor-Critic}
+\label{sec:rl_algorithm}
+
+This section will probably not be in the paper but for clarity and discussion, writing down a
+sketch of the algorithm seems important. Let $\pi_\theta : \mathcal{S}
+\rightarrow \mathcal{A}$ be a policy parametrized by $\theta$, and $Q_\mu$ be
+an approximation of $Q^\star$ parametrized by $\mu$. The goal of an Actor-Critic
+algorithm is to optimize jointly over $\theta$ and $\mu$ so that $\pi_{\theta}$ and
+$Q_{\mu}$ jointly converge to $\pi^\star$ and $Q^\star$. A key identity
+satisfied by $Q^\star$, which will be exploited in the optimization process, is the Bellman equation:
+\begin{equation}
+Q^\star(s, a) = \mathbb{E}_{s' \sim p(s' | s, a)}[r(s, a) + \gamma \max_{a'} Q^\star(s', a')| \, s_0=s, a_0=a ].
+\end{equation}
+
+During training, we collect agent experiences at each time step, $e_t = (s_t, a_t, r_t,
+s_{t+1})$, and store these transitions into a replay memory $\mathcal{D}$ that regroups
+experience over many episodes. We then update the weights of $Q_{\mu}$ according to
+past experiences using the Bellman equation. Then we update $\pi_{\theta}$
+weights in order to maximize $Q_{\mu}$. The steps of the algorithm are detailed
+in Algorithm 1.
+
+\begin{algorithm}
+  \caption{Actor-Critic}
+  \begin{algorithmic}[1]
+    \label{algo:actor_critic}
+    \State Initialize $\theta$ and $\mu$ at random
+  \State Initialize replay memory $\mathcal{D}$ to capacity $N$
+  \For{each iteration}
+    \For{each environment step}
+    \State $a_t \sim \pi_{\theta}(a | s_t)$
+    \Comment{exploration-exploitation scheme}
+    \State $s_{t+1} \sim p(s'|s_t, a_t)$
+    % \Comment{environment physics}
+    \State $\mathcal{D} \leftarrow \mathcal{D} \cup \{(s_t, a_t, r(s_t, a_t), s_{t+1})\}$
+    % \Comment{store experience}
+    \EndFor
+    % \State Collect K policy episodes $(s_0, a_0, r_0, s_1, a_1, r_1, ..., s_T, a_T, r_T)$
+    % \State Break down the rollouts into transitions $(s_t, a_t, r_t, s_{t+1})$
+    % \State Store the transitions in the replay memory $\mathcal{D} = \{(s_t, a_t, r_t, s_{t+1})\}$
+    \For{each gradient step}
+      \State Sample randomly a minibatch of transitions $(s_t, a_t, r_t, s_{t+1})$ from $\mathcal{D}$
+      \State $\eta_t \leftarrow r_t + \gamma \max_{a'} Q_\mu(s_{t+1}, a')$
+      \Comment{target $Q$-value, fixed w.r.t. $\mu$}
+      \State $\delta_t= \eta_t - Q_\mu(s_t, a_t)$
+      \Comment{Bellman error}
+      \State $Q_\mu \leftarrow Q_\mu - \alpha\,\nabla_\mu ||\delta_t||^2$
+      \Comment{update $Q_\mu$ to minimize the Bellman error}
+      \State $\pi_\theta \leftarrow \pi_\theta + \alpha\,\nabla_\theta Q_\mu(s_t, \pi_\theta(s_t))$
+      \Comment{update $\pi_\theta$ to maximize $Q_\mu$}
+    \EndFor
+  \EndFor
+  \end{algorithmic} 
+\end{algorithm}
+
+The intuition behind this algorithm is, you first collect agent experiences and
+store them in a dataset (lines 4-8). Then you update the $Q$-function  according to
+these experiences and Bellman equation (lines 10-13) which will bring the approximation $Q_\mu$ closer to $Q^\star$.
+Then you update the policy according to $Q_\mu$  (line 14) which will bring
+$\pi_\theta$ closer to $\pi^\star$. $Q_\mu$ can be seen as a proxy function to
+be able to backprop through the reward function and update the policy $\pi_\theta$, it is a
+differentiable estimator of the expected sum of returns. The optimization of lines
+11-13 is usually referred as Temporal Difference Learning in the RL literature.
+
+
+Note that in our case an episode is defined by a start state $s_0$ and a goal
+$g$. The same algorithm applies but instead a policy is defined as
+$\pi_\theta(a | s, g)$, a $Q$-function $Q_\mu(s, a, g)$, a transition $(s_t,
+a_t, r_t, s_{t+1}, g)$ and the reward $r(s, a, g)$. This way all of the
+quantities of interest depend on $g$.
+
+\subsection{Workspace Representation}
+\label{sec:workspace_repr}
+
+\input{figures/representations}
+
+\begin{itemize}
+    \item Occupancy grid
+    \item Boxes corners
+    \item Point cloud
+    \item Point cloud with normals
+\end{itemize}
+
+The goal of this section is to define the observation space $\mathcal{O}$
+of our POMDP which is a representation of the workspace $\mathcal{W}$ provided
+to the policy. We will assume the workspace $\mathcal{W}$ is composed of one robot and several
+obstacles around the robot. The obstacles will be represented by their surface
+while the robot will be either represented by either directly the joint angles,
+or by providing additional information such as the placement and geometry of its
+links. These choices are open to discussion.
+
+We consider two representations of the obstacles surface, one that contains $N$ points
+sampled on the obstacles surface and one where the surface normal of each point
+is added. A set of obstacles of dimension $d=2$ or $d=3$ is represented by an array
+$S_{points} = \{x_i\}_{i=1,...,N} \in \mathbb{R}^{N\times d}$  for the points
+representation and
+$S_{normals} = \{(x_i, n_i)\}_{i=1,...,N} \in \mathbb{R}^{N\times 2d}$ for the
+points and normals representation where $x_i$ are the point cartesian coordinates
+and $n_i$ are the normal coordinates. The chosen obstacles
+representation $S$ is then concatenated with the current configuration $q=(q_1,
+..., q_c)$ and goal position $g = (g_1, ..., g_d)$ where $c =
+\text{dim}(\mathcal{C})$ and $d = \text{dim}\, SO(3)$. Note that we do not use any semantic information
+to distinguish obstacles, such information is available in simulation but not
+in the real world if you use a sensor to observe the workspace.
+
+\subsection{Network architecture}
+\label{subsec:net_archi}
+
+Given an obstacle representation $S = (\alpha_1, ..., \alpha_N)$, we consider two types of
+neural networks to represent the policy $\pi$ and the associated
+$Q^\pi$-function. A simple multi-layer perceptron (MLP) $f$ composed of two
+linear layers of size 256 with ReLU non-linearities as in \cite{SAC2018},
+such neural network is of the form $f(q, g, \alpha_1, ..., \alpha_N)$. A PointNet
+\cite{Qi2017} like architecture, composed of a MLP $u$ with several linear layers of
+size $h_1$ shared across points and a second MLP $v$ with several linear layers of
+size $h_2$. PointNet networks are of the form
+\begin{equation*}
+\begin{aligned}
+v(\alpha_1, ..., \alpha_N) &= \underset{i=1,...,N}{\text{max}} \left[u(q, \alpha_1), ..., u(q, \alpha_N))\right] \\
+f(g, \alpha_1, ..., \alpha_N) &= w(v(\alpha_1, ..., \alpha_N), g)
+\end{aligned}
+\end{equation*}\
+The max operator is a max-pooling operation, given a list of
+feature vectors of size $N\times d$, it outputs a vector of size $d$ by taking
+the maximum over the $N$ points in each coordinate. The resulting feature is
+thus invariant to the input permutation and provides a representation of the
+point cloud. This is a simplified version of PointNet achitecture sketched in \cite{Qi2017}, Figure 2.
+
+\subsection{Experiments to run}
+Sec. 1: 2D envs from Ichter\\
+Sec. 2: 3D envs that we built / Qureshi 3D env
+\begin{enumerate}
+\item Compare different obstacles representation: corners, image, point cloud, point cloud normals (sec. 1, Table 1)
+\item Compare BC and RL (sec. 1, Table 1)
+\item Compare to related work: Ichter, Qureshi, Jurgenson (sec. 1, Table 2)\\
+Two columns, train on a fixed set of obstacle or on a varying set of obstacles
+\item Compare global vs partial visibility (sec. 2)
+\item Show results for the sphere and the capsule (sec. 2)
+\item Compare to Qureshi on their complex 3D envs (sec. 2)
+\item Evaluate generalization to unseen synthetic obstacles and to reconstructed real obstacles  (sec. 2)
+\item Evaluate on an environment with a moving obstacle: highlight advantage of learning a policy (sec.2 )
+\end{enumerate}
+
+\subsection{Workspace Representation and Learning on 2D environments}
+
+Representation results:
+\begin{itemize}
+\item Image vs Point Cloud: An image representation of the obstacles provides information about the workspace but not as much as a point cloud which provides precise cartesian position of the obstacles boundary. 
+\item Point Cloud vs Point Cloud + Normals: Given a sparse point cloud representing a non-convex mesh, it is hard to infer the interior from the exterior of the obstacle, it is easier with the additional information of normals. Also, a point is a zero order approximation of a surface, whereas point+normal (i.e. a plane) is a first order approximation.
+\end{itemize}
+\todo{How to show these points ? Maybe show the Q-function losses and take samples where the Q-function error is high ?}
+
+Learning results:
+\begin{itemize}
+\item IL vs RL: IL agent only learns to match expert actions without the knowledge of the expert constraint (avoiding obstacles).
+By interacting with the environment and learning to maximize the reward, an RL agent learns to avoid obstacles.
+Quantitative (success rate of RL vs BC) and Qualitative (study of BC failure cases) show results in this direction. However RL is not perfect and still hit obstacles sometimes.
+\end{itemize}
+
+\todo{Add one table which contains the success rate of different learning approach and different obstacles representations.}
+
+\begin{itemize}
+
+\item \textbf{Reusing feasible paths database}\\ Use ML: Trajectory prediction
+in cluttered voxel environments in \citep{Jetchev2010}\\ Do not: repair a subset
+of no longer feasible paths \citep{Lien2010}, reusing path between similar
+situations \citep{Branicky2008} and biasing RRT search to promising region
+\citep{Martin2007} (See \citep{Jetchev2010}) Too slow to be appropriate for real
+time movements.\\
+
+Neural Motion Planning (NMP) has been introduced during the last decade \citep{Glasius1995, Yang2000}. Deep learning recent successes (cite some DL papers, computer vision results, alpha
+go, protein folding...) have motivated the extension of this research and a rich
+corpus of methods have emerged.\\
+
+\item \textbf{RRT with learned biased sampling:}
+Use a conditionnal variationnal auto-encoder (CVAE) (e.g. parametric, learnable distribution conditionnaed by start, goal, obstacles) to generate samples in relevant regions to solve the problem faster \citep{Ichter2018, Ichter2019}. RRT associated to a learned sampling coupled
+with uniform sampling ensures convergence of the algorithm and accelerate the
+its convergence. However as in BC, there are no constraints to avoid obstacles during learning, as a
+result many points generated by the learned model are not collision free.\\
+
+Reference paper: Ichter \citep{Ichter2018}.\\
+Representation: Occupancy grid + MLP. 
+Contribution: Enhances RRT using learning, instead of doing random sampling it uses the learned distributions to accelerate RRT.\\ 
+Limitations: Offline planning, samples point on obstacles sometimes.
+
+\item \textbf{Imitation Learning:}
+Use SBMP to produce a set of feasible paths and learn policies from this dataset 
+using behavioral cloning:\citep{Qureshi2018, Qureshi2019, Pfeiffer2017}. 
+However for workspaces where the robot has to move through tight passages, 
+the performance of imitation learning is limited due to the fact that the policy only learns from collision free trajectories, it does not learn to avoid obstacles. In practice, policies learned
+with BC tend to collide with obstacles \citep{Qureshi2018, Qureshi2019, Jurgenson2019}.\\
+
+Reference paper: Qureshi \citep{Qureshi2019}.
+Train a policy with BC on RRT* solutions. Generate a path with the trained policy. Fix the generated path, take colliding edges and replan to generate collision free edges.\\
+Representation: Point Cloud + MLP.\\
+Contribution: bias Motion Planning with Imitation Learning, fix a colliding candidate path by using their approach recursively on problematic subparts of the candidate path.\\
+Limitations: Offline planning. Obstacles representation: works with obstacles in fixed position and varying size but does not generalize well for obstacles in arbitrary positions with varying size.
+
+\item \textbf{Reinforcement Learning:}
+\citep{Jurgenson2019} use RL to learn collision free paths on a 2D robotic
+arm from raw images. Compared IL with RL and show the benefit of the RL
+approach. Restricting the robot to planar movement allows them to capture the
+whole task space with one image than can be processed with a CNN. Our work build
+on this approach and aims at learning to solve motion planning problems with RL
+on complex 3D environments with a tractable obstacles representation.\\
+
+Reference paper: Jurgenson \citep{Jurgenson2019}\\
+Differences with our approach: reward and termination conditions are different, obstacles representation is different, we do not use RRT solutions only policy rollouts and HER.\\
+Representation: Image + CNN.\\
+Contribution: propose a RL approach of Motion Planning, shows the benefit of RL over BC, use RRT solution to accelerate RL learning.\\
+Limitations: show results in 2D environments only, the image representation is reasonable but generalize poorly when the set of varying obstacles is rich. It is unclear how to represent obstacles in a 3D environment because of partial occlusions.
+
+\end{itemize}
+
+Offline path planning:\\
+Input: Start, Goal, Collision checker, Obstacles representation (if learning is involved)\\
+Test time: Assumes the set of obstacles is fixed at runtime, explore the configuration space to find a collision free path using a collision checker (classical algorithms: RRT, RRT* and PRM).\\
+
+Online path planning:\\
+Input: Start, Goal, Obstacles Representation (if learning is involved)\\
+Test time: generate actions given the current configuration, do not assume the set of obstacles is fixed, in our case it does not rely on a collision checker, but you might end up hitting into obstacles as the policy is not perfect.
+
+Qureshi:
+\begin{itemize}
+\item Offline path planning
+\item Train a policy with BC on RRT* solutions
+\item Generate a path with the trained policy
+\item Fix the generated path, take colliding edges and replan to generate collision free edges
+\item Representation: Point Cloud + MLP
+\item Contribution: bias Motion Planning with Imitation Learning, fix a colliding candidate path by using their approach recursively on problematic subparts of the candidate path.
+\item Limitations: Offline planning. Obstacles representation: works with obstacles in fixed position and varying size but does not generalize well for obstacles in arbitrary positions with varying size.
+\end{itemize}
+
+Jurgenson:
+\begin{itemize}
+\item Online path planning
+\item Train a policy with RL and RRT solutions
+\item Differences with our approach: reward and termination conditions are different, obstacles representation is different, we do not use RRT solutions only policy rollouts and HER
+\item Representation: Image + CNN
+\item Contribution: propose a RL approach of Motion Planning, shows the benefit of RL over BC, use RRT solution to accelerate RL learning
+\item Limitations: show results in 2D environments only, the image representation is reasonable but generalize poorly when the set of varying obstacles is rich. It is unclear how to represent obstacles in a 3D environment because of partial occlusions
+\end{itemize}
+
+Ichter:
+\begin{itemize}
+\item Offline path planning
+\item Train a conditionnal variationnal auto-encoder on RRT solutions. Learn a distribution of configurations relevant to solve the problem
+\item Use the learned distribution with RRT to generate solutions
+\item Representation: Occupancy grid + MLP
+\item Contribution: Enhances RRT, instead of doing random sampling it uses the learned distributions to accelerate RRT
+\item Limitation: Offline planning. Requires more samples than a policy to get a solution.
+\end{itemize}
+
+\comment{Main idea:
+Solve partially observable motion planning problems using RL and oriented point clouds to represent obstacles.
+On a family of similar problems, leverage learning from past experience to solve efficiently new problems.
+	
+Contributions:
+\begin{itemize}
+\item End-to-end approach to solve motion planning problems in partially known environments observed through sensors
+\item Demonstrate the advantage of using point clouds over other modalities to represent the obstacles
+\item Demonstrate the advantage of RL over Imitation Learning baselines when using the right modality (point cloud)
+\item Generalize well to unseen environments and obstacles outside the training set, can be directly transferred from synthetic to unseen real
+obstacles without any fine tuning.
+\end{itemize}}
